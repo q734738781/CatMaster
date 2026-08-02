@@ -173,6 +173,7 @@ class ToolRegistry:
             calculate_al_candidates,
         )
         from catmaster.runtime.literature import (
+            AcquireLiteratureSourceInput,
             FinalizeCitationsInput,
             FindInPageInput,
             GetOpenAlexRecordInput,
@@ -182,6 +183,7 @@ class ToolRegistry:
             QueryLiteratureCorpusInput,
             RecommendSemanticScholarInput,
             WebSearchInput,
+            acquire_literature_source,
             finalize_citations,
             ingest_literature_files,
             query_literature_corpus,
@@ -316,6 +318,11 @@ class ToolRegistry:
         )
         self.register_tool("ingest_literature_files", ingest_literature_files, IngestLiteratureFilesInput)
         self.register_tool("query_literature_corpus", query_literature_corpus, QueryLiteratureCorpusInput)
+        self.register_tool(
+            "acquire_literature_source",
+            acquire_literature_source,
+            AcquireLiteratureSourceInput,
+        )
         self.register_tool("finalize_citations", finalize_citations, FinalizeCitationsInput)
         self.register_tool("search_openalex", search_openalex, SearchOpenAlexInput)
         self.register_tool("search_semantic_scholar", search_semantic_scholar, SearchSemanticScholarInput)

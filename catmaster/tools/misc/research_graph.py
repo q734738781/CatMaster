@@ -40,8 +40,8 @@ class CreateResearchGraphInput(GraphCreateRequest):
         "",
         max_length=4_000,
         description=(
-            "Optional human-readable evidence threshold. Leave empty to use "
-            "the default defensible-answer criterion."
+            "Optional human-readable scientific completion criterion. Leave empty "
+            "to use the default defensible-answer criterion."
         ),
     )
 
@@ -150,7 +150,17 @@ class RecordBoundResearchResultInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field("", max_length=300, description="Short result title; leave empty to derive it from the summary.")
-    summary: str = Field(..., min_length=1, max_length=4_000, description="Concise scientific outcome, including the observation needed by the decision rule.")
+    summary: str = Field(
+        ...,
+        min_length=1,
+        max_length=4_000,
+        description=(
+            "Concise observed or derived scientific outcome, including what the "
+            "decision rule needs. Separate observation from causal interpretation "
+            "and state material conditions or provenance when they affect meaning; "
+            "do not assign a global evidence grade."
+        ),
+    )
     judgments: list[ResultJudgmentInput] = Field(
         default_factory=list,
         max_length=100,

@@ -2,7 +2,6 @@
 name: research-graph-control
 description: Use this skill when a falsifiable research problem must continue across experiments or threads, or when a result should change the next hypothesis or experiment.
 license: project-local
-compatibility: CatMaster Research Specialist
 allowed-tools: "list_research_graphs create_research_graph inspect_research_graph add_research_hypothesis add_research_experiment stage_research_plan record_research_result set_research_result_judgment mark_research_experiment_failed task"
 ---
 
@@ -51,7 +50,7 @@ User or scheduler launches are handled by the graph launch service and ordinary 
 
 ### 4. Record evidence and continue
 
-Record one concise Result for each scientifically meaningful observation. Link it to its producing graph experiment when it came from one. For a literature finding, collaborator result, historical observation, or other evidence obtained outside the graph, leave the producing experiment empty instead of inventing a retrospective Experiment node. Attach the exact run, artifact, note, DOI, URL, thread, or message ref when one exists. Judge only the hypothesis effects that the evidence actually addresses as `supports`, `opposes`, or `inconclusive`; a new observation may remain unjudged until the next planning step. Use `set_research_result_judgment` to add, replace, or clear that one Result-to-Hypothesis judgment after inspecting the current revision. Support and opposition from different Results may coexist without making a hypothesis terminal.
+Record one concise Result for each scientifically meaningful observation or derived outcome. In ordinary scientific language, separate the observation or measurement from analysis and causal interpretation; include modality, applicable conditions, and provenance only when they change what the Result means. Do not assign the Result a global evidence grade. Link it to its producing graph experiment when it came from one. For a literature finding, collaborator result, historical observation, or other evidence obtained outside the graph, leave the producing experiment empty instead of inventing a retrospective Experiment node. Attach the exact run, artifact, note, DOI, URL, thread, or message ref when one exists. Judge only the hypothesis effects that the evidence actually addresses as `supports`, `opposes`, or `inconclusive`; these edges describe the Result-to-Hypothesis relation, not evidence strength. A new observation may remain unjudged until the next planning step. Use `set_research_result_judgment` to add, replace, or clear that one Result-to-Hypothesis judgment after inspecting the current revision. Support and opposition from different Results may coexist without making a hypothesis terminal.
 
 Use `result --suggests--> hypothesis` when evidence motivates a new hypothesis. A Result can lead to another hypothesis or follow-up experiment, so the cycle may continue. If execution cannot proceed, record the concrete blocker with `mark_research_experiment_failed`; do not turn debugging branches into scientific hypotheses.
 
@@ -63,6 +62,7 @@ After a new Result, reconsider the meaningful runnable Experiment frontier rathe
 - On a stale-revision conflict, inspect and reconcile; never overwrite another thread's edit.
 - Keep hypothesis claims falsifiable and experiment decision rules outcome-specific.
 - Keep direct observations in Results and causal explanations in Hypotheses.
+- Preserve claim-relevant evidence attributes in scientific language; do not add a strength score or fixed evidence-level field.
 - Keep all competing evidence visible; do not collapse it to one confidence score.
 - Preserve parallel hypothesis and experiment branches; automatic orchestration choosing one next launch does not remove the others.
 - Use refs rather than copying long source content into graph nodes.

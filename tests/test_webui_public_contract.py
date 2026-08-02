@@ -154,7 +154,7 @@ def test_tool_projection_hides_truncated_json_and_opaque_agent_namespace() -> No
                     status="completed",
                     text='{"meta":{"count":9470},"results":[{"title":"paper"}]...[truncated]',
                     meta={
-                        "tool": "agent_browser_read",
+                        "tool": "acquire_literature_source",
                         "output": '{"meta":{"count":9470},"results":[{"title":"paper"}]...[truncated]',
                         "agent_name": "tools:da002fa7-6e8f-a97a-2045-fd9eb51d8b06",
                     },

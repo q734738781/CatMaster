@@ -3,8 +3,6 @@ name: nature-literature-pipeline
 description: |
   Complete automated literature discovery pipeline: multi-source search → six-dimension scoring → fine reading → formatted delivery → archival.
   Combines a configurable engine with daily cron-driven application layer. Works with Feishu, Telegram, or any messaging platform.
-version: 1.0.0
-author: 十五 (JL Lab)
 license: MIT
 metadata:
   hermes:
@@ -25,9 +23,9 @@ Cron (daily trigger, e.g. 08:30)
   │   arXiv / OpenAlex / Crossref / Semantic Scholar (auto-degradation)
   │
   ├─ ② COARSE FILTER (30 → 5)
-  │   Six-dimension scoring: topic match × 35 + methodology × 20
-  │   + journal quality × 15 + network relevance × 10
-  │   + applied value × 10 + archival value × 10
+  │   LATS selection score: topic match × 35 + novelty/contribution × 20
+  │   + method quality × 15 + source/author signal × 10
+  │   + practical value × 10 + archive value × 10
   │
   ├─ ③ FINE READ (top 5)
   │   Abstract-level or full-text. Source level tagged:
@@ -82,6 +80,7 @@ A config template is provided in `templates/literature-push-template.md`.
 ## Built-in Safeguards
 
 - **Score validation**: Each dimension capped, total recalculated — no 11/10 allowed
+- **Score semantics**: Keep all six components, total, rationale, and access depth. The score ranks selection utility; it never grades scientific evidence or claim confidence.
 - **Triple de-duplication**: DOI / arXiv ID / OpenAlex ID
 - **Graceful degradation**: Semantic Scholar down → auto-switch to OpenAlex + Crossref + arXiv
 - **Read-only archive**: Daily pipeline writes to `raw/` literature directory only; never modifies wiki/knowledge base without user approval
@@ -107,7 +106,7 @@ A config template is provided in `templates/literature-push-template.md`.
 ## Pitfalls
 
 1. **Keyword drift**: Review keywords monthly — research directions evolve
-2. **Score inflation**: Subagents may inflate scores; always validate arithmetic
+2. **Score inflation**: Validate both arithmetic and the component rationales. Mark under-informed scores provisional instead of inferring novelty or method quality from venue or author reputation.
 3. **Duplicate creep**: Classic papers will reappear; maintain a dedup index
 4. **Wiki safety**: Pipeline writes to `raw/` only; wiki integration is manual
 5. **Cron locality**: Hermes cron is local, not cloud — machine must be running

@@ -11,7 +11,8 @@
 ━━━━━━━━━━━━━━━━━━━━
 
 🏅 #{N} | {Title}
-{Journal/Source}, {Year} | {Authors} et al. | {Institution} | ⭐ {score}/10 | 分流：{A-E tier}
+{Journal/Source}, {Year} | {Authors} et al. | {Institution} | ⭐ {score}/10{provisional_marker} | 分流：{A-E tier}
+评分：主题 {topic}/35 · 创新 {novelty}/20 · 方法 {method}/15 · 来源/作者 {source_signal}/10 · 实践 {practical}/10 · 归档 {archive}/10
 DOI: {doi if available} | arXiv: {arxiv_id if available}
 
 💡 一句话：{one-line takeaway — why this paper matters or why it is only deferred}
@@ -39,7 +40,7 @@ Daily pushes should NOT include a fixed "与 vault 的关联" field or forced wi
 | 🔬 方法 | 实验/模拟？什么盐体系？什么表征（CV/EIS/SEM/XRD/TEM）？什么合金？ |
 | 📊 关键结果 | 必须是具体数据或明确结论。禁止"有重要发现""提供了新的视角"等空泛表述 |
 | 🧭 点评 | 说明对研究主线的实际价值、局限、是否值得全文精读；不机械写 vault 关联 |
-| ⭐ 评分 | 粗筛综合得分（0-10），帮助判断优先级；内部六维评分仍用 0-100 并校验各维度上限 |
+| ⭐ 评分 | LATS 候选筛选效用分（0-10），帮助判断阅读优先级；同时保留内部六维 0-100 分项、理由、访问深度和 provisional 状态。它不是证据强度或结论置信度 |
 
 ## Example
 

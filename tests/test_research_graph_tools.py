@@ -112,7 +112,7 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 "title": "Conversion result",
             }
         )
-        assert "supporting evidence available" in content
+        assert "supporting result recorded" in content
         assert result["data"]["omitted_count"] == 0
         revision = result["data"]["graph"]["revision"]
         result_id = result["data"]["focus_node_id"]
@@ -125,7 +125,7 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 "relation": "opposes",
             }
         )
-        assert "opposing evidence available" in content
+        assert "opposing result recorded" in content
         snapshot = ResearchGraphStore(tmp_path).get_snapshot(graph_id)
         assert {
             edge["relation"]
@@ -203,6 +203,13 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
                 "required",
                 [],
             )
+            assert "global evidence grade" in properties["summary"]["description"]
+            assert "evidence_level" not in properties
+            assert "evidence_strength" not in properties
+        if tool["name"] == "record_bound_research_result":
+            assert "global evidence grade" in properties["summary"]["description"]
+            assert "evidence_level" not in properties
+            assert "evidence_strength" not in properties
         if tool["name"] == "set_research_result_judgment":
             assert properties["relation"]["enum"] == [
                 "supports",

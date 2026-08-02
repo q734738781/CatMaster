@@ -66,6 +66,8 @@ dependencies:
       # LLM-adjacent HTTP/search packages used by runtime integrations.
       - httpx==0.28.1
       - pypdf==6.14.2
+      - scansci-pdf==1.9.0
+      - cloakbrowser==0.5.3
       - tavily-python==0.7.23
 
       # Bounded Office document ingestion for agent-visible DOCX/XLSX/PPTX reads.

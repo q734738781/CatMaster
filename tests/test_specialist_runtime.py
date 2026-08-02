@@ -541,36 +541,81 @@ def test_general_purpose_policy_is_context_only_without_lane_or_concurrency_rule
         assert "at most one" not in policy
 
 
-def test_litreview_downloader_is_optional_and_stops_after_a_blocked_route() -> None:
+def test_litreview_source_acquisition_is_fused_into_academic_search() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    text = (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").read_text(encoding="utf-8")
-    assert "full-text acquisition should remain a decision-relevant subset" in text
-    assert "review may screen many candidates" in text
-    assert "If a reasonable acquisition route does not yield readable text" in text
-    assert "do not cycle through DOI pages" in text
-    assert "at most one" not in text
-    assert "one reasonable acquisition attempt" not in text
-    assert "full-text access into a default literature-review requirement" in text
-    assert "access as unknown until tested" not in text
+    text = (repo_root / "skills/litreview_agent/nature-academic-search/SKILL.md").read_text(encoding="utf-8")
+    assert "acquire_literature_source" in text
+    assert "legal non-browser OA routes" in text
+    assert "structural, page-count, and identity checks" in text
+    assert "Use the returned local path" in text
+    assert "Do not reopen the same remote page repeatedly" in text
+    assert not (repo_root / "skills/litreview_agent/nature-downloader/SKILL.md").exists()
     assert not (repo_root / "skills/research_specialist/nature-downloader").exists()
 
 
 def test_litreview_academic_search_scales_breadth_without_overriding_user_scope() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "skills/litreview_agent/nature-academic-search/SKILL.md").read_text(encoding="utf-8")
-    assert "do not let discovery collapse to a small familiar set" in text
-    assert "additional queries mostly repeat known papers" in text
-    assert "does not set a narrower boundary" in text
-    assert "do not silently reinterpret the requested final set" in text
-    assert "Keep discovery records shallow" in text
-    assert "deeper extraction only to the selected evidence-bearing set" in text
-    assert "full-text acquisition remains selective" in text.lower()
-    assert "Search summaries and abstracts are usable evidence" in text
-    assert "Browser use and the number of downloaded papers are never review-completion targets" in text
-    assert "Only record an access blocker after this direct attempt" not in text
+    assert "until new searches are mostly duplicative" in text
+    assert "An explicit brief or focused scope remains controlling" in text
+    assert "Keep candidate records shallow" in text
+    assert "Do not demand full methods-level extraction for every candidate" in text
+    assert "Full-text need is claim-dependent" in text
+    assert "An abstract or substantive search summary" in text
+    assert "Do not use a fixed paper count or full-text count" in text
     assert "50-60+ candidates" not in text
     assert "at most one" not in text
     assert not (repo_root / "skills/research_specialist/nature-academic-search").exists()
+
+
+def test_litreview_describes_evidence_by_attributes_not_source_tiers() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    skill_root = repo_root / "skills/litreview_agent/nature-academic-search"
+    skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    attributes = (skill_root / "references/evidence-attributes.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Describe evidence by attributes" in skill_text
+    assert "access-depth attributes, not reliability grades" in skill_text
+    assert "These are descriptive attributes, not ordered labels" in attributes
+    assert not (skill_root / "references/source-tiers.md").exists()
+    assert "T1" not in attributes
+    assert "T2" not in attributes
+    assert "T3" not in attributes
+
+
+def test_litreview_lats_selection_score_remains_distinct_from_evidence_attributes() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    pipeline_root = repo_root / "skills/litreview_agent/nature-literature-pipeline"
+    scoring = (pipeline_root / "references/scoring-system.md").read_text(
+        encoding="utf-8"
+    )
+    template = (pipeline_root / "templates/literature-push-template.md").read_text(
+        encoding="utf-8"
+    )
+    attributes = (
+        repo_root
+        / "skills/litreview_agent/nature-academic-search/references/evidence-attributes.md"
+    ).read_text(encoding="utf-8")
+
+    canonical_weights = (
+        ("Topic fit", "Topic Match", 35),
+        ("Novelty / contribution", "Novelty / Contribution", 20),
+        ("Method quality", "Method Quality", 15),
+        ("Source / author signal", "Source / Author Signal", 10),
+        ("Practical value", "Applied/Engineering Value", 10),
+        ("Archive value", "Archival Value", 10),
+    )
+    for template_label, scoring_label, weight in canonical_weights:
+        assert f"| {template_label} | {weight} |" in template
+        assert f"| {scoring_label} | {weight} |" in scoring
+    assert "LATS candidate-selection score" in scoring
+    assert "component vector with the total" in scoring
+    assert "mark the score `provisional`" in scoring
+    assert "candidate-selection or LATS utility score" in attributes
+    assert "scientific truth" in attributes
+    assert "must not replace these claim-level evidence attributes" in attributes
 
 
 def test_writing_task_scale_numbers_live_in_skills_not_system_prompts() -> None:
@@ -688,7 +733,8 @@ def test_specialist_prompts_default_to_on_demand_delegation() -> None:
 
     assert "requested deliverable or explicitly approved stage as the stop condition" in research_prompt
     assert "Default to on-demand closeout, not autonomous research expansion" in research_prompt
-    assert "Report weak evidence as a limitation" in research_prompt
+    assert "condition mismatch, incomplete provenance, unresolved alternatives" in research_prompt
+    assert "weak evidence" not in research_prompt
     assert "issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread" in research_prompt
     assert "Research Graph contract" in research_prompt
     assert "Never guess among multiple graphs" in research_prompt
@@ -698,8 +744,9 @@ def test_specialist_prompts_default_to_on_demand_delegation() -> None:
     for prompt in (research_prompt, experiment_prompt, writing_prompt):
         assert "current shared workspace makes parallel subagents unsafe" not in prompt
     assert "Run delegated review episodes sequentially" in peer_review_prompt
-    assert "Run delegated branches sequentially" in litreview_prompt
-    assert "wait for each to finish" in litreview_prompt
+    assert "general-purpose" not in litreview_prompt
+    assert "acquire_literature_source" not in litreview_prompt
+    assert "finalize_citations" not in litreview_prompt
     assert "treat its execution and domain QC as authoritative" in experiment_prompt
     assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
     assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
@@ -885,6 +932,71 @@ def test_codex_stream_overload_retry_is_narrow_and_centrally_configured() -> Non
     assert retry.on_failure == "error"
 
 
+def test_codex_incomplete_stream_retry_is_narrow_and_centrally_configured() -> None:
+    dropped_body = httpx.RemoteProtocolError(
+        "peer closed connection without sending complete message body "
+        "(incomplete chunked read)"
+    )
+    wrapped = openai.APIConnectionError(
+        request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses")
+    )
+    wrapped.__cause__ = dropped_body
+
+    assert runtime_mod._is_codex_incomplete_stream_error(dropped_body)
+    assert runtime_mod._is_codex_incomplete_stream_error(wrapped)
+    assert not runtime_mod._is_codex_incomplete_stream_error(
+        httpx.RemoteProtocolError("Server disconnected without sending a response")
+    )
+    assert not runtime_mod._is_codex_incomplete_stream_error(
+        openai.APIError(
+            "Our servers are currently overloaded. Please try again later.",
+            request=httpx.Request("POST", "https://chatgpt.com/backend-api/codex/responses"),
+            body={"code": "server_is_overloaded"},
+        )
+    )
+
+    retry = runtime_mod._build_codex_incomplete_stream_retry_middleware()[0]
+    assert type(retry).__name__ == "_CodexIncompleteStreamRetryMiddleware"
+    assert retry.max_retries == 2
+    assert retry.initial_delay == 2.0
+    assert retry.backoff_factor == 2.0
+    assert retry.max_delay == 10.0
+    assert retry.jitter is False
+    assert retry.on_failure == "error"
+
+
+def test_codex_incomplete_stream_retry_replays_only_the_model_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retry = runtime_mod._build_codex_incomplete_stream_retry_middleware()[0]
+    attempts = 0
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def handler(_request: Any) -> AIMessage:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body "
+                "(incomplete chunked read)"
+            )
+        return AIMessage(content="recovered")
+
+    monkeypatch.setattr(
+        "langchain.agents.middleware.model_retry.asyncio.sleep",
+        fake_sleep,
+    )
+    result = asyncio.run(retry.awrap_model_call(SimpleNamespace(), handler))
+
+    assert isinstance(result, AIMessage)
+    assert result.content == "recovered"
+    assert attempts == 3
+    assert delays == [2.0, 4.0]
+
+
 def test_deepagent_loader_registers_codex_retry_as_provider_middleware(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -905,9 +1017,15 @@ def test_deepagent_loader_registers_codex_retry_as_provider_middleware(
     assert len(registrations) == 1
     key, profile = registrations[0]
     assert key == "openai-codex"
-    retry = profile.materialize_extra_middleware()[0]
-    assert type(retry).__name__ == "ModelRetryMiddleware"
-    assert retry.retry_on is runtime_mod._is_codex_stream_overload_error
+    retries = profile.materialize_extra_middleware()
+    assert [type(retry).__name__ for retry in retries] == [
+        "ModelRetryMiddleware",
+        "_CodexIncompleteStreamRetryMiddleware",
+    ]
+    assert [retry.retry_on for retry in retries] == [
+        runtime_mod._is_codex_stream_overload_error,
+        runtime_mod._is_codex_incomplete_stream_error,
+    ]
 
 
 def test_codex_retry_profile_reaches_native_general_purpose(
@@ -917,12 +1035,12 @@ def test_codex_retry_profile_reaches_native_general_purpose(
     from deepagents.profiles.harness import harness_profiles
     from langchain_openai.chat_models.codex import _ChatOpenAICodex
 
-    built_retries: list[Any] = []
+    built_retry_groups: list[list[Any]] = []
 
     def build_retry() -> list[Any]:
-        retry = runtime_mod._build_codex_overload_retry_middleware()[0]
-        built_retries.append(retry)
-        return [retry]
+        retries = runtime_mod._build_codex_retry_middleware()
+        built_retry_groups.append(retries)
+        return retries
 
     monkeypatch.setitem(
         harness_profiles._HARNESS_PROFILES,
@@ -951,8 +1069,10 @@ def test_codex_retry_profile_reaches_native_general_purpose(
     assert model._get_ls_params()["ls_provider"] == "openai-codex"
     create_deep_agent(model=model, tools=[])
 
-    assert len(built_retries) == 2
-    assert built_retries[0] is not built_retries[1]
+    assert len(built_retry_groups) == 2
+    assert all(len(group) == 2 for group in built_retry_groups)
+    assert built_retry_groups[0][0] is not built_retry_groups[1][0]
+    assert built_retry_groups[0][1] is not built_retry_groups[1][1]
 
 
 def test_extract_final_text_ignores_user_message_fallback() -> None:
@@ -1696,7 +1816,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "Do not rely on a graph node to preserve full editor/reviewer comment text" in agent_kwargs["system_prompt"]
         assert "If `peer_review_specialist` gives you a saved review memo path, read that memo directly" in agent_kwargs["system_prompt"]
         assert "You remain the sole coordinator and final decision-maker" in agent_kwargs["system_prompt"]
-        assert "Report weak evidence as a limitation" in agent_kwargs["system_prompt"]
+        assert "condition mismatch, incomplete provenance, unresolved alternatives" in agent_kwargs["system_prompt"]
+        assert "weak evidence" not in agent_kwargs["system_prompt"]
         assert "current shared workspace makes parallel subagents unsafe" not in agent_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["experiment_specialist"]
         assert "runnable" in subagents_by_name["writing_specialist"]
@@ -1718,6 +1839,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert judge["tools"] == []
         assert proposer["model"] == {"model": "hypothesis_proposer-model"}
         assert judge["model"] == {"model": "evidence_judge-model"}
+        assert "evidence attributes, not a global strength grade" in judge["system_prompt"]
         assert "response_format" not in proposer
         assert "response_format" not in judge
         assert "does not execute scientific experiments" in proposer["description"]
@@ -1792,7 +1914,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["general-purpose"]
         assert "requested scope" in litreview_agent_kwargs["system_prompt"]
-        assert "paper-count target" in litreview_agent_kwargs["system_prompt"]
+        assert "fixed paper count or full-text count" in litreview_agent_kwargs["system_prompt"]
         assert "50-60" not in litreview_agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in litreview_agent_kwargs["system_prompt"]
         assert "metadata_agent" not in litreview_agent_kwargs["system_prompt"]
@@ -1803,15 +1925,14 @@ def test_specialist_lanes_start_with_staged_skills(
         )
         _assert_native_skill_groups(agent_kwargs, "litreview_agent", "writing_quality")
         assert "Own the review question" in agent_kwargs["system_prompt"]
-        assert "substantive summaries or abstracts" in agent_kwargs["system_prompt"]
-        assert "browser use and full-text acquisition as optional escalation" in agent_kwargs["system_prompt"]
-        assert "If a reasonable access route is blocked" in agent_kwargs["system_prompt"]
-        assert "instead of cycling through" in agent_kwargs["system_prompt"]
+        assert "Use each source only for what it supports" in agent_kwargs["system_prompt"]
+        assert "methods, conditions, quantitative comparisons" in agent_kwargs["system_prompt"]
+        assert "Distinguish reported results from your synthesis" in agent_kwargs["system_prompt"]
         assert "at most one" not in agent_kwargs["system_prompt"]
         assert "full-text access as unknown until tested" not in agent_kwargs["system_prompt"]
-        assert "local literature corpus" in agent_kwargs["system_prompt"]
-        assert "deterministic batch" in agent_kwargs["system_prompt"]
-        assert "preserve the same scope and stopping conditions" in agent_kwargs["system_prompt"]
+        assert "acquire_literature_source" not in agent_kwargs["system_prompt"]
+        assert "finalize_citations" not in agent_kwargs["system_prompt"]
+        assert "general-purpose" not in agent_kwargs["system_prompt"]
         assert "50-60" not in agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]

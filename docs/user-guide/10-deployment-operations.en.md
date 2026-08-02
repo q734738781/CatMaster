@@ -175,25 +175,7 @@ current run so later searches do not keep consuming or retrying the failed
 Tavily backend. Fallback results identify their actual scholarly backend and do
 not claim to be general-web coverage.
 
-The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata.
-
-Install the controlled browser with:
-
-```bash
-npm install -g agent-browser@0.31.1
-agent-browser install
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
-
-CatMaster starts the MCP subprocess itself. Do not copy a global Codex MCP configuration into the project. Optional settings include:
-
-```bash
-export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
-export CATMASTER_AGENT_BROWSER_HEADED=true
-```
-
-Keep the profile outside the workspace with private permissions. Users complete institutional login, CAPTCHA, and OTP themselves. Credentials and cookies do not belong in project files.
+The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata. `requirements/pc-conda.yml` installs `scansci-pdf==1.9.0` and `cloakbrowser==0.5.3`. CatMaster tries direct legal OA adapters first and keeps one ScanSci/CloakBrowser DOI-page pass internal as a low-priority fallback. `UNPAYWALL_EMAIL`, `OPENALEX_MAILTO`, `CORE_API_KEY`, and `SCANSCI_PDF_PROXY` are optional. No separate browser CLI, model-visible browser tools, or browser-profile configuration is required.
 
 ## Binding and access patterns
 

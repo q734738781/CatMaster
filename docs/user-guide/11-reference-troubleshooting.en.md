@@ -211,12 +211,7 @@ Files overwrites same-name uploads. Restore from an external backup if necessary
 
 ## Literature Review finds a title but no full text
 
-This is not necessarily a search failure or a reason to keep pursuing full text. Use an abstract or substantive search summary when it supports the required statement and explain its boundary. Only when a key decision depends on missing detail should the agent check open-access or legitimate institutional access once; after failure it should continue with other sources rather than retrying. Do not bypass CAPTCHA or paywalls.
-
-```bash
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
+This is not necessarily a search failure or a reason to keep pursuing full text. Use an abstract or substantive search summary when it supports the required statement and explain its boundary. Only when a key decision depends on missing detail should the agent call `acquire_literature_source`. The tool tries direct legal OA sources, then one internal ScanSci/CloakBrowser pass on the DOI landing page, accepts only a structurally valid and identity-matched PDF, and otherwise saves one static page snapshot. After failure, continue with other sources rather than retrying publisher pages or mirrors.
 
 Record abstract-only evidence as abstract. Resolve metadata conflicts from DOI, publisher, and paper records while preserving version differences. For missing local-corpus hits, inspect the ingest manifest, parse status, and document limits.
 

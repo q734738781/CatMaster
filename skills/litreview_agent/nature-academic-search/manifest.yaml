@@ -13,8 +13,8 @@ references:
       path: references/search-strategy.md
     - condition: DOI/title deduplication
       path: references/dedup-engine.md
-    - condition: source reliability tiers
-      path: references/source-tiers.md
+    - condition: claim-evidence table design or disputed evidence synthesis
+      path: references/evidence-attributes.md
     - condition: local RIS or BibTeX conversion
       path: references/ris-bibtex-format.md
     - condition: local citation-file conversion outside the active Agent tool path

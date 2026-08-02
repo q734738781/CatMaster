@@ -68,7 +68,7 @@ New graph 只强制填写研究问题。标题、完成条件、编排模式和 
 
 图中只有三种科学节点：
 
-- Hypothesis 显示简短命题、相对重要性及由所有 Result 关系派生的证据状态。
+- Hypothesis 显示简短命题、相对重要性及由所有 Result 派生的关系概览；这不是证据等级。
 - Experiment proposal 显示 objective、plan、decision rule、execution lane、预期决策价值、粗粒度算力成本和准备或执行状态。
 - Result 显示简短观察或结果，并通过带文字标签的关系连接它支持、反对或无法区分的 Hypothesis。文献发现、合作组结果和历史观察可以不绑定图中 Experiment 直接记录。
 

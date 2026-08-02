@@ -1,3 +1,4 @@
+from .acquisition import AcquireLiteratureSourceInput, acquire_literature_source
 from .citations import FinalizeCitationsInput, finalize_citations
 from .corpus import (
     IngestLiteratureFilesInput,
@@ -54,6 +55,8 @@ __all__ = [
     "SemanticScholarClient",
     "SemanticScholarRateLimitError",
     "OnlineSearchAdapter",
+    "AcquireLiteratureSourceInput",
+    "acquire_literature_source",
     "IngestLiteratureFilesInput",
     "QueryLiteratureCorpusInput",
     "FinalizeCitationsInput",

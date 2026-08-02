@@ -145,7 +145,17 @@ class ExperimentBody(BaseModel):
 class ResultBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    summary: str = Field(..., min_length=1, max_length=4_000)
+    summary: str = Field(
+        ...,
+        min_length=1,
+        max_length=4_000,
+        description=(
+            "Observed or derived scientific outcome. Separate the observation "
+            "from causal interpretation, and state modality, applicable conditions, "
+            "or provenance in ordinary scientific language when they affect meaning. "
+            "Do not assign a global evidence grade."
+        ),
+    )
 
     _clean_summary = field_validator("summary")(_clean_text)
 

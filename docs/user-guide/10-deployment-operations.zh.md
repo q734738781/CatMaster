@@ -173,25 +173,7 @@ self-evolution role 都经过同一个 provider resolver。对于 CatMaster 搜�
 失败会在当前 run 内熔断 Tavily，后续搜索不再继续消耗或重试该后端；降级结果会标明
 实际学术索引来源，不会伪装成通用网页覆盖。
 
-实际可见 tools 以当前 Literature Review runtime 为准。API key 提供访问能力，不保证全文权限或元数据完全正确。
-
-受控浏览器安装：
-
-```bash
-npm install -g agent-browser@0.31.1
-agent-browser install
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
-
-CatMaster 自己启动 MCP 子进程，不要把 Codex 全局 MCP 配置复制进项目。可选设置：
-
-```bash
-export CATMASTER_AGENT_BROWSER_PROFILE="$HOME/.config/catmaster/browser-profile"
-export CATMASTER_AGENT_BROWSER_HEADED=true
-```
-
-Profile 必须位于 workspace 外并限制权限。机构登录、验证码和 OTP 由用户在浏览器中完成，cookie 与密码不进入项目文件。
+实际可见 tools 以当前 Literature Review runtime 为准。API key 提供访问能力，不保证全文权限或元数据完全正确。`requirements/pc-conda.yml` 会安装 `scansci-pdf==1.9.0` 和 `cloakbrowser==0.5.3`。CatMaster 先调用合法、非浏览器的 OA adapters，再把一次 ScanSci/CloakBrowser DOI 落地页访问作为内部低优先级兜底。`UNPAYWALL_EMAIL`、`OPENALEX_MAILTO`、`CORE_API_KEY` 和 `SCANSCI_PDF_PROXY` 都是可选配置；不需要额外安装浏览器 CLI、暴露模型浏览器 tools 或配置 browser profile。
 
 ## 启动方式与访问范围
 

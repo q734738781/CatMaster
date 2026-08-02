@@ -281,7 +281,7 @@ class ResearchGraphContextBuilder:
     def _node_line(
         cls,
         node: dict[str, Any],
-        evidence_state: str = "",
+        result_relation_summary: str = "",
         *,
         detail_limit: int = 480,
     ) -> str:
@@ -309,7 +309,11 @@ class ResearchGraphContextBuilder:
             detail = " | ".join(details)
         else:
             detail = body["summary"]
-        suffix = f" | evidence: {evidence_state}" if evidence_state else ""
+        suffix = (
+            f" | result relations: {result_relation_summary}"
+            if result_relation_summary
+            else ""
+        )
         title = cls._compact_text(node["title"], 120)
         detail = cls._compact_text(detail, detail_limit)
         return (
@@ -333,15 +337,15 @@ class ResearchGraphContextBuilder:
                 continue
             relations = result_edges.get(str(node["node_id"]), set())
             if "supports" in relations and "opposes" in relations:
-                states[str(node["node_id"])] = "conflicting evidence"
+                states[str(node["node_id"])] = "supporting and opposing results recorded"
             elif "supports" in relations:
-                states[str(node["node_id"])] = "supporting evidence available"
+                states[str(node["node_id"])] = "supporting result recorded"
             elif "opposes" in relations:
-                states[str(node["node_id"])] = "opposing evidence available"
+                states[str(node["node_id"])] = "opposing result recorded"
             elif "inconclusive" in relations:
-                states[str(node["node_id"])] = "not yet distinguished"
+                states[str(node["node_id"])] = "recorded result does not distinguish"
             else:
-                states[str(node["node_id"])] = "no results yet"
+                states[str(node["node_id"])] = "no linked result yet"
         return states
 
     def build(

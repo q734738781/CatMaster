@@ -324,15 +324,11 @@ class CandidateGate:
         surfaces = self._runtime_tool_surfaces().get(group, ())
         if not surfaces:
             return set(_DEEPAGENT_BUILTINS)
-        from catmaster.runtime.literature.browser_mcp import (
-            AGENT_BROWSER_TOOL_ALLOWLIST,
-        )
 
         available = (
             set(self._registered_tool_names)
             | _DEEPAGENT_BUILTINS
             | _DEEPAGENT_TASK_TOOL
-            | set(AGENT_BROWSER_TOOL_ALLOWLIST)
         )
         resolved = [set(surface) & available for surface in surfaces]
         # Shared skill groups are mounted into every listed consumer. A declared
@@ -347,9 +343,6 @@ class CandidateGate:
         them lazily avoids a second, drifting copy in the self-evolution system.
         """
 
-        from catmaster.runtime.literature.browser_mcp import (
-            AGENT_BROWSER_TOOL_ALLOWLIST,
-        )
         from catmaster.specialists import runtime as specialist_runtime
 
         builtins = set(specialist_runtime._DEEPAGENT_BUILTIN_TOOL_NAMES)
@@ -374,7 +367,6 @@ class CandidateGate:
         )
         litreview = (
             set(specialist_runtime._LITREVIEW_LOCAL_TOOL_ALLOWLIST)
-            | set(AGENT_BROWSER_TOOL_ALLOWLIST)
             | builtins
             | autonomous
         )

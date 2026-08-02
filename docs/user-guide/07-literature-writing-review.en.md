@@ -40,7 +40,9 @@ and list alternative explanations the paper does not exclude.
 
 ### Evidence tables connect claims to sources
 
-The most useful intermediate artifact in a review is often an evidence table rather than prose. Literature Review can record system, method, conditions, result, limitation, and evidence level for each paper, then map individual claims to supporting or contradicting sources. Writing can use that map without guessing which citation belongs to each sentence.
+The most useful intermediate artifact in a review is often an evidence table rather than prose. Literature Review can record the scientific modality, inspected access depth, system, method, conditions, reported observation, interpretation, provenance, and relationship to each claim. These are evidence attributes, not a high/medium/low grade assigned to the whole paper. Writing can use that map without guessing which citation belongs to each sentence.
+
+The scheduled literature pipeline may also calculate a six-component LATS selection score to rank candidate papers for reading, delivery, or archival. It retains topic fit, novelty/contribution, method quality, source/author signal, practical value, and archive value together with the total, rationale, access depth, and provisional status. This operational score is useful for triage but does not measure evidence strength, scientific truth, or confidence in a claim.
 
 Deduplicate title, DOI, preprint, and journal versions early. After paper selection, `finalize_citations` resolves author, journal, year, DOI, and export records in one batch. `nature-ref-verifier` can audit an existing bibliography field by field and flag volume-year, author-order, pagination, and DOI conflicts.
 
@@ -61,9 +63,9 @@ Literature skills also support claim-level citation searches restricted to Natur
 <details>
 <summary>Sources of Literature Review capability</summary>
 
-Direct tools are `web_search`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`, plus controlled browser tools when `agent-browser` is available. `web_search` is provider-routed: OpenAI/Codex roles use hosted search and other providers use the Tavily implementation.
+Direct tools are `web_search`, `acquire_literature_source`, `ingest_literature_files`, `query_literature_corpus`, and `finalize_citations`. `web_search` is provider-routed: OpenAI/Codex roles use hosted search and other providers use the CatMaster implementation with its configured fallback. Selected-source acquisition is direct-first, may use one internal ScanSci/CloakBrowser pass on a DOI landing page, validates PDFs, and caches a static page once when no PDF is available.
 
-Skills are `nature-academic-search`, `nature-downloader`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. Tools perform search, ingestion, retrieval, and metadata finalization. Skills define scope, evidence levels, lawful acquisition boundaries, reading form, and delivery quality.
+Skills are `nature-academic-search`, `nature-reader`, `nature-citation`, `nature-ref-verifier`, and `nature-literature-pipeline`. Acquisition guidance is fused into `nature-academic-search`. Tools perform search, source acquisition, validation, ingestion, retrieval, and metadata finalization; skills define scientific scope and evidence use.
 
 </details>
 

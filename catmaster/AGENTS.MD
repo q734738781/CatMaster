@@ -103,8 +103,10 @@ tool or compatibility route.
 
 - one provider-routed `web_search` capability: hosted OpenAI web search for
   `codex_oauth`/OpenAI Responses models, otherwise the CatMaster Tavily tool;
-- a filtered, stateful `agent-browser` MCP surface for dynamic pages and
-  user-authorized browser sessions;
+- one high-level selected-source acquisition tool that tries direct legal
+  open-access routes first, optionally uses one internal ScanSci/CloakBrowser
+  DOI-page fallback, validates PDF structure and identity, and otherwise
+  saves a single static public-page snapshot for local reading;
 - local full-text corpus ingest/query tools;
 - one deterministic batch citation finalizer.
 
@@ -122,14 +124,13 @@ deterministic fallback during final citation resolution. Other specialists and
 workers receive the same provider-routed search surface for narrow checks. Do
 not bind hosted and Tavily tools under the same `web_search` name in one agent.
 
-Search summaries, abstracts, and verified metadata are the default Literature
-Review evidence route. Use them for claims they actually support and qualify a
-material limitation in ordinary language. Browser access and full-text
-acquisition are optional escalation for decision-critical details or an
-explicit full-paper request, not completion criteria. After one reasonable
-access attempt fails, continue with other evidence instead of trying alternate
-pages or downloads repeatedly. Do not add numeric confidence scores, mandatory
-per-paper evidence labels, or entitlement checks to enforce this policy.
+Search summaries, abstracts, and verified metadata remain valid Literature
+Review evidence for the claims they actually support. Selected-source
+acquisition is used when decision-critical details require more depth, not as a
+per-paper completion criterion. The agent reads returned local artifacts rather
+than controlling browser state or repeatedly fetching the same page. Do not add
+numeric confidence scores, mandatory per-paper evidence labels, or entitlement
+checks to enforce this policy.
 
 Physical/chemical property lookups are a literature-first case: answer from public literature, citation-grade metadata, or existing workspace evidence before proposing new calculations. Missing property evidence is not implicit approval to run DFT; ask for or invite an explicit calculation instruction when the property is computable.
 

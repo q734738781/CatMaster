@@ -17,8 +17,8 @@
   arXiv / OpenAlex / Crossref / Semantic Scholar（自动降级）
        ↓
 六维粗筛（30 → 5 篇）
-  方向匹配 × 35 + 方法论 × 20 + 期刊质量 × 15
-  + 网络关联 × 10 + 工程价值 × 10 + 归档价值 × 10
+  方向匹配 × 35 + 创新/贡献 × 20 + 方法质量 × 15
+  + 来源/作者信号 × 10 + 实践价值 × 10 + 归档价值 × 10
        ↓
 精读（top 5）
   标注来源：Full-text / Abstract only / Metadata only
@@ -79,7 +79,8 @@ nature-literature-pipeline/
 
 ## 内置保护
 
-- **评分校验**：每个维度不超过上限，总分自动重算
+- **评分校验**：每个维度不超过上限，总分自动重算；保留六维分项、理由、访问深度和 provisional 状态
+- **评分边界**：综合分只用于候选筛选和阅读优先级，不表示证据强度、科学真实性或结论置信度
 - **三重去重**：DOI / arXiv ID / OpenAlex ID
 - **自动降级**：Semantic Scholar 不可用 → 自动切 OpenAlex + Crossref + arXiv
 - **只写文献库**：每日管线只写 `raw/` 目录，不自动改 wiki/知识库

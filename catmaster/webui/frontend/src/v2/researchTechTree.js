@@ -9,11 +9,11 @@ const RELATION_LABELS = {
 };
 
 const EVIDENCE_LABELS = {
-  conflicting_evidence: "Conflicting supporting and opposing evidence",
-  supporting_evidence: "Supporting evidence available",
-  opposing_evidence: "Opposing evidence available",
-  not_distinguished: "Not yet distinguished",
-  no_results: "No results yet",
+  conflicting_evidence: "Both supporting and opposing results recorded",
+  supporting_evidence: "Supporting result recorded",
+  opposing_evidence: "Opposing result recorded",
+  not_distinguished: "Recorded result does not distinguish",
+  no_results: "No linked result yet",
 };
 
 const EXPERIMENT_STATE_LABELS = {
@@ -40,7 +40,7 @@ export function relationLabel(relation) {
 }
 
 export function evidenceStateLabel(state) {
-  return EVIDENCE_LABELS[String(state || "")] || "No evidence state";
+  return EVIDENCE_LABELS[String(state || "")] || "No result relation summary";
 }
 
 export function experimentStateLabel(state) {

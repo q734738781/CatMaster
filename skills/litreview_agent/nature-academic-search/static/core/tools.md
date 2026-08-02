@@ -4,12 +4,12 @@ CatMaster's active literature surface is intentionally small:
 
 | Capability | Tool surface |
 |---|---|
-| Efficient discovery | `web_search` (Tavily) |
-| Optional dynamic or authorized page access | filtered `agent_browser_*` MCP tools |
+| Efficient discovery | provider-routed `web_search` |
+| Selected-source acquisition and local caching | `acquire_literature_source` |
 | Optional local full-text evidence | `ingest_literature_files`, `query_literature_corpus` |
 | Final metadata and bibliography | `finalize_citations` |
 
-The LitReview model does not receive OpenAlex, Semantic Scholar, PubMed,
-Scopus, ScienceDirect, Web of Science, or an academic-search MCP inventory.
-OpenAlex is only an internal deterministic fallback used by citation
-finalization when Crossref fails.
+The LitReview model does not receive raw OpenAlex, Semantic Scholar, PubMed,
+Scopus, ScienceDirect, Web of Science, browser-control, or academic-search MCP
+inventories. Scholarly indexes and repositories may be used internally by the
+high-level search, acquisition, and citation tools.

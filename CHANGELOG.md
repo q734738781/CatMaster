@@ -6,6 +6,13 @@ references describe the current system.
 
 ## Unreleased
 
+### Runtime Reliability
+
+- Codex OAuth model calls now retry a prematurely closed chunked SSE response
+  twice with short bounded backoff. This recovery replays only the interrupted
+  model call, not the complete specialist episode or previously completed local
+  tool work; the existing longer overload retry policy remains separate.
+
 ### Agent Prompting
 
 - Writing system prompts no longer prescribe claim counts or fixed review,
@@ -26,6 +33,16 @@ references describe the current system.
 
 ### Literature Review
 
+- Literature Review now exposes one selected-source acquisition tool instead of
+  raw browser navigation, page-state, screenshot, and download primitives. The
+  tool uses pinned ScanSci 1.9.0 direct OA adapters first, keeps pinned
+  CloakBrowser 0.5.3 behind one internal ScanSci DOI-page fallback, validates
+  PDF structure, page count, and paper identity, caches accepted files locally,
+  and finally falls back to one local static-page snapshot. The separate downloader skill
+  has been removed and its source-acquisition SOP merged into academic search.
+- The Literature Review system prompt now retains scientific role and evidence
+  boundaries only. Concrete acquisition, caching, corpus, delegation, and
+  citation-finalization workflow guidance lives in the tool schemas and skills.
 - Direct Literature Review threads no longer receive Research Graph result or
   blocker writeback tools. Those actions are added only when the thread is
   actually bound to an Experiment node.
@@ -40,9 +57,22 @@ references describe the current system.
   Explicit user limits control discovery breadth, while broad reviews expand by
   coverage gaps and stop at saturation. Candidate discovery remains shallow
   until papers are selected for deeper evidence extraction.
+- Literature Review now describes evidence through claim-relative attributes:
+  scientific modality, epistemic stage, access depth, claim relationship,
+  condition fit, and independence/provenance. The active skill no longer ranks
+  retrieval APIs or whole papers with source or evidence strength tiers.
+- LATS literature triage retains a six-component 0-100 selection score for
+  reading and archival priority. Its rubric is now consistent across the
+  pipeline and push template, preserves component rationales and access depth,
+  and explicitly does not represent evidence strength or claim confidence.
 
 ### Research Graph
 
+- Research Graph Results and `evidence_judge` now preserve observation,
+  derived analysis, interpretation, modality, conditions, and provenance as
+  scientific attributes without adding evidence-level fields, confidence
+  scores, or composite grades. Result-to-Hypothesis edges remain relational
+  judgments rather than strength rankings.
 - Research planning now lets the proposer choose the number of scientifically
   distinct temporary branches instead of exposing fixed 12-Hypothesis and
   24-Experiment quotas. Temporary experiments may remain drafts until their

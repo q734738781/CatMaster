@@ -1747,7 +1747,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
             ) : null}
             {modal === "result" ? (
               <>
-                <Field label="Observed result" hint="State what was observed before adding a causal interpretation."><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field>
+                <Field label="Observed or derived result" hint="Separate observation, derived analysis, and causal interpretation. Include modality, applicable conditions, or provenance when they affect meaning; do not assign a global evidence grade."><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field>
                 <OptionalDetails label="Optional provenance and interpretation">
                   <Field label="Title"><input value={form.title || ""} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
                   <Field label="Producing experiment" hint="Leave empty for a literature finding, collaborator result, historical observation, or other evidence obtained outside this graph.">
@@ -1893,7 +1893,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
                     </Field>
                   </>
                 ) : null}
-                {selectedNode.kind === "result" ? <Field label="Summary"><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field> : null}
+                {selectedNode.kind === "result" ? <Field label="Observed or derived result" hint="Preserve observation, analysis, conditions, and provenance as scientific attributes rather than a global evidence grade."><textarea required value={form.summary || ""} onChange={(event) => setForm({ ...form, summary: event.target.value })} /></Field> : null}
               </>
             ) : null}
             {modal === "ref" ? (

@@ -203,14 +203,9 @@ Files 上传同名文件会覆盖。若内容被覆盖，从外部备份恢复�
 
 ## Literature Review 找到题目却没有全文
 
-这通常不是搜索失败，也不一定需要继续找全文。摘要或有信息量的检索结果足以支持当前表述时，直接使用并说明边界。只有关键判断依赖摘要中没有的细节时，才确认开放获取或合法机构权限，并做一次合理的浏览器访问；失败后继续使用其他来源，不反复尝试。Agent 不会绕过 CAPTCHA 或付费墙。
+这通常不是搜索失败，也不一定需要继续找全文。摘要或有信息量的检索结果足以支持当前表述时，直接使用并说明边界。只有关键判断依赖摘要中没有的细节时，才调用 `acquire_literature_source`。工具会先尝试直接合法 OA 来源，再通过 ScanSci/CloakBrowser 访问一次 DOI 落地页，只接受结构和身份均核验通过的 PDF；否则最多保存一次静态页面。失败后继续使用其他来源，不再反复尝试出版社页面和镜像。
 
-```bash
-agent-browser doctor --offline --quick
-agent-browser mcp --help
-```
-
-只有摘要时，把证据级别记录为 abstract。引用元数据冲突时，以 DOI、publisher 页面和论文自身为主要依据，并保存版本差异。本地 corpus 漏文时检查 ingest manifest、parse status 和文件是否超出解析限制。
+只有摘要时，把访问深度记录为 abstract，并把结论限制在摘要明确陈述的范围内；不要把 abstract 当作证据强弱等级。引用元数据冲突时，以 DOI、publisher 页面和论文自身为主要依据，并保存版本差异。本地 corpus 漏文时检查 ingest manifest、parse status 和文件是否超出解析限制。
 
 ## Remote task 在 catalog 中不存在
 

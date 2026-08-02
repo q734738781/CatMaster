@@ -98,7 +98,7 @@ test("relations and evidence states have readable non-colour labels", () => {
   assert.equal(relationLabel("unknown"), "related");
   assert.equal(
     evidenceStateLabel("conflicting_evidence"),
-    "Conflicting supporting and opposing evidence",
+    "Both supporting and opposing results recorded",
   );
   assert.equal(experimentStateLabel("has_results"), "Results recorded");
   assert.equal(executionLaneLabel("literature_review"), "Literature review");

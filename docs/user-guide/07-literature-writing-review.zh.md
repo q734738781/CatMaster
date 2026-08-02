@@ -38,7 +38,9 @@ Literature Review 可以处理快速查证，也可以承担较完整的主题�
 
 ### 证据表把论文与具体主张连接起来
 
-主题综述最有价值的中间产物往往不是一段文字，而是一张可审查的证据表。Agent 可以按论文记录材料体系、方法、实验或计算条件、主要结果、限制和证据等级，再把具体 claim 映射到支持或反驳它的来源。这样 Writing Agent 后续起草时，不必重新猜每句话应该引用哪篇论文。
+主题综述最有价值的中间产物往往不是一段文字，而是一张可审查的证据表。Agent 可以记录科学模态、实际查看的访问深度、材料体系、方法、条件、直接观察、作者解释、来源独立性，以及它与具体 claim 的关系。这些是证据属性，不是给整篇论文打高、中、低等级。这样 Writing Agent 后续起草时，不必重新猜每句话应该引用哪篇论文。
+
+持续更新的文献管线仍可计算六维 LATS 候选筛选分，用于安排精读、推送或归档优先级。它同时保留主题匹配、创新/贡献、方法质量、来源/作者信号、实践价值、归档价值六个分项，以及总分、理由、访问深度和 provisional 状态。这个操作性分数用于文献分流，不表示证据强度、科学真实性或某个 claim 的置信度。
 
 对题名、DOI、预印本和期刊版本的去重应在检索早期进行。确定最终论文后，`finalize_citations` 会统一解析 DOI、作者、期刊、年份等字段并导出引用文件。`nature-ref-verifier` 还可以逐字段检查已有参考文献，标出卷年冲突、作者顺序、页码和 DOI 异常。
 
@@ -58,9 +60,9 @@ unavailable.md。不要让同一篇论文的预印本与期刊版本重复计数
 <details>
 <summary>Literature Review 的能力来源</summary>
 
-直接 tools：`web_search`、`ingest_literature_files`、`query_literature_corpus`、`finalize_citations`，以及部署成功后由 `agent-browser` 提供的受控浏览器 tools。`web_search` 会按 provider 路由：OpenAI/Codex 角色使用托管搜索，其他 provider 使用 Tavily 实现。
+直接 tools：`web_search`、`acquire_literature_source`、`ingest_literature_files`、`query_literature_corpus`、`finalize_citations`。`web_search` 会按 provider 路由：OpenAI/Codex 角色使用托管搜索，其他 provider 使用带配置降级的 CatMaster 实现。选中文献获取优先走直接 OA 路径，必要时内部通过 ScanSci/CloakBrowser 访问一次 DOI 落地页；PDF 必须经过校验，没有 PDF 时只缓存一次静态页面。
 
-主要 skills：`nature-academic-search`、`nature-downloader`、`nature-reader`、`nature-citation`、`nature-ref-verifier` 和 `nature-literature-pipeline`。Tool 负责搜索、导入、查询和引用定稿；skill 负责检索策略、证据分级、全文获取边界、精读格式和交付质量。
+主要 skills：`nature-academic-search`、`nature-reader`、`nature-citation`、`nature-ref-verifier` 和 `nature-literature-pipeline`。获取流程已融合进 `nature-academic-search`。Tool 负责搜索、来源获取与校验、导入、查询和引用定稿；skill 负责科学范围与证据使用。
 
 </details>
 

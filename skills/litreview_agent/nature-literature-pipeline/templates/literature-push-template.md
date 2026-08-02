@@ -94,7 +94,7 @@ Deduplicate by DOI, arXiv ID, OpenAlex ID, then normalized title. Prefer the ric
 | Practical value | 10 |
 | Archive value | 10 |
 
-Rules: no dimension exceeds its weight; total is the sum; display as `⭐ 8.7/10`; never output impossible scores like `11/10`.
+Rules: no dimension exceeds its weight; total is the sum; retain all six components and one short rationale. Record reading/access depth separately. If available material cannot support novelty or method assessment, mark the selection score provisional and name the under-informed components. Display the normalized total as `⭐ 8.7/10`; never output impossible scores like `11/10`. This ranks triage utility, not evidence strength, scientific truth, or claim confidence.
 
 ## Reading Depth Labels
 
@@ -107,7 +107,8 @@ Every paper must show one of: Full text read, Abstract only, Metadata only, Proj
 Candidate pool: {M} → selected: {N}
 
 🏅 #{rank} | {title}
-{venue/source}, {year} | {authors} | ⭐ {score}/10 | Reading: {reading_depth}
+{venue/source}, {year} | {authors} | ⭐ {score}/10{provisional_marker} | Reading: {reading_depth}
+Score: topic {topic}/35 · novelty {novelty}/20 · method {method}/15 · source/author {source_signal}/10 · practical {practical}/10 · archive {archive}/10
 ID: {doi/arxiv/openalex if available}
 
 💡 One-line takeaway: {why this matters}
@@ -139,6 +140,8 @@ Search:
 
 Filter:
 - Score by topic fit 35, novelty 20, method quality 15, source/author signal 10, practical value 10, archive value 10.
+- Preserve the six component scores, total, one-line rationale, reading depth, and whether the score is provisional.
+- Use the score only for candidate triage and reading priority; assess scientific claims through evidence attributes instead.
 - Select up to {FINAL_SELECTION_COUNT} papers.
 - If fewer are worth reading, send fewer.
 

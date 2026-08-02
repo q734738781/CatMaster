@@ -6,5 +6,5 @@ Maintained chapters:
 - [Remote tasks and execution](../user-guide/08-remote-execution.en.md)
 
 The new manual separates control-plane helpers from managed remote scientific
-engines and documents agent-browser, JSmol, VASPKIT, VESTA, Pandoc/Chrome, TeX,
+engines and documents the internal CloakBrowser fallback, JSmol, VASPKIT, VESTA, Pandoc/Chrome, TeX,
 PySR/Julia, and remote program boundaries.

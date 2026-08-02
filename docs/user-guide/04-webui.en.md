@@ -60,7 +60,7 @@ New graph requires only a research question. Title, completion criterion, orches
 
 The graph has three scientific node types:
 
-- A Hypothesis shows its concise claim, relative importance, and an evidence state derived from all related Results.
+- A Hypothesis shows its concise claim, relative importance, and a relationship summary derived from all related Results; this is not an evidence grade.
 - An Experiment proposal shows its objective, plan, decision rule, execution lane, expected decision value, coarse compute cost, and preparation or execution state.
 - A Result shows a concise observation or outcome. Literature findings, collaborator results, and historical observations can be recorded without a graph Experiment. Labeled relationships connect a Result to the Hypotheses that it supports, opposes, or does not distinguish.
 

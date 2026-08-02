@@ -37,7 +37,7 @@ date_read: 2026-06-03
 
 ```markdown
 ## 核心主张
-[1-3 sentences. Mark evidence strength: 成熟共识 / 学界共识 / 争议 / 推测]
+[1-3 sentences. Mark the claim's consensus status when useful: 成熟共识 / 形成中共识 / 争议 / 作者提出或本文推测. This is a descriptive attribute, not an evidence-strength grade.]
 
 ## 方法
 [Key methods, advantages, limitations]
@@ -46,7 +46,7 @@ date_read: 2026-06-03
 [Bullet points of key data/findings/quantitative results]
 
 ## 批判
-[Strengths, weaknesses, relevance gaps, evidence reliability]
+[Method limitations, relevance gaps, access depth, condition fit, provenance, and unresolved alternatives]
 
 ## Connection to Research
 [How this connects to the user's thesis: NO2-/NO3- ratio, CV fingerprint, atmosphere control, Hitec purification, material selection, experimental design]
