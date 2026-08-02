@@ -237,13 +237,98 @@ objective, short plan, decision rule, and execution lane. Leave these bands
 empty when they are not known; they are not confidence or truth scores.
 Preserve competing branches. Auto orchestration may select one next experiment
 per graph without pruning the other branches. Planning compares the complete
-concise active hypothesis set and runnable experiment frontier, then recommends
-one route with a short scientific reason when the evidence distinguishes a
-useful next step. The proposer decides how many scientifically distinct
-temporary branches the evidence warrants; do not impose a hypothesis/experiment
-quota. A host-only total safety guard may bound one abnormal staging payload,
-but it is not a search target or scientific policy. Do not persist numeric
-utility, score deltas, synthetic visits, or search-tree statistics.
+concise scientific graph, then recommends one route with a short scientific
+reason when the evidence distinguishes a useful next step. The proposer decides
+how many scientifically distinct temporary branches the evidence warrants; do
+not impose a hypothesis/experiment quota. Do not persist numeric utility, score
+deltas, synthetic visits, or search-tree statistics.
+
+Research Graph state must remain fully accessible at the graph layer, but it
+does not need to be copied into every model call. A planning turn may start with
+a deterministic focus-aware snippet. The snippet must identify itself as
+partial, report complete graph counts, and provide addressable handles for
+further inspection. It must never turn an omitted node into an implied absence.
+
+Do not serialize the Research Graph into Markdown or add separate preview,
+search, and detail tools. Give the bound Research specialist, hypothesis
+proposer, and evidence judge one host-bound read-only SQLite query tool whose
+model-visible input is only a required SQL string. A general-purpose child under
+the Research specialist may inherit this read-only tool through the existing GP
+factory; general-purpose children under other entrypoints must not receive it.
+The host derives the workspace, graph ID, and planning revision from trusted
+thread state. The model must not pass database paths, binding identifiers,
+capacity controls, or output modes.
+
+The query surface preserves the canonical `research_graphs`, `research_nodes`,
+`research_edges`, `research_refs`, `research_launches`, and `research_planning`
+columns and SQLite types, including raw `body_json`. It may additionally expose
+the canonical `workspace_artifacts` and `thread_messages` schemas, but only for
+rows reachable from refs on the bound graph. Scope every logical table before
+model-issued SQL runs. A SQLite authorizer cannot apply row filters by itself.
+Use connection-local logical views or an equivalent host-bound row scope,
+preserve canonical table names for agent queries, and deny model access to
+`main.*`, unreferenced owner rows, and every other workspace table. Do not
+require the model to repeat a `graph_id` predicate. Permit one read statement
+with standard joins, recursive CTEs, aggregation, window functions, and JSON1.
+Enforce read-only access with SQLite read-only mode, `PRAGMA query_only=ON`, and
+a SQLite authorizer. Deny DML, DDL, `ATTACH`, `DETACH`, writable pragmas,
+extension loading, and unapproved tables. Do not rely on SQL prefix checks or
+regular expressions as the security boundary, and do not expose a general shell
+merely to run SQLite.
+
+Add a narrow staged `research_reasoning` skill root containing concise
+`research-graph-query` and `research-evidence-reconciliation` skills. The
+Research specialist loads its ordinary coordinator root plus this reasoning
+root. Its general-purpose child receives both through the existing factory
+without adding graph instructions to the GP system prompt. Custom hypothesis
+proposer and evidence-judge subagents receive only the reasoning root through
+their own `skills` fields; custom DeepAgents subagents do not inherit parent
+skills. DeepAgents skill sources contain skill subdirectories, so never pass one
+skill directory as a source. Do not expose the entire `research_specialist` root
+to the reasoning subagents merely to make one graph skill visible.
+
+The reasoning subagents must retain `ls`, `glob`, `grep`, `read_file`, and
+`read_document` so they can load their skills and follow local source handles.
+Continue to block general file mutation, shell execution, and patch tools.
+Provider search and selected-source acquisition may remain available for DOI or
+URL refs; literature acquisition is a justified specialized boundary, not a
+substitute for local source reading. The query skill explains schemas,
+typed-edge directions, useful JSON fields, common queries, and ref-to-owner
+navigation. The evidence-reconciliation skill carries scientific comparison,
+source-following, conflict/duplicate checks, and no-change guidance. Keep
+coordinator selection, graph mutation, and handoff guidance in
+`research-graph-control`. Update the skills whenever a schema migration or
+visible capability changes. Do not move this playbook into a generic system
+prompt.
+
+Focus, query, relation neighborhoods, and FTS may choose or order the initial
+snippet, but they must not make other scientific state unreachable. Do not
+expose token, character, node-count, hop, or retrieval budgets in Research
+Graph tools or context APIs, and do not silently shorten query rows or graph
+text. Agents may use SQL predicates, deterministic ordering, and standard SQL
+pagination as semantic navigation because remaining rows stay addressable.
+Do not impose capacity-style Pydantic `max_length` constraints on durable graph
+questions, criteria, claims, rationales, plans, decision rules, Result summaries,
+predictions, refs, or other scientific collections. Keep semantic required-field,
+enum, typed-relation, acyclic-dependency, and internal identifier validation.
+Long source bodies remain in their owning stores and are opened through existing
+authorized generic capabilities after following refs. A search or corpus result
+may be a labeled snippet only when it returns a stable source/page handle and
+the remaining matches and full source stay addressable. Generic tool-result or
+conversation compaction remains a separate runtime concern and must not become
+a Research Graph visibility policy. DOCX and XLSX source reading must provide a
+continuation path rather than ending permanently at a character threshold.
+
+Graph mutation tools should return the exact changed entity, new revision, and
+source handles needed for recovery. They must not automatically append another
+bounded graph projection. `stage_research_plan` is a pure temporary staging
+action: it must not materialize or launch a route as a hidden side effect. A
+host scheduler may launch only an explicit valid evaluator or user selection.
+It must not treat deterministic frontier ordering, `frontier[0]`, a missing or
+invalid recommendation, or a `no_change` planning result as scientific consent
+to execute. Runnable-frontier logic determines eligibility only; it does not
+rank scientific preference.
+
 Result edges express support, opposition, inconclusive evidence, or a suggested
 next hypothesis. Keep detailed notes, logs, reports, receipts, and artifacts in
 their existing owners and attach stable refs to the concise graph node.
@@ -253,17 +338,24 @@ outside the graph may omit that edge. Do not invent a retrospective Experiment
 solely to satisfy the graph shape.
 
 Every bound Research, Experiment, or Literature Review turn receives a
-deterministic bounded graph projection. Research owns the general graph
-mutation surface. Execution children receive only a runtime-bound result or
-blocked writeback surface; they cannot select another graph, thread, or
-experiment, and a terminal execution without a Result is blocked rather than
-successful. General mutations require the current graph revision; the internal
-planning write boundary derives its graph and revision from the trusted bound
-thread instead of relaying protocol IDs between agents. Do not introduce
-generic metadata, confidence or composite scores, debug nodes, model
-provenance, token counts, checksums, precise invented resource estimates, or
-saved layout coordinates. Managed execution and human approval still apply to
-work launched from an experiment node.
+deterministic scientific snippet for its focus. Cross-branch hypothesis
+formation belongs to the hypothesis proposer, which receives the isolated
+complete read-only SQL and source-reading surface described above. Evidence
+effects belong to the evidence judge. A bound Experiment or Literature Review
+coordinator may call that judge before its atomic result writeback, but the
+execution prompt must not require a mechanical judgment for every tested
+hypothesis. Record only effects the evidence actually addresses; an unjudged
+Result is valid. Research owns the general graph mutation surface. Execution
+children receive only a runtime-bound result or blocked writeback surface; they
+cannot select another graph, thread, or experiment, and a terminal execution
+without a Result is blocked rather than successful.
+General mutations require the current graph revision; the internal planning
+write boundary derives its graph and revision from the trusted bound thread
+instead of relaying protocol IDs between agents. Do not introduce generic
+metadata, confidence or composite scores, debug nodes, model provenance, token
+counts, checksums, precise invented resource estimates, or saved layout
+coordinates. Managed execution and human approval still apply to work launched
+from an experiment node.
 
 ## 5) Final output contract
 
@@ -300,13 +392,16 @@ Proposal review is the exception: proposal checkpoints still use a structured `P
 
 ### Skill roots
 
-The active skill layout is:
+The skill layout below includes the `research_reasoning` root required by the
+Research Graph implementation described above. Add and stage that root in the
+same functional change as its query and subagent bindings:
 
 - `skills/materials_worker/*`
 - `skills/dynamics_worker/*`
 - `skills/ml_worker/*`
 - `skills/orca_xtb_worker/*`
 - `skills/research_specialist/*`
+- `skills/research_reasoning/*` for graph query and evidence reconciliation.
 - `skills/litreview_agent/*`
 - `skills/writing_specialist/*`
 - `skills/execution/*` for shared managed-execution support.
@@ -318,6 +413,7 @@ At runtime they are staged into:
 - `files/.deepagents/skills/ml_worker`
 - `files/.deepagents/skills/orca_xtb_worker`
 - `files/.deepagents/skills/research_specialist`
+- `files/.deepagents/skills/research_reasoning`
 - `files/.deepagents/skills/litreview_agent`
 - `files/.deepagents/skills/writing_specialist`
 - `files/.deepagents/skills/execution`
