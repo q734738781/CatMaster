@@ -14,7 +14,7 @@ The left rail also contains a compact file tree. Use it to open a structure, rep
 
 ## Choose the entry that matches the main deliverable
 
-The composer lets you select Research, Experiment, Writing, Peer Review, or Literature Review before a run begins. The entry cannot be changed while the agent is running because each one builds a different agent with different tools and workers.
+The composer lets you select Research, Experiment, Writing, Peer Review, or Literature Review. A long-lived thread may switch entries between turns while retaining its conversational checkpoint. The entry cannot change during an active turn because each entry builds a different agent with different tools and workers. Each agent message shows the entry actually used for that turn, so the thread's current selection does not relabel older work.
 
 Choose Experiment for a bounded structure, calculation, or trajectory task. Use Literature Review for evidence discovery and reading, Writing when source material already exists, and Peer Review for an independent assessment of one PDF. Use Research when the objective genuinely crosses several stages and requires decisions about their order.
 
@@ -69,15 +69,20 @@ The canvas supports pan, zoom, fit, a minimap, keyboard access, focus neighborho
 “Add scientific input” is designed for short entries. A Hypothesis needs one claim, a draft Experiment needs one objective, and an Observation or Result needs one summary; titles, rationale, predictions, links, rankings, interpretation, and sources are optional details. A draft Experiment may remain deliberately incomplete, but it cannot become Ready or run until it has both a plan and a decision rule. A Hypothesis can develop an experiment proposal, be edited, or open its related evidence. An Experiment can be prepared, run, replicated, linked to a dependency, marked blocked, or given a Result. A Result can lead to a user-authored Hypothesis or follow-up Experiment. Its effect on any Hypothesis can be added, replaced, or cleared later without recreating the Result.
 
 Creating a graph through the Research Specialist attaches it to the current
-thread automatically. A launched Experiment or Literature Review child receives
-the same partial graph focus and bound read-only query surface. It can only write
-back the Result or a concrete blocker for its bound Experiment. Before an
-automatic Result writeback, the shared evidence judge identifies the Hypothesis
-relationships that the Result actually addresses; it may return none. The child
-thread is attached as a source automatically. If the child finishes without a
-Result, the launch is shown as blocked rather than completed.
+thread automatically. At the start of each turn, the host fixes the actual
+entry, graph, focus, and matching unfinished launch. Changing the UI focus while
+the turn is running cannot retarget its tools, and interrupt resume keeps the
+interrupted turn's binding. A top-level Experiment or Literature Review turn
+receives read-only graph query and Result writeback only when that turn is graph
+bound. An Experiment focus creates a linked Result; without an Experiment focus,
+the agent may record a standalone Result. Only a real Experiment focus can be
+marked with a concrete blocker. Unbound turns, ordinary questions, input
+preparation, waits, and repeated explanations do not write the graph. Internal
+Research delegates return evidence to the Research specialist instead. The host
+adds the actual thread and run sources, while Writing remains read-only and
+follows those sources to the original evidence.
 
-Running an Experiment atomically claims one launch, then creates an ordinary child thread bound to the graph and focus node. Repeated clicks on the same active launch are deduplicated. A completed Experiment can start an explicit replicate. A running, stopped, or deleted source thread does not block the graph. When remote submission status is uncertain, recovery checks the existing thread, run, and receipt before any new submission.
+Running an Experiment atomically claims one launch, then creates an ordinary child thread bound to the graph and focus node. Repeated clicks on the same active launch are deduplicated. A completed Experiment can start an explicit replicate. If an ordinary turn ends without a Result or blocker, the launch remains unfinished and the UI shows “Waiting to continue”; the user can continue in the same child thread. An error or stop produces only a retryable operationally incomplete state, not a scientific conclusion. A real writeback completes only the exact launch bound to that turn, so later Writing, questions, or attached analyses cannot rewrite an old launch's run identity. When remote submission status is uncertain, recovery checks the existing thread, run, and receipt before any new submission.
 
 Research planning first gives `hypothesis_proposer` a partial focus snippet and read-only SQL access to the complete bound graph. The proposer may also search the web and local corpus and read or acquire selected sources. For a Result-focused turn, it compares the Result with existing predictions and Results before proposing a distinct new Hypothesis. It may conclude that no new Hypothesis or route is needed. Staging publishes sourced temporary Hypothesis and Experiment branches but does not materialize or launch them. Branch count follows the scientifically distinct alternatives supported by the current evidence. A temporary Experiment may remain a draft with only an objective and becomes runnable only after it has a usable plan and decision rule.
 

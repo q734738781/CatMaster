@@ -1505,6 +1505,8 @@ class ResearchGraphStore:
         expected_revision: int,
         reason: str,
         refs: list[dict[str, str]] | None = None,
+        launch_id: str | None = None,
+        run_id: str = "",
     ) -> tuple[dict[str, Any], int]:
         graph_id = _safe_id(graph_id, label="graph_id")
         experiment_node_id = _safe_id(
@@ -1516,6 +1518,12 @@ class ResearchGraphStore:
         now = _now()
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            launch = self._scientific_launch_for_update(
+                connection,
+                graph_id=graph_id,
+                experiment_node_id=experiment_node_id,
+                launch_id=launch_id,
+            )
             experiment = self._get_node_row(
                 connection, graph_id, experiment_node_id
             )
@@ -1542,16 +1550,22 @@ class ResearchGraphStore:
                 """,
                 (_json(body), now, graph_id, experiment_node_id),
             )
-            connection.execute(
-                """
-                UPDATE research_launches
-                SET status = 'blocked', lease_owner = '', lease_until = 0,
-                    updated_at = ?
-                WHERE graph_id = ? AND experiment_node_id = ?
-                  AND status IN ('claimed', 'submitting', 'running', 'unknown')
-                """,
-                (now, graph_id, experiment_node_id),
-            )
+            if launch is not None:
+                connection.execute(
+                    """
+                    UPDATE research_launches
+                    SET status = 'blocked',
+                        run_id = CASE WHEN ? = '' THEN run_id ELSE ? END,
+                        lease_owner = '', lease_until = 0, updated_at = ?
+                    WHERE launch_id = ?
+                    """,
+                    (
+                        str(run_id or ""),
+                        str(run_id or ""),
+                        now,
+                        str(launch["launch_id"]),
+                    ),
+                )
             for ref in list(refs or []):
                 connection.execute(
                     """
@@ -1580,6 +1594,52 @@ class ResearchGraphStore:
                 node_ids=[experiment_node_id],
             )
         return self.get_node(graph_id, experiment_node_id), event_id
+
+    @staticmethod
+    def _scientific_launch_for_update(
+        connection: sqlite3.Connection,
+        *,
+        graph_id: str,
+        experiment_node_id: str,
+        launch_id: str | None,
+    ) -> sqlite3.Row | None:
+        """Resolve only the launch this scientific mutation is allowed to finish.
+
+        ``None`` preserves the explicit graph/API behavior of selecting the one
+        current active launch.  ``""`` means that a trusted turn snapshot had no
+        associated launch and must not change launch history.
+        """
+
+        if launch_id == "":
+            return None
+        if launch_id is None:
+            return connection.execute(
+                f"""
+                SELECT * FROM research_launches
+                WHERE graph_id = ? AND experiment_node_id = ?
+                  AND status IN ({','.join('?' for _ in _ACTIVE_LAUNCH_STATUSES)})
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (graph_id, experiment_node_id, *_ACTIVE_LAUNCH_STATUSES),
+            ).fetchone()
+        normalized_launch_id = _safe_id(launch_id, label="launch_id")
+        row = connection.execute(
+            "SELECT * FROM research_launches WHERE launch_id = ?",
+            (normalized_launch_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Research launch not found: {normalized_launch_id}")
+        if (
+            str(row["graph_id"]) != graph_id
+            or str(row["experiment_node_id"]) != experiment_node_id
+        ):
+            raise ValueError(
+                "The turn-bound launch does not match the target graph experiment."
+            )
+        if str(row["status"]) not in _ACTIVE_LAUNCH_STATUSES:
+            raise ValueError("The turn-bound research launch is no longer active.")
+        return row
 
     def claim_launch(
         self,
@@ -1861,6 +1921,8 @@ class ResearchGraphStore:
         *,
         graph_id: str,
         experiment_node_id: str,
+        launch_id: str = "",
+        run_id: str = "",
     ) -> None:
         connection.execute(
             """
@@ -1870,16 +1932,22 @@ class ResearchGraphStore:
             """,
             (_now(), graph_id, experiment_node_id),
         )
-        connection.execute(
-            """
-            UPDATE research_launches
-            SET status = 'completed', lease_owner = '', lease_until = 0,
-                updated_at = ?
-            WHERE graph_id = ? AND experiment_node_id = ?
-              AND status IN ('claimed', 'submitting', 'running', 'unknown', 'blocked')
-            """,
-            (_now(), graph_id, experiment_node_id),
-        )
+        if launch_id:
+            connection.execute(
+                """
+                UPDATE research_launches
+                SET status = 'completed',
+                    run_id = CASE WHEN ? = '' THEN run_id ELSE ? END,
+                    lease_owner = '', lease_until = 0, updated_at = ?
+                WHERE launch_id = ?
+                """,
+                (
+                    str(run_id or ""),
+                    str(run_id or ""),
+                    _now(),
+                    launch_id,
+                ),
+            )
 
     def add_result_bundle(
         self,
@@ -1892,6 +1960,8 @@ class ResearchGraphStore:
         judgments: list[dict[str, str]],
         refs: list[dict[str, str]] | None = None,
         node_id: str = "",
+        launch_id: str | None = None,
+        run_id: str = "",
     ) -> tuple[dict[str, Any], int]:
         graph_id = _safe_id(graph_id, label="graph_id")
         experiment_node_id = str(experiment_node_id or "").strip()
@@ -1907,7 +1977,14 @@ class ResearchGraphStore:
         now = _now()
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            launch = None
             if experiment_node_id:
+                launch = self._scientific_launch_for_update(
+                    connection,
+                    graph_id=graph_id,
+                    experiment_node_id=experiment_node_id,
+                    launch_id=launch_id,
+                )
                 experiment = self._get_node_row(
                     connection, graph_id, experiment_node_id
                 )
@@ -1926,6 +2003,10 @@ class ResearchGraphStore:
                         f"previously completed experiment; current state is "
                         f"{experiment_state.value}."
                     )
+            elif launch_id:
+                raise ValueError(
+                    "A standalone Result cannot complete a research launch."
+                )
             connection.execute(
                 """
                 INSERT INTO research_nodes (
@@ -1990,6 +2071,12 @@ class ResearchGraphStore:
                     connection,
                     graph_id=graph_id,
                     experiment_node_id=experiment_node_id,
+                    launch_id=(
+                        str(launch["launch_id"])
+                        if launch is not None
+                        else ""
+                    ),
+                    run_id=run_id,
                 )
             revision = self._bump_graph(
                 connection,
@@ -2091,6 +2178,26 @@ class ResearchGraphStore:
                 LIMIT 1
                 """,
                 (thread_id,),
+            ).fetchone()
+        return self._launch_row(row) if row is not None else None
+
+    def find_active_launch_by_thread(
+        self,
+        thread_id: str,
+    ) -> dict[str, Any] | None:
+        """Return only an unfinished launch currently owned by this thread."""
+
+        thread_id = _safe_id(thread_id, label="thread_id")
+        with connect_workspace_db(self.workspace) as connection:
+            row = connection.execute(
+                f"""
+                SELECT * FROM research_launches
+                WHERE thread_id = ?
+                  AND status IN ({','.join('?' for _ in _ACTIVE_LAUNCH_STATUSES)})
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (thread_id, *_ACTIVE_LAUNCH_STATUSES),
             ).fetchone()
         return self._launch_row(row) if row is not None else None
 

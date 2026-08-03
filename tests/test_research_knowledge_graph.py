@@ -2728,20 +2728,23 @@ def test_launch_recovery_reuses_child_and_never_blindly_resubmits(
         child_thread_id=recovered["thread_id"],
         terminal_status="interrupted",
         run_id="run_waiting_for_approval",
+        launch_id=launch["launch_id"],
     )
     assert service.store.get_launch(launch["launch_id"])["status"] == "running"
     service.reconcile_finished_child(
         child_thread_id=recovered["thread_id"],
         terminal_status="steered",
         run_id="run_waiting_for_approval",
+        launch_id=launch["launch_id"],
     )
     assert service.store.get_launch(launch["launch_id"])["status"] == "running"
 
-    # An operationally incomplete child does not become scientific evidence.
+    # An idle child remains associated with the same unfinished launch so a
+    # later turn can continue it without a duplicate submission.
     asyncio.run(service.tick())
     asyncio.run(service.tick())
     assert submissions == [recovered["thread_id"]]
-    assert service.store.get_launch(launch["launch_id"])["status"] == "blocked"
+    assert service.store.get_launch(launch["launch_id"])["status"] == "running"
     snapshot = service.store.get_snapshot(graph["graph"]["graph_id"])
     assert not any(node["kind"] == "result" for node in snapshot["nodes"])
     experiment_node = next(
@@ -2749,7 +2752,7 @@ def test_launch_recovery_reuses_child_and_never_blindly_resubmits(
         for node in snapshot["nodes"]
         if node["node_id"] == experiment["node"]["node_id"]
     )
-    assert experiment_node["state"] == "ready"
+    assert experiment_node["state"] == "running"
 
     # The same child can still report a late real observation without a manual
     # graph-state edit.
@@ -2758,6 +2761,9 @@ def test_launch_recovery_reuses_child_and_never_blindly_resubmits(
         context={
             "thread_id": recovered["thread_id"],
             "entrypoint": "experiment",
+            "research_graph_id": graph["graph"]["graph_id"],
+            "research_focus_node_id": experiment["node"]["node_id"],
+            "research_launch_id": launch["launch_id"],
         },
     ):
         record_bound_research_result(
@@ -2778,6 +2784,7 @@ def test_service_launch_child_writeback_completes_result_with_sources(
     workspace = _workspace(tmp_path)
     submissions: list[tuple[str, str, str]] = []
     writeback_payload: dict[str, object] = {}
+    writeback_context: dict[str, str] = {}
     writeback_content: list[str] = []
     thread_store = ThreadStore(workspace=workspace, workspace_id="default")
     (system_root(workspace) / "runs" / "run_bound_child").mkdir(parents=True)
@@ -2801,12 +2808,19 @@ def test_service_launch_child_writeback_completes_result_with_sources(
                     ],
                 )
             )
+            active_launch = service.store.find_active_launch_by_thread(thread_id)
+            assert active_launch is not None
             with workspace_scope(workspace), toolcall_context(
                 "tool_bound_result",
                 context={
                     "thread_id": thread_id,
                     "entrypoint": payload.entrypoint,
                     "run_id": "run_bound_child",
+                    "research_graph_id": writeback_context["graph_id"],
+                    "research_focus_node_id": writeback_context[
+                        "experiment_node_id"
+                    ],
+                    "research_launch_id": active_launch["launch_id"],
                 },
             ):
                 content, _artifact = record_bound_research_result(
@@ -2826,6 +2840,12 @@ def test_service_launch_child_writeback_completes_result_with_sources(
         service,
         graph,
         hypothesis_id,
+    )
+    writeback_context.update(
+        {
+            "graph_id": graph["graph"]["graph_id"],
+            "experiment_node_id": experiment["node"]["node_id"],
+        }
     )
     writeback_payload.update(
         {
@@ -2862,12 +2882,13 @@ def test_service_launch_child_writeback_completes_result_with_sources(
     assert "shared evidence judge" in submissions[0][2]
     assert launched["launch"]["status"] == "completed"
     assert len(writeback_content) == 1
-    assert "Recorded the bound experiment result" in writeback_content[0]
+    assert "Recorded the bound research result" in writeback_content[0]
 
     service.reconcile_finished_child(
         child_thread_id=child.thread_id,
         terminal_status="done",
         run_id="run_completed",
+        launch_id=launched["launch"]["launch_id"],
     )
     snapshot = service.store.get_snapshot(graph["graph"]["graph_id"])
     results = [node for node in snapshot["nodes"] if node["kind"] == "result"]
@@ -2882,9 +2903,9 @@ def test_service_launch_child_writeback_completes_result_with_sources(
         ("thread", child.thread_id),
         ("url", "https://example.org/completed-run"),
     }
-    assert service.store.get_launch(launched["launch"]["launch_id"])[
-        "status"
-    ] == "completed"
+    finished_launch = service.store.get_launch(launched["launch"]["launch_id"])
+    assert finished_launch["status"] == "completed"
+    assert finished_launch["run_id"] == "run_bound_child"
 
 
 def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
@@ -2913,7 +2934,7 @@ def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
     original_record_result = ResearchGraphService.record_result
     mutation_count = 0
 
-    def race_record_result(self, target_graph_id, request):
+    def race_record_result(self, target_graph_id, request, **kwargs):
         nonlocal mutation_count
         mutation_count += 1
         current = self.store.get_graph(target_graph_id)
@@ -2924,7 +2945,7 @@ def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
                 claim="A concurrent observation changes the live graph.",
             ),
         )
-        return original_record_result(self, target_graph_id, request)
+        return original_record_result(self, target_graph_id, request, **kwargs)
 
     monkeypatch.setattr(ResearchGraphService, "record_result", race_record_result)
     with workspace_scope(workspace), toolcall_context(
@@ -2932,6 +2953,9 @@ def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
         context={
             "thread_id": thread.thread_id,
             "entrypoint": "experiment",
+            "research_graph_id": graph_id,
+            "research_focus_node_id": experiment["node"]["node_id"],
+            "research_launch_id": "",
         },
     ), pytest.raises(CatMasterToolExecutionError, match="changed in another thread"):
         record_bound_research_result(
@@ -2941,6 +2965,117 @@ def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
     assert mutation_count == 1
     snapshot = service.store.get_snapshot(graph_id)
     assert not any(node["kind"] == "result" for node in snapshot["nodes"])
+
+
+def test_bound_result_can_be_standalone_without_an_experiment_focus(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = ResearchGraphService(workspace=workspace, workspace_id="default")
+    graph = _seed_graph(service)
+    graph_id = graph["graph"]["graph_id"]
+    hypothesis_id = graph["nodes"][0]["node_id"]
+    thread = service.thread_store.create_thread(
+        title="Bound literature synthesis",
+        entrypoint="literature_review",
+    )
+
+    with workspace_scope(workspace), toolcall_context(
+        "tool_standalone_result",
+        context={
+            "thread_id": thread.thread_id,
+            "entrypoint": "literature_review",
+            "research_graph_id": graph_id,
+            "research_focus_node_id": hypothesis_id,
+            "research_launch_id": "",
+        },
+    ):
+        record_bound_research_result(
+            {
+                "summary": "Matched literature evidence favors the proposed pathway.",
+                "judgments": [
+                    {
+                        "hypothesis_node_id": hypothesis_id,
+                        "relation": "supports",
+                    }
+                ],
+                "refs": [
+                    {
+                        "ref_kind": "doi",
+                        "ref_id": "10.1000/example",
+                    }
+                ],
+            }
+        )
+
+    snapshot = service.store.get_snapshot(graph_id)
+    result = next(node for node in snapshot["nodes"] if node["kind"] == "result")
+    assert not any(
+        edge["relation"] == "produces"
+        and edge["target_node_id"] == result["node_id"]
+        for edge in snapshot["edges"]
+    )
+    assert {
+        (ref["ref_kind"], ref["ref_id"])
+        for ref in snapshot["refs"]
+        if ref["node_id"] == result["node_id"]
+    } == {
+        ("doi", "10.1000/example"),
+        ("thread", thread.thread_id),
+    }
+
+
+def test_attached_result_without_a_launch_does_not_complete_another_launch(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = ResearchGraphService(workspace=workspace, workspace_id="default")
+    graph = _seed_graph(service)
+    experiment = _ready_experiment(
+        service,
+        graph,
+        graph["nodes"][0]["node_id"],
+    )
+    graph_id = graph["graph"]["graph_id"]
+    experiment_id = experiment["node"]["node_id"]
+    launch, claimed = service.store.claim_launch(
+        graph_id,
+        experiment_id,
+        expected_revision=experiment["graph"]["revision"],
+        replicate=False,
+        lease_owner="worker-a",
+    )
+    assert claimed is True
+    managed_thread = service.thread_store.create_thread(
+        title="Managed execution",
+        entrypoint="experiment",
+    )
+    service.store.update_launch(
+        launch["launch_id"],
+        status="running",
+        thread_id=managed_thread.thread_id,
+    )
+    attached_thread = service.thread_store.create_thread(
+        title="Attached analysis",
+        entrypoint="experiment",
+    )
+
+    with workspace_scope(workspace), toolcall_context(
+        "tool_attached_result",
+        context={
+            "thread_id": attached_thread.thread_id,
+            "entrypoint": "experiment",
+            "research_graph_id": graph_id,
+            "research_focus_node_id": experiment_id,
+            "research_launch_id": "",
+        },
+    ):
+        record_bound_research_result(
+            {"summary": "An independent attached analysis found the same trend."}
+        )
+
+    assert service.store.get_launch(launch["launch_id"])["status"] == "running"
+    assert service.store.get_node(graph_id, experiment_id)["state"] == "has_results"
 
 
 def test_runnable_frontier_ignores_priority_and_cost_fields() -> None:

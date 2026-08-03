@@ -24,6 +24,7 @@ from catmaster.specialists.runtime import (
     _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
     _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES,
     _DYNAMICS_WORKER_TOOL_ALLOWLIST,
+    _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST,
     _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST,
     _LITREVIEW_LOCAL_TOOL_ALLOWLIST,
     _MATERIALS_WORKER_TOOL_ALLOWLIST,
@@ -310,7 +311,7 @@ def test_search_surface_follows_each_role_provider(
         assert isinstance(search_tools[0], StructuredTool)
 
 
-def test_litreview_graph_result_tools_require_a_bound_experiment(
+def test_litreview_graph_tools_follow_the_turn_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -343,23 +344,73 @@ def test_litreview_graph_result_tools_require_a_bound_experiment(
         research_focus_node_id=experiment_id,
     )
 
-    built = build_specialist_runner(
+    unbound_runner = build_specialist_runner(
         workspace=workspace,
         llm_profile=_FakeProfile(),
         reporter=None,
         run_control=None,
         project_id="proj",
         preferred_entrypoint="literature_review",
+        runtime_context={
+            "research_graph_id": "",
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
+    )
+    bound_runner = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="literature_review",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": experiment_id,
+            "research_launch_id": "",
+        },
+    )
+    standalone_runner = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="literature_review",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
     )
 
-    direct_names = built.runner._litreview_local_tool_names(direct.thread_id)
-    bound_names = built.runner._litreview_local_tool_names(bound.thread_id)
+    direct_names = unbound_runner.runner._litreview_local_tool_names(
+        direct.thread_id,
+        top_level=True,
+    )
+    bound_names = bound_runner.runner._litreview_local_tool_names(
+        bound.thread_id,
+        top_level=True,
+    )
+    standalone_names = standalone_runner.runner._litreview_local_tool_names(
+        bound.thread_id,
+        top_level=True,
+    )
     assert direct_names == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
     assert direct_names.isdisjoint(_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST)
     assert bound_names == (
         _LITREVIEW_LOCAL_TOOL_ALLOWLIST
         | _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST
+        | {"query_research_graph_sql"}
     )
+    assert standalone_names == (
+        _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+        | {"query_research_graph_sql", "record_bound_research_result"}
+    )
+    assert bound_runner.runner._litreview_local_tool_names(
+        bound.thread_id,
+        top_level=False,
+    ) == _LITREVIEW_LOCAL_TOOL_ALLOWLIST
 
     monkeypatch.setattr(
         runtime_mod,
@@ -381,13 +432,15 @@ def test_litreview_graph_result_tools_require_a_bound_experiment(
         "store": object(),
         "backend": object(),
     }
-    direct_agent = built.runner._build_litreview_agent(
+    direct_agent = unbound_runner.runner._build_litreview_agent(
         runtime=fake_runtime,
         thread_id=direct.thread_id,
+        top_level=True,
     )
-    bound_agent = built.runner._build_litreview_agent(
+    bound_agent = bound_runner.runner._build_litreview_agent(
         runtime=fake_runtime,
         thread_id=bound.thread_id,
+        top_level=True,
     )
     assert [item.kwargs["name"] for item in direct_agent.kwargs["subagents"]] == [
         "general-purpose"
@@ -396,6 +449,71 @@ def test_litreview_graph_result_tools_require_a_bound_experiment(
         "general-purpose",
         "evidence_judge",
     ]
+
+
+def test_experiment_graph_tools_exist_only_on_a_bound_top_level_turn(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project_space"
+    service = ResearchGraphService(workspace=workspace, workspace_id="proj")
+    created = service.create_graph(
+        GraphCreateRequest(question="Which mechanism controls selectivity?")
+    )
+    graph_id = created["graph"]["graph_id"]
+    experiment = service.add_experiment(
+        graph_id,
+        ExperimentCreateRequest(
+            expected_revision=created["graph"]["revision"],
+            objective="Compare the candidate mechanisms.",
+            execution_lane="experiment",
+        ),
+    )
+    experiment_id = experiment["node"]["node_id"]
+
+    unbound = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+    )
+    bound = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="experiment",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": experiment_id,
+            "research_launch_id": "",
+        },
+    )
+
+    unbound_names = {
+        tool.name for tool in unbound.runner._specialist_tools("experiment")
+    }
+    bound_names = {
+        tool.name for tool in bound.runner._specialist_tools("experiment")
+    }
+    nested_names = {
+        tool.name
+        for tool in bound.runner._specialist_tools(
+            "experiment",
+            top_level=False,
+        )
+    }
+    assert unbound_names == (
+        _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST
+        | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+    )
+    assert bound_names == (
+        _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+        | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+    )
+    assert nested_names == unbound_names
 
 
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
@@ -1959,8 +2077,12 @@ def test_specialist_lanes_start_with_staged_skills(
     assert agent_kwargs["model"] == {"model": f"{expected_entry_model_role}-model"}
     expected_entry_groups = {
         "research": ("research_specialist", "research_reasoning"),
-        "experiment": ("writing_quality",),
-        "literature_review": ("litreview_agent", "writing_quality"),
+        "experiment": ("research_execution", "writing_quality"),
+        "literature_review": (
+            "litreview_agent",
+            "research_execution",
+            "writing_quality",
+        ),
         "writing": ("writing_specialist", "writing_quality"),
         "peer_review": ("writing_specialist", "writing_quality"),
     }[entrypoint]
@@ -2131,13 +2253,20 @@ def test_specialist_lanes_start_with_staged_skills(
         assert experiment_agents, "expected nested experiment specialist to be created"
         experiment_agent_kwargs = experiment_agents[0]
         assert experiment_agent_kwargs["model"] == {"model": "director-model"}
-        assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        assert {tool.name for tool in experiment_agent_kwargs["tools"]} == (
+            _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST
+            | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
         assert not (
             _RESEARCH_TOOL_ALLOWLIST
             & {tool.name for tool in experiment_agent_kwargs["tools"]}
         )
         assert "mace_neb_batch" not in {tool.name for tool in experiment_agent_kwargs["tools"]}
-        _assert_native_skill_groups(experiment_agent_kwargs, "writing_quality")
+        _assert_native_skill_groups(
+            experiment_agent_kwargs,
+            "research_execution",
+            "writing_quality",
+        )
         assert "read and apply the `humanizer` skill" in experiment_agent_kwargs["system_prompt"]
         _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
@@ -2204,7 +2333,12 @@ def test_specialist_lanes_start_with_staged_skills(
             _RESEARCH_TOOL_ALLOWLIST
             & {tool.name for tool in litreview_agent_kwargs["tools"]}
         )
-        _assert_native_skill_groups(litreview_agent_kwargs, "litreview_agent", "writing_quality")
+        _assert_native_skill_groups(
+            litreview_agent_kwargs,
+            "litreview_agent",
+            "research_execution",
+            "writing_quality",
+        )
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
         assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["general-purpose"]
@@ -2218,7 +2352,12 @@ def test_specialist_lanes_start_with_staged_skills(
         assert {tool.name for tool in agent_kwargs["tools"]} == (
             _LITREVIEW_LOCAL_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
         )
-        _assert_native_skill_groups(agent_kwargs, "litreview_agent", "writing_quality")
+        _assert_native_skill_groups(
+            agent_kwargs,
+            "litreview_agent",
+            "research_execution",
+            "writing_quality",
+        )
         assert "Own the review question" in agent_kwargs["system_prompt"]
         assert "Use each source only for what it supports" in agent_kwargs["system_prompt"]
         assert "methods, conditions, quantitative comparisons" in agent_kwargs["system_prompt"]
@@ -2254,8 +2393,15 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_skill_groups(ml_worker_kwargs, "ml_worker", "execution")
         assert {tool.name for tool in orca_worker_kwargs["tools"]} == (_ORCA_XTB_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(orca_worker_kwargs, "orca_xtb_worker", "execution")
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
-        _assert_native_skill_groups(agent_kwargs, "writing_quality")
+        assert {tool.name for tool in agent_kwargs["tools"]} == (
+            _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST
+            | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
+        _assert_native_skill_groups(
+            agent_kwargs,
+            "research_execution",
+            "writing_quality",
+        )
         assert {"mp_search_materials", "mp_download_structure"} <= {tool.name for tool in agent_kwargs["tools"]}
         assert "mace_neb_batch" not in {tool.name for tool in agent_kwargs["tools"]}
         assert "parent-maintained project memory" in materials_worker_kwargs["system_prompt"]
@@ -2428,6 +2574,7 @@ def test_specialist_lanes_start_with_staged_skills(
     staged_researcher = snapshot_root / "skills" / "research_specialist"
     staged_reasoning = snapshot_root / "skills" / "research_reasoning"
     staged_literature = snapshot_root / "skills" / "litreview_agent"
+    staged_research_execution = snapshot_root / "skills" / "research_execution"
     staged_writing_quality = snapshot_root / "skills" / "writing_quality"
     staged_quantum_chemistry = snapshot_root / "skills" / "orca_xtb_worker"
     staged_execution = snapshot_root / "skills" / "execution"
@@ -2438,6 +2585,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_reasoning.is_dir()
     assert staged_literature.is_dir()
     assert staged_writing_quality.is_dir()
+    assert staged_research_execution.is_dir()
     assert staged_quantum_chemistry.is_dir()
     assert staged_execution.is_dir()
     staged_workspace_override = (
@@ -2466,6 +2614,9 @@ def test_specialist_lanes_start_with_staged_skills(
         "research-graph-query",
     }
     assert _skill_names(staged_literature) == _skill_names(repo_root / "skills" / "litreview_agent")
+    assert _skill_names(staged_research_execution) == {
+        "research-graph-writeback"
+    }
     assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
     assert _skill_names(staged_writing_quality) == {"humanizer"}
     assert _skill_names(staged_writing)

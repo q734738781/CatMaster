@@ -328,6 +328,15 @@ function sourceRefs(form) {
   return refId ? [{ ref_kind: form.ref_kind || "note", ref_id: refId }] : [];
 }
 
+function launchActivityLabel(value) {
+  return {
+    running: "Running",
+    waiting_continue: "Waiting to continue",
+    waiting_review: "Waiting for review",
+    operationally_incomplete: "Operationally incomplete",
+  }[String(value || "running")] || "Running";
+}
+
 function ReferenceList({ refs, onOpenThread, onOpenReference }) {
   if (!refs?.length) return <p className="v2-muted">No source is attached.</p>;
   return (
@@ -1455,6 +1464,11 @@ function countLabel(count, singular, plural = `${singular}s`) {
                       <p className="v2-rg-state">
                         {selectedNode.provisional ? "Temporary proposal" : experimentStateLabel(selectedNode.state)} · {executionLaneLabel(selectedNode.body.execution_lane)}
                       </p>
+                      {selectedNode.active_launch ? (
+                        <p className="v2-rg-state">
+                          Launch · {launchActivityLabel(selectedNode.active_launch.activity)}
+                        </p>
+                      ) : null}
                     </>
                   ) : null}
                   {selectedNode.kind === "result" ? (

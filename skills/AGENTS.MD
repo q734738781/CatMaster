@@ -12,13 +12,14 @@ The active runtime loads these skills through DeepAgent skill roots:
 - `skills/research_reasoning/*` as a narrow shared read-only reasoning root for
   Research Graph proposers, experiment evaluators, and evidence judges.
 - `skills/litreview_agent/*`
+- `skills/research_execution/*` as the shared turn-bound Result writeback SOP for Experiment and Literature Review agents.
 - `skills/writing_specialist/*`
 - `skills/writing_quality/*` as a shared prose-quality root used by report-, review-, and manuscript-producing agents.
 - `skills/execution/*` as a shared managed-execution support root used by execution workers.
 
 ## Required format
 
-Each skill must live under one agent-facing root, such as `skills/materials_worker/<skill-name>/SKILL.md`, `skills/dynamics_worker/<skill-name>/SKILL.md`, `skills/ml_worker/<skill-name>/SKILL.md`, `skills/orca_xtb_worker/<skill-name>/SKILL.md`, `skills/research_specialist/<skill-name>/SKILL.md`, `skills/research_reasoning/<skill-name>/SKILL.md`, `skills/litreview_agent/<skill-name>/SKILL.md`, or `skills/writing_specialist/<skill-name>/SKILL.md`. Shared prose-quality skills may live under `skills/writing_quality/<skill-name>/SKILL.md`, and shared managed-execution SOPs may live under `skills/execution/<skill-name>/SKILL.md`. Every skill must satisfy all of the following:
+Each skill must live under one agent-facing root, such as `skills/materials_worker/<skill-name>/SKILL.md`, `skills/dynamics_worker/<skill-name>/SKILL.md`, `skills/ml_worker/<skill-name>/SKILL.md`, `skills/orca_xtb_worker/<skill-name>/SKILL.md`, `skills/research_specialist/<skill-name>/SKILL.md`, `skills/research_reasoning/<skill-name>/SKILL.md`, `skills/litreview_agent/<skill-name>/SKILL.md`, `skills/research_execution/<skill-name>/SKILL.md`, or `skills/writing_specialist/<skill-name>/SKILL.md`. Shared prose-quality skills may live under `skills/writing_quality/<skill-name>/SKILL.md`, and shared managed-execution SOPs may live under `skills/execution/<skill-name>/SKILL.md`. Every skill must satisfy all of the following:
 
 - YAML frontmatter at the top.
 - For CatMaster-local skills, `name` should match the directory name.

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { normalizeMathMarkdown } from "../markdown";
+import { entrypointMeta } from "../entrypoints";
 import {
   displayValue,
   isInternalStoragePath,
@@ -627,6 +628,10 @@ function CatMasterMessage({ onSelect, onResume }) {
   const role = String(message?.role || "assistant");
   const status = message?.status?.type || message?.status || "";
   const projectedMessage = message?.metadata?.custom?.catmaster || {};
+  const turnEntrypoint = String(projectedMessage?.meta?.entrypoint || "").trim();
+  const turnEntrypointLabel = turnEntrypoint
+    ? entrypointMeta(turnEntrypoint).label
+    : "";
   const initialParts = (Array.isArray(message?.content) ? message.content : []).map(partFromAssistantContent);
   const [additionalParts, setAdditionalParts] = useState([]);
   const [partsPage, setPartsPage] = useState(projectedMessage.parts_page || {});
@@ -669,7 +674,12 @@ function CatMasterMessage({ onSelect, onResume }) {
         <div className="v2-message-avatar">{role === "user" ? <UserRound size={17} /> : <Bot size={17} />}</div>
         <div className="v2-message-body">
           <div className="v2-message-meta">
-            <span>{role === "user" ? "You" : "CatMaster"}</span>
+            <span>
+              {role === "user" ? "You" : "CatMaster"}
+              {role === "assistant" && turnEntrypointLabel
+                ? ` · ${turnEntrypointLabel}`
+                : ""}
+            </span>
             <small>{statusLabel(status)}</small>
           </div>
           <div className="v2-message-parts">

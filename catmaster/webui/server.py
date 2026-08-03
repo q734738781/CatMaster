@@ -2574,6 +2574,7 @@ def create_app(
                 child_thread_id=str(kwargs.get("thread_id") or ""),
                 terminal_status=str(kwargs.get("terminal_status") or ""),
                 run_id=str(kwargs.get("run_id") or ""),
+                launch_id=str(kwargs.get("research_launch_id") or ""),
             )
         except Exception:
             logger.exception(

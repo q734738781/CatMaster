@@ -43,9 +43,10 @@ references describe the current system.
 - The Literature Review system prompt now retains scientific role and evidence
   boundaries only. Concrete acquisition, caching, corpus, delegation, and
   citation-finalization workflow guidance lives in the tool schemas and skills.
-- Direct Literature Review threads no longer receive Research Graph result or
-  blocker writeback tools. Those actions are added only when the thread is
-  actually bound to an Experiment node.
+- Top-level Literature Review turns receive Research Graph query and Result
+  writeback only when that turn is bound to a graph; the blocker action appears
+  only for an Experiment focus. Unbound turns and Research-internal delegates
+  have no bound mutation surface.
 - All agent factories now use the same provider-aware search resolver. Codex
   OAuth and OpenAI roles, including self-evolution proposer/reviewer, receive
   hosted `web_search`; other providers receive CatMaster's search function.
@@ -69,6 +70,13 @@ references describe the current system.
 
 ### Research Graph
 
+- Research Graph execution binding is now turn-scoped in long-lived WebUI
+  threads. Experiment and Literature Review can explicitly record a sourced
+  linked or standalone Result only against the graph/focus snapshot captured at
+  turn start; internal delegates return evidence to their parent, and Writing
+  remains read-only. A formal launch may continue across multiple idle turns,
+  and Result/blocker writeback completes only the exact launch associated with
+  that turn rather than a historical launch found by thread ID.
 - Writing threads attached to a Research Graph now receive its partial focus
   context and can query the complete bound graph through the existing read-only
   SQL surface. The Writing coordinator uses Result relationships and refs as a

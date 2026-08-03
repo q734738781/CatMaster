@@ -138,7 +138,7 @@ class MarkResearchExperimentFailedInput(BaseModel):
 
 
 class RecordBoundResearchResultInput(BaseModel):
-    """[research/graph] Finish this child thread's bound experiment with one concise Result."""
+    """[research/graph] Record one concise Result in this turn's bound graph."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -161,13 +161,13 @@ class RecordBoundResearchResultInput(BaseModel):
         default_factory=list,
         description=(
             "Durable result sources such as artifact, note, DOI, or URL refs. "
-            "The host attaches the bound child thread and current run refs automatically."
+            "The host attaches the current turn's thread and run refs automatically."
         ),
     )
 
 
 class MarkBoundResearchExperimentFailedInput(BaseModel):
-    """[research/graph] Finish this child thread's bound experiment as blocked."""
+    """[research/graph] Mark this turn's focused graph Experiment as blocked."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -180,7 +180,7 @@ class MarkBoundResearchExperimentFailedInput(BaseModel):
         default_factory=list,
         description=(
             "Optional durable sources for the blocker. The host attaches the "
-            "bound child thread and current run refs automatically."
+            "current turn's thread and run refs automatically."
         ),
     )
 
@@ -240,28 +240,49 @@ def _bind_created_graph(
 
 def _bound_execution_target(
     service: ResearchGraphService,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     runtime_context = current_tool_context()
     entrypoint = str(runtime_context.get("entrypoint") or "").strip()
     if entrypoint not in {"experiment", "literature_review"}:
         raise ValueError(
-            "This bound writeback tool is available only to an Experiment or "
-            "Literature Review execution child."
+            "This bound writeback tool is available only to a top-level "
+            "Experiment or Literature Review turn."
         )
     thread_id = str(runtime_context.get("thread_id") or "").strip()
     if not thread_id:
-        raise ValueError("The execution child has no trusted runtime thread binding.")
-    thread = service.thread_store.get_thread(thread_id)
-    graph_id = str(thread.active_research_graph_id or "").strip()
-    experiment_node_id = str(thread.research_focus_node_id or "").strip()
-    if not graph_id or not experiment_node_id:
-        raise ValueError(
-            "The execution child is not bound to a Research Graph experiment."
-        )
-    node = service.store.get_node(graph_id, experiment_node_id)
-    if node["kind"] != "experiment":
-        raise ValueError("The bound Research Graph focus is not an experiment.")
-    return thread_id, graph_id, experiment_node_id
+        raise ValueError("This turn has no trusted runtime thread binding.")
+    graph_id = str(runtime_context.get("research_graph_id") or "").strip()
+    focus_node_id = str(
+        runtime_context.get("research_focus_node_id") or ""
+    ).strip()
+    launch_id = str(runtime_context.get("research_launch_id") or "").strip()
+    if not graph_id:
+        raise ValueError("This turn is not bound to a Research Graph.")
+    service.store.get_graph(graph_id)
+    experiment_node_id = ""
+    if focus_node_id:
+        node = service.store.get_node(graph_id, focus_node_id)
+        if node["kind"] == "experiment":
+            experiment_node_id = focus_node_id
+    if launch_id:
+        launch = service.store.get_launch(launch_id)
+        if str(launch.get("status") or "") not in {
+            "claimed",
+            "submitting",
+            "running",
+            "unknown",
+        }:
+            raise ValueError("The turn-bound research launch is no longer active.")
+        if (
+            str(launch.get("thread_id") or "") != thread_id
+            or str(launch.get("graph_id") or "") != graph_id
+            or str(launch.get("experiment_node_id") or "")
+            != experiment_node_id
+        ):
+            raise ValueError(
+                "The turn-bound launch does not match this graph execution target."
+            )
+    return thread_id, graph_id, experiment_node_id, launch_id
 
 
 def _refs_with_bound_sources(
@@ -309,6 +330,13 @@ def _mutation_result(
 
 
 def _bound_graph(service: ResearchGraphService) -> tuple[str, int]:
+    runtime_context = current_tool_context()
+    if "research_graph_id" in runtime_context:
+        graph_id = str(runtime_context.get("research_graph_id") or "").strip()
+        if not graph_id:
+            raise ValueError("The current turn is not bound to a Research Graph.")
+        graph = service.store.get_graph(graph_id)
+        return graph_id, int(graph["revision"])
     thread_id = _trusted_thread_id()
     if not thread_id:
         raise ValueError("The graph query has no trusted runtime thread binding.")
@@ -322,6 +350,26 @@ def _bound_graph(service: ResearchGraphService) -> tuple[str, int]:
         raise ValueError("The current thread is not bound to a Research Graph.")
     graph = service.store.get_graph(graph_id)
     return graph_id, int(graph["revision"])
+
+
+def _runtime_launch_for_target(
+    *,
+    graph_id: str,
+    experiment_node_id: str,
+) -> str | None:
+    runtime_context = current_tool_context()
+    if "research_launch_id" not in runtime_context:
+        return None
+    launch_id = str(runtime_context.get("research_launch_id") or "").strip()
+    if not launch_id:
+        return ""
+    if (
+        str(runtime_context.get("research_graph_id") or "").strip() != graph_id
+        or str(runtime_context.get("research_focus_node_id") or "").strip()
+        != experiment_node_id
+    ):
+        return ""
+    return launch_id
 
 
 def list_research_graphs(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -611,7 +659,15 @@ def record_research_result(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
             params.model_dump(mode="json", exclude={"graph_id"})
         )
         service = _service()
-        result = service.record_result(params.graph_id, request)
+        result = service.record_result(
+            params.graph_id,
+            request,
+            launch_id=_runtime_launch_for_target(
+                graph_id=params.graph_id,
+                experiment_node_id=request.experiment_node_id,
+            ),
+            run_id=str(current_tool_context().get("run_id") or "").strip(),
+        )
         return _mutation_result(
             service=service,
             tool_name=tool_name,
@@ -687,6 +743,11 @@ def mark_research_experiment_failed(
             expected_revision=params.expected_revision,
             reason=params.reason,
             refs=refs,
+            launch_id=_runtime_launch_for_target(
+                graph_id=params.graph_id,
+                experiment_node_id=params.experiment_node_id,
+            ),
+            run_id=str(current_tool_context().get("run_id") or "").strip(),
         )
         return _mutation_result(
             service=service,
@@ -712,7 +773,9 @@ def record_bound_research_result(
     try:
         params = RecordBoundResearchResultInput.model_validate(payload)
         service = _service()
-        thread_id, graph_id, experiment_node_id = _bound_execution_target(service)
+        thread_id, graph_id, experiment_node_id, launch_id = (
+            _bound_execution_target(service)
+        )
         refs = _refs_with_bound_sources(params.refs, thread_id=thread_id)
         graph = service.store.get_graph(graph_id)
         result = service.record_result(
@@ -725,6 +788,8 @@ def record_bound_research_result(
                 judgments=params.judgments,
                 refs=refs,
             ),
+            launch_id=launch_id,
+            run_id=str(current_tool_context().get("run_id") or "").strip(),
         )
         return _mutation_result(
             service=service,
@@ -739,8 +804,8 @@ def record_bound_research_result(
                 "refs": [ref.model_dump(mode="json") for ref in refs],
             },
             message=(
-                f"Recorded the bound experiment result {result['node']['title']} "
-                f"with child thread source {thread_id}."
+                f"Recorded the bound research result {result['node']['title']} "
+                f"with turn source {thread_id}."
             ),
         )
     except CatMasterToolExecutionError:
@@ -757,7 +822,13 @@ def mark_bound_research_experiment_failed(
     try:
         params = MarkBoundResearchExperimentFailedInput.model_validate(payload)
         service = _service()
-        thread_id, graph_id, experiment_node_id = _bound_execution_target(service)
+        thread_id, graph_id, experiment_node_id, launch_id = (
+            _bound_execution_target(service)
+        )
+        if not experiment_node_id:
+            raise ValueError(
+                "A bound blocker requires this turn to focus an Experiment."
+            )
         refs = [
             service.validate_ref(ref)
             for ref in _refs_with_bound_sources(params.refs, thread_id=thread_id)
@@ -769,6 +840,8 @@ def mark_bound_research_experiment_failed(
             expected_revision=int(graph["revision"]),
             reason=params.reason,
             refs=refs,
+            launch_id=launch_id,
+            run_id=str(current_tool_context().get("run_id") or "").strip(),
         )
         return _mutation_result(
             service=service,

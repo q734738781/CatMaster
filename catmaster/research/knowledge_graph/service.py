@@ -301,6 +301,27 @@ class ResearchGraphService:
             "run_id": str(launch.get("run_id") or ""),
         }
 
+    def _present_active_launch(self, launch: dict[str, Any]) -> dict[str, Any]:
+        """Add one UI-only activity label derived from existing thread state."""
+
+        presented = self._public_launch(launch)
+        thread_id = presented["thread_id"]
+        activity = "running"
+        if thread_id:
+            try:
+                thread_status = self.thread_store.get_thread(thread_id).status
+            except KeyError:
+                activity = "operationally_incomplete"
+            else:
+                if thread_status is ThreadStatus.IDLE:
+                    activity = "waiting_continue"
+                elif thread_status is ThreadStatus.INTERRUPTED:
+                    activity = "waiting_review"
+                elif thread_status in {ThreadStatus.ERROR, ThreadStatus.STOPPED}:
+                    activity = "operationally_incomplete"
+        presented["activity"] = activity
+        return presented
+
     @staticmethod
     def _public_graph(graph: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -349,7 +370,7 @@ class ResearchGraphService:
                 self.resolve_ref(ref)
             )
         active_by_experiment = {
-            str(launch["experiment_node_id"]): self._public_launch(launch)
+            str(launch["experiment_node_id"]): self._present_active_launch(launch)
             for launch in snapshot["launches"]
             if launch["status"] in _ACTIVE_LAUNCH_STATUSES
         }
@@ -615,6 +636,9 @@ class ResearchGraphService:
         self,
         graph_id: str,
         request: ResultCreateRequest,
+        *,
+        launch_id: str | None = None,
+        run_id: str = "",
     ) -> dict[str, Any]:
         refs = [self.validate_ref(ref) for ref in request.refs]
         node, _event_id = self.store.add_result_bundle(
@@ -628,6 +652,8 @@ class ResearchGraphService:
                 for judgment in request.judgments
             ],
             refs=refs,
+            launch_id=launch_id,
+            run_id=run_id,
         )
         return {"node": self._public_node(node), **self.presentation(graph_id)}
 
@@ -708,12 +734,16 @@ class ResearchGraphService:
         *,
         expected_revision: int,
         reason: str,
+        launch_id: str | None = None,
+        run_id: str = "",
     ) -> dict[str, Any]:
         self.store.mark_experiment_blocked(
             graph_id,
             experiment_node_id,
             expected_revision=expected_revision,
             reason=reason,
+            launch_id=launch_id,
+            run_id=run_id,
         )
         return self.presentation(graph_id)
 
@@ -888,8 +918,18 @@ class ResearchGraphService:
         child_thread_id: str,
         terminal_status: str,
         run_id: str = "",
+        launch_id: str | None = None,
     ) -> None:
-        launch = self.store.find_launch_by_thread(child_thread_id)
+        if launch_id is None:
+            launch = self.store.find_active_launch_by_thread(child_thread_id)
+        elif launch_id:
+            launch = self.store.get_launch(launch_id)
+            if str(launch.get("thread_id") or "") != child_thread_id:
+                raise ValueError(
+                    "The reconciled launch does not belong to this child thread."
+                )
+        else:
+            launch = None
         if launch is None:
             planning = self.store.find_planning_by_thread(child_thread_id)
             if planning is None:
@@ -912,33 +952,22 @@ class ResearchGraphService:
                 thread_id=child_thread_id,
             )
             return
-        if run_id:
-            launch = self.store.update_launch(
-                launch["launch_id"],
-                status=launch["status"],
-                run_id=run_id,
-                thread_id=child_thread_id,
-                lease_owner="",
-                lease_until=0,
-            )
-        snapshot = self.store.get_snapshot(launch["graph_id"])
-        has_result = any(
-            edge["relation"] == "produces"
-            and edge["source_node_id"] == launch["experiment_node_id"]
-            for edge in snapshot["edges"]
-        )
-        if has_result:
-            self.store.update_launch(
-                launch["launch_id"],
-                status="completed",
-                run_id=run_id,
-                thread_id=child_thread_id,
-                lease_owner="",
-                lease_until=0,
-            )
+        if str(launch["status"]) in {"completed", "blocked"}:
+            if run_id and not str(launch.get("run_id") or ""):
+                self.store.update_launch(
+                    launch["launch_id"],
+                    status=launch["status"],
+                    run_id=run_id,
+                    thread_id=child_thread_id,
+                    lease_owner="",
+                    lease_until=0,
+                )
             return
         normalized_status = str(terminal_status or "unknown").strip().lower()
         if normalized_status in {
+            "completed",
+            "done",
+            "idle",
             "interrupted",
             "paused",
             "awaiting_human_feedback",
@@ -947,10 +976,12 @@ class ResearchGraphService:
             "streaming",
             "steered",
         }:
+            # A formal execution can span several ordinary turns in the same
+            # child thread.  Conversation completion without an explicit
+            # Result/blocker therefore waits for continuation.
             return
-        # A stopped, failed, or simply incomplete child is operational state,
-        # not a scientific Result. Make the experiment runnable again and keep
-        # thread/run identity on the launch for diagnosis and late writeback.
+        # A stopped or failed child is operational state, not scientific
+        # evidence. Release it for an explicit retry without inventing a Result.
         self.store.release_incomplete_launch(
             launch["launch_id"],
             run_id=run_id,
@@ -1775,6 +1806,7 @@ class ResearchGraphService:
                         child_thread_id=thread_id,
                         terminal_status=thread.status.value,
                         run_id=thread.active_run_id,
+                        launch_id=str(launch["launch_id"]),
                     )
 
         for graph in self.store.list_graphs(include_archived=False):

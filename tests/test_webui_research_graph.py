@@ -6,12 +6,16 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from catmaster.research.knowledge_graph.models import GraphCreateRequest
+from catmaster.research.knowledge_graph.models import (
+    ExperimentCreateRequest,
+    GraphCreateRequest,
+)
 from catmaster.research.knowledge_graph.service import ResearchGraphService
 from catmaster.tools.base import ensure_project_space_layout
 from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.webui.agent_loop import ThreadAgentLoopService
 from catmaster.webui.server import create_app
+from catmaster.webui.thread_models import ThreadMessage
 from catmaster.webui.thread_store import ThreadStore
 
 
@@ -401,16 +405,17 @@ def test_bound_research_execution_and_writing_turns_get_graph_context(
     )
     loop = object.__new__(ThreadAgentLoopService)
     loop.workspace = workspace
-    thread = SimpleNamespace(
-        active_research_graph_id=graph["graph"]["graph_id"],
-        research_focus_node_id=graph["nodes"][0]["node_id"],
-    )
+    research_context = {
+        "research_graph_id": graph["graph"]["graph_id"],
+        "research_focus_node_id": graph["nodes"][0]["node_id"],
+        "research_launch_id": "",
+    }
 
     injected = loop._research_graph_turn_content(
-        thread=thread,
         prompt="What should we test next?",
         turn_content="What should we test next?",
         entrypoint="research",
+        research_context=research_context,
     )
     assert isinstance(injected, str)
     assert injected.startswith("# Active Research Graph")
@@ -421,10 +426,10 @@ def test_bound_research_execution_and_writing_turns_get_graph_context(
 
     for entrypoint in ("experiment", "literature_review", "writing"):
         lane_injected = loop._research_graph_turn_content(
-            thread=thread,
             prompt="Use the bound scientific context for this task.",
             turn_content="Use the bound scientific context for this task.",
             entrypoint=entrypoint,
+            research_context=research_context,
         )
         assert isinstance(lane_injected, str)
         assert lane_injected.startswith("# Active Research Graph")
@@ -432,15 +437,120 @@ def test_bound_research_execution_and_writing_turns_get_graph_context(
         assert graph["nodes"][0]["node_id"] in lane_injected
 
     unchanged = loop._research_graph_turn_content(
-        thread=SimpleNamespace(
-            active_research_graph_id="",
-            research_focus_node_id="",
-        ),
         prompt="Write this up.",
         turn_content="Write this up.",
         entrypoint="writing",
+        research_context={
+            "research_graph_id": "",
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
     )
     assert unchanged == "Write this up."
+
+
+def test_turn_snapshot_pins_a_matching_active_launch_and_resume_reuses_it(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "default"
+    ensure_project_space_layout(workspace, create=True)
+    service = ResearchGraphService(workspace=workspace, workspace_id="default")
+    graph = service.create_graph(
+        GraphCreateRequest(
+            question="Which pathway controls selectivity?",
+            initial_hypotheses=[{"claim": "Pathway A controls selectivity."}],
+        )
+    )
+    experiment = service.add_experiment(
+        graph["graph"]["graph_id"],
+        ExperimentCreateRequest(
+            expected_revision=graph["graph"]["revision"],
+            objective="Test pathway A.",
+            plan_summary="Compare the pathway marker under matched conditions.",
+            decision_rule="A reproducible marker change supports pathway A.",
+            execution_lane="experiment",
+            state="ready",
+        ),
+    )
+    thread = service.thread_store.create_thread(
+        title="Long-lived experiment thread",
+        entrypoint="experiment",
+    )
+    thread = service.thread_store.update_thread(
+        thread.thread_id,
+        active_research_graph_id=graph["graph"]["graph_id"],
+        research_focus_node_id=experiment["node"]["node_id"],
+    )
+    launch, claimed = service.store.claim_launch(
+        graph["graph"]["graph_id"],
+        experiment["node"]["node_id"],
+        expected_revision=experiment["graph"]["revision"],
+        replicate=False,
+        lease_owner="test-worker",
+    )
+    assert claimed is True
+    service.store.update_launch(
+        launch["launch_id"],
+        status="running",
+        thread_id=thread.thread_id,
+    )
+    presented_experiment = next(
+        node
+        for node in service.presentation(graph["graph"]["graph_id"])["nodes"]
+        if node["node_id"] == experiment["node"]["node_id"]
+    )
+    assert presented_experiment["active_launch"]["activity"] == (
+        "waiting_continue"
+    )
+    loop = object.__new__(ThreadAgentLoopService)
+    loop.workspace = workspace
+    loop.store = service.thread_store
+
+    snapshot = loop._research_turn_context(
+        thread=thread,
+        entrypoint="experiment",
+    )
+    assert snapshot == {
+        "research_graph_id": graph["graph"]["graph_id"],
+        "research_focus_node_id": experiment["node"]["node_id"],
+        "research_launch_id": launch["launch_id"],
+    }
+    service.thread_store.append_message(
+        ThreadMessage(
+            id="msg_interrupted_snapshot",
+            thread_id=thread.thread_id,
+            role="assistant",
+            status="interrupted",
+            meta={"entrypoint": "experiment", **snapshot},
+        )
+    )
+    service.thread_store.update_thread(thread.thread_id, entrypoint="writing")
+    assert loop._resume_research_context(thread.thread_id) == (
+        "experiment",
+        snapshot,
+    )
+
+    changed_thread = service.thread_store.update_thread(
+        thread.thread_id,
+        research_focus_node_id=graph["nodes"][0]["node_id"],
+    )
+    assert loop._research_turn_context(
+        thread=changed_thread,
+        entrypoint="experiment",
+        inherited=snapshot,
+    ) == snapshot
+
+    service.store.update_launch(
+        launch["launch_id"],
+        status="completed",
+        thread_id=thread.thread_id,
+    )
+    terminal_resume = loop._research_turn_context(
+        thread=changed_thread,
+        entrypoint="experiment",
+        inherited=snapshot,
+    )
+    assert terminal_resume["research_launch_id"] == ""
 
 
 def test_internal_planning_turn_uses_the_same_partial_focus_contract(
@@ -464,24 +574,22 @@ def test_internal_planning_turn_uses_the_same_partial_focus_contract(
         for node in graph["nodes"]
         if node["title"] == "Mechanism 00 controls the response."
     )
-    common = {
-        "active_research_graph_id": graph["graph"]["graph_id"],
+    research_context = {
+        "research_graph_id": graph["graph"]["graph_id"],
         "research_focus_node_id": focus_node["node_id"],
+        "research_launch_id": "",
     }
     ordinary = loop._research_graph_turn_content(
-        thread=SimpleNamespace(**common, meta={}),
         prompt="What should we test next?",
         turn_content="What should we test next?",
         entrypoint="research",
+        research_context=research_context,
     )
     planning = loop._research_graph_turn_content(
-        thread=SimpleNamespace(
-            **common,
-            meta={"internal_kind": "research_graph_planning"},
-        ),
         prompt="Re-evaluate the runnable routes from current evidence.",
         turn_content="Re-evaluate the runnable routes from current evidence.",
         entrypoint="research",
+        research_context=research_context,
     )
 
     assert isinstance(ordinary, str)

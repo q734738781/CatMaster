@@ -14,7 +14,7 @@ WebUI 把对话、项目文件、Agent 活动、人工审批和运行观测放�
 
 ## 先选择与主要产物匹配的 Entry
 
-Composer 上方可以选择 Research、Experiment、Writing、Peer Review 或 Literature Review。运行开始后不能切换 Entry，因为每个入口会建立不同的 Agent、tools 和 workers。
+Composer 上方可以选择 Research、Experiment、Writing、Peer Review 或 Literature Review。同一个长期 thread 可以在不同轮之间切换 Entry，并继续复用原有对话 checkpoint；运行中的一轮不能切换，因为每个 Entry 会建立不同的 Agent、tools 和 workers。Chat 中每条 Agent 消息会显示该轮实际使用的 Entry，不能用 thread 当前选择反推旧消息的角色。
 
 如果目标是一个明确的结构、计算或轨迹任务，选择 Experiment。只查文献时选择 Literature Review；已经有材料并准备写作时选择 Writing；对固定 PDF 做投稿前审查时选择 Peer Review；只有当目标确实跨越多个阶段、需要 Agent 判断先后关系时，才选择 Research。
 
@@ -76,14 +76,16 @@ New graph 只强制填写研究问题。标题、完成条件、编排模式和 
 
 “Add scientific input” 支持先写一两句话：Hypothesis 只需 claim，draft Experiment 只需 objective，Observation/Result 只需 summary；标题、rationale、predictions、关系、优先级、解释和来源都在可选细节中。draft Experiment 可以暂时不完整，但没有 plan 和 decision rule 时不能标记为 Ready，也不能运行。Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment；它对任一 Hypothesis 的支持、反对或无法区分判断也可以事后新增、替换或清除，不必重建 Result。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
 
-Research Specialist 创建 graph 后会自动附着到当前 thread。由 Experiment 或
-Literature Review 启动的 child 会得到同一个 partial graph focus 和绑定的只读查询面，
-但只能为绑定的 Experiment 写回 Result 或具体阻塞原因。自动写回 Result 前，共享的
-evidence judge 会判断该 Result 真正涉及哪些 Hypothesis，也可以返回空 judgments。
-系统会自动把 child thread 附成来源。如果 child 结束时没有 Result，launch 会显示为
-blocked，而不是 completed。
+Research Specialist 创建 graph 后会自动附着到当前 thread。每轮开始时，host 固定该轮
+实际 Entry、Graph、focus 和匹配的未完成 launch；运行中切换界面 focus 不会改变已经在跑的
+工具目标，interrupt resume 也沿用被中断轮的绑定。顶层 Experiment 或 Literature Review
+只有在本轮绑定 graph 时才获得只读查询和 Result 写回；Experiment focus 会产生 linked
+Result，没有 Experiment focus 时可以写 standalone Result。只有真实 Experiment focus 才能
+记录具体 blocker。未绑定轮、普通问答、准备输入、等待任务和重复解释都不会写 graph，
+Research 内部 delegate 只把证据交还主 Research Specialist。系统自动附上实际 thread 和
+run 来源，Writing 继续只读并沿来源打开原始证据。
 
-运行 Experiment 会原子占用一次 launch，再创建绑定 graph 和 focus node 的普通 child thread。同一个 active launch 的重复点击会合并，但完成后的 Experiment 可以显式启动 replicate。来源 thread 正在运行、停止或已经删除，都不会阻塞 graph。远程状态不明时，系统先对账已有 thread、run 和 receipt，不会自动重提。
+运行 Experiment 会原子占用一次 launch，再创建绑定 graph 和 focus node 的普通 child thread。同一个 active launch 的重复点击会合并，但完成后的 Experiment 可以显式启动 replicate。一次正常 turn 结束而尚未形成 Result 或 blocker 时，launch 保持未完成，界面显示 “Waiting to continue”，用户可以在同一 child thread 继续下一轮；error 或 stop 只形成可重试的 operationally incomplete 状态，不会被解释成科学结论。真正写回时只完成该轮精确绑定的 launch，后续 Writing、追问或补充分析不会改写旧 launch 的 run。远程状态不明时，系统先对账已有 thread、run 和 receipt，不会自动重提。
 
 Research planning 先给 `hypothesis_proposer` 一份 partial focus snippet，并提供完整绑定图的只读 SQL 查询。proposer 也可以按需检索网络与本地 corpus，并读取或获取已选来源。Result-focused planning 会先比较新 Result、已有预测和旧 Result，再决定是否需要真正不同的新 Hypothesis；也可以判断本轮无需新增分支。staging action 只发布带来源的临时 Hypothesis/Experiment，不会实体化或启动。分支数量由当前证据支持的科学差异决定。临时 Experiment 可以只是只有 objective 的 draft，补齐可执行 plan 和 decision rule 后才会成为 runnable。
 

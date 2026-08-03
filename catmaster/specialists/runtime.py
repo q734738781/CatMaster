@@ -278,11 +278,15 @@ _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST = {
     "mark_bound_research_experiment_failed",
     "record_bound_research_result",
 }
-_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
-    *_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
+_EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST = {
     "get_avail_remote_task",
     "mp_search_materials",
     "mp_download_structure",
+}
+_EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST = {
+    *_EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST,
+    *_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST,
+    "query_research_graph_sql",
 }
 _PEER_REVIEW_TOOL_ALLOWLIST = {"peer_review_request"}
 _PEER_REVIEW_WORKER_TOOL_ALLOWLIST = set(_PEER_REVIEW_TOOL_ALLOWLIST)
@@ -344,6 +348,7 @@ _SKILL_GROUPS = (
     "research_specialist",
     "research_reasoning",
     "litreview_agent",
+    "research_execution",
     "execution",
     "writing_specialist",
     "writing_quality",
@@ -605,6 +610,7 @@ def build_specialist_runner(
     run_dir: Path | None = None,
     preferred_entrypoint: SpecialistEntrypoint = "research",
     interrupt_on: dict[str, Any] | None = None,
+    runtime_context: dict[str, Any] | None = None,
 ) -> BuiltSpecialistRunner:
     if run_dir is not None and Path(run_dir).exists():
         run_ctx = RunContext.load(Path(run_dir))
@@ -627,6 +633,7 @@ def build_specialist_runner(
         reporter=reporter or NullReporter(),
         run_control=run_control,
         interrupt_on=interrupt_on,
+        runtime_context=runtime_context,
     )
     return BuiltSpecialistRunner(runner=runner, run_context=run_ctx)
 
@@ -646,6 +653,7 @@ class SpecialistRunner:
         reporter: Reporter | None = None,
         run_control: RunControl | None = None,
         interrupt_on: dict[str, Any] | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> None:
         self.llm_profile = llm_profile
         self.run_context = run_context
@@ -653,6 +661,11 @@ class SpecialistRunner:
         self.run_control = run_control
         self.registry = get_tool_registry()
         self.interrupt_on = dict(interrupt_on or {})
+        self.runtime_context = {
+            str(key): value
+            for key, value in dict(runtime_context or {}).items()
+            if str(key).strip()
+        }
         self._skill_snapshot_root: Path | None = None
         self._skill_snapshot_mount = ""
         self._skill_snapshot_id = ""
@@ -1108,6 +1121,7 @@ class SpecialistRunner:
             return self._build_litreview_agent(
                 runtime=runtime,
                 thread_id=tool_thread_id or thread_id,
+                top_level=True,
             )
         create_deep_agent = self._load_create_deep_agent()
         tools = self._specialist_tools(
@@ -1278,6 +1292,7 @@ class SpecialistRunner:
             audience=role,
             thread_id=thread_id,
             entrypoint="research",
+            runtime_context=self.runtime_context,
         )
         existing = {_agent_tool_name(tool) for tool in tools}
         for tool in self._search_tools_for_role(role, audience=role):
@@ -1461,7 +1476,10 @@ class SpecialistRunner:
         return CompiledSubAgent(
             name="litreview_agent",
             description="Build source-grounded literature reviews from search and abstract evidence, selective source reading, and deterministic citation finalization.",
-            runnable=self._build_litreview_agent(runtime=runtime),
+            runnable=self._build_litreview_agent(
+                runtime=runtime,
+                top_level=False,
+            ),
         )
 
     def _compiled_specialist_subagent(
@@ -1525,6 +1543,7 @@ class SpecialistRunner:
             "tools": self._specialist_tools(
                 entrypoint,
                 thread_id=tool_thread_id,
+                top_level=False,
             ),
             "system_prompt": self._system_prompt(entrypoint),
             "middleware": self._catmaster_agent_middleware(
@@ -1589,23 +1608,32 @@ class SpecialistRunner:
         *,
         runtime: dict[str, Any],
         thread_id: str = "",
+        top_level: bool = False,
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
-        litreview_skills = self._skill_roots_for_groups("litreview_agent", "writing_quality")
-        local_tools = self._litreview_local_tool_names(thread_id)
+        litreview_skills = self._skill_roots_for_groups(
+            "litreview_agent",
+            "research_execution",
+            "writing_quality",
+        )
+        local_tools = self._litreview_local_tool_names(
+            thread_id,
+            top_level=top_level,
+        )
         tools = self._augment_with_default_autonomous_tools(
             self._named_tools(
                 local_tools,
                 audience="litreview_agent",
                 thread_id=thread_id,
                 entrypoint="literature_review",
+                runtime_context=self.runtime_context if top_level else None,
             ),
             model_role="literature_deep_research",
             audience="litreview_agent",
         )
         bound_reasoning = (
             [self._evidence_judge_subagent(thread_id=thread_id)]
-            if self._thread_binds_research_experiment(thread_id)
+            if top_level and self._turn_focus_is_experiment()
             else []
         )
         kwargs: dict[str, Any] = {
@@ -1630,38 +1658,24 @@ class SpecialistRunner:
         self._apply_interrupt_on(kwargs)
         return create_deep_agent(**kwargs)
 
-    def _litreview_local_tool_names(self, thread_id: str) -> set[str]:
+    def _litreview_local_tool_names(
+        self,
+        thread_id: str = "",
+        *,
+        top_level: bool = True,
+    ) -> set[str]:
+        _ = thread_id
         names = set(_LITREVIEW_LOCAL_TOOL_ALLOWLIST)
-        if self._thread_binds_research_experiment(thread_id):
-            names.update(_BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST)
-        return names
-
-    def _thread_binds_research_experiment(self, thread_id: str) -> bool:
-        """Keep graph-result actions off ordinary Literature Review threads."""
-
-        bound_thread_id = str(thread_id or "").strip()
-        if not bound_thread_id:
-            return False
-        try:
-            from catmaster.research.knowledge_graph.store import ResearchGraphStore
-            from catmaster.webui.thread_store import ThreadStore
-
-            thread = ThreadStore(
-                workspace=self.run_context.workspace,
-                workspace_id=self.run_context.project_id,
-            ).get_thread(bound_thread_id)
-            graph_id = str(thread.active_research_graph_id or "").strip()
-            node_id = str(thread.research_focus_node_id or "").strip()
-            if not graph_id or not node_id:
-                return False
-            snapshot = ResearchGraphStore(self.run_context.workspace).get_snapshot(graph_id)
-            return any(
-                str(node.get("node_id") or "") == node_id
-                and str(node.get("kind") or "") == "experiment"
-                for node in list(snapshot.get("nodes") or [])
+        if top_level and self._turn_graph_id():
+            names.update(
+                {
+                    "query_research_graph_sql",
+                    "record_bound_research_result",
+                }
             )
-        except (KeyError, OSError, ValueError):
-            return False
+            if self._turn_focus_is_experiment():
+                names.add("mark_bound_research_experiment_failed")
+        return names
 
     def _apply_interrupt_on(self, kwargs: dict[str, Any]) -> None:
         if self.interrupt_on:
@@ -1745,6 +1759,7 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         *,
         thread_id: str = "",
+        top_level: bool = True,
     ) -> list[Any]:
         if entrypoint == "writing":
             requested = _WRITING_TOOL_ALLOWLIST
@@ -1753,12 +1768,26 @@ class SpecialistRunner:
         elif entrypoint == "research":
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
-            requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+            requested = set(_EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST)
+            if top_level and self._turn_graph_id():
+                requested.update(
+                    {
+                        "query_research_graph_sql",
+                        "record_bound_research_result",
+                    }
+                )
+                if self._turn_focus_is_experiment():
+                    requested.add("mark_bound_research_experiment_failed")
         return self._augment_with_default_autonomous_tools(
             self._named_tools(
                 requested,
                 thread_id=thread_id,
                 entrypoint=entrypoint,
+                runtime_context=(
+                    self.runtime_context
+                    if top_level or entrypoint == "writing"
+                    else None
+                ),
             ),
             model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
         )
@@ -1771,11 +1800,32 @@ class SpecialistRunner:
         elif entrypoint == "research":
             requested = _RESEARCH_TOOL_ALLOWLIST
         else:
-            requested = _EXPERIMENT_SPECIALIST_TOOL_ALLOWLIST
+            requested = _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST
         return self._augment_with_default_autonomous_tools(
             self._named_tools(requested),
             model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
         )
+
+    def _turn_graph_id(self) -> str:
+        return str(self.runtime_context.get("research_graph_id") or "").strip()
+
+    def _turn_focus_is_experiment(self) -> bool:
+        graph_id = self._turn_graph_id()
+        node_id = str(
+            self.runtime_context.get("research_focus_node_id") or ""
+        ).strip()
+        if not graph_id or not node_id:
+            return False
+        try:
+            from catmaster.research.knowledge_graph.store import ResearchGraphStore
+
+            return (
+                ResearchGraphStore(self.run_context.workspace)
+                .get_node(graph_id, node_id)["kind"]
+                == "experiment"
+            )
+        except (KeyError, OSError, ValueError):
+            return False
 
     def _named_tools(
         self,
@@ -1784,6 +1834,7 @@ class SpecialistRunner:
         audience: str = "",
         thread_id: str = "",
         entrypoint: str = "",
+        runtime_context: dict[str, Any] | None = None,
     ) -> list[Any]:
         requested_names = {str(name).strip() for name in requested if str(name).strip()}
         all_names = set(self.registry.tools.keys())
@@ -1793,17 +1844,19 @@ class SpecialistRunner:
                 f"Missing registered tools: {', '.join(missing)}"
             )
         allowlist = sorted(requested_names)
+        bound_runtime_context = {
+            "run_id": self.run_context.run_id,
+            "thread_id": str(thread_id or "").strip(),
+            "entrypoint": str(entrypoint or "").strip(),
+        }
+        bound_runtime_context.update(dict(runtime_context or {}))
         try:
             tools = self.registry.as_langchain_tools(
                 allowlist=allowlist,
                 run_dir=str(self.run_context.run_dir),
                 workspace=str(self.run_context.workspace),
                 audience=audience,
-                runtime_context={
-                    "run_id": self.run_context.run_id,
-                    "thread_id": str(thread_id or "").strip(),
-                    "entrypoint": str(entrypoint or "").strip(),
-                },
+                runtime_context=bound_runtime_context,
             )
         except TypeError:
             tools = self.registry.as_langchain_tools(
@@ -2116,9 +2169,16 @@ class SpecialistRunner:
                 "research_reasoning",
             )
         if entrypoint == "experiment":
-            return self._skill_roots_for_group("writing_quality")
+            return self._skill_roots_for_groups(
+                "research_execution",
+                "writing_quality",
+            )
         if entrypoint == "literature_review":
-            return self._skill_roots_for_groups("litreview_agent", "writing_quality")
+            return self._skill_roots_for_groups(
+                "litreview_agent",
+                "research_execution",
+                "writing_quality",
+            )
         if entrypoint in {"writing", "peer_review"}:
             return self._skill_roots_for_groups("writing_specialist", "writing_quality")
         return []

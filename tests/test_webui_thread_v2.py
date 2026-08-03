@@ -1079,8 +1079,25 @@ def test_agent_loop_persists_submit_entrypoint_and_passes_it_to_runner(tmp_path:
     assert result["queued"] is False
     assert store.get_thread(thread.thread_id).entrypoint == "writing"
     assert captured["build_runner"]["preferred_entrypoint"] == "writing"
+    assert captured["build_runner"]["runtime_context"] == {
+        "research_graph_id": "",
+        "research_focus_node_id": "",
+        "research_launch_id": "",
+    }
     assert captured["arun_turn"]["entrypoint"] == "writing"
     assert result["assistant_message"].meta["entrypoint"] == "writing"
+    stored_message = store.get_message(
+        thread.thread_id,
+        result["assistant_message"].id,
+    )
+    assert stored_message.meta == {
+        "permission_mode": "hitl",
+        "entrypoint": "writing",
+        "research_graph_id": "",
+        "research_focus_node_id": "",
+        "research_launch_id": "",
+        "run_id": "run_fake",
+    }
 
 
 def test_agent_loop_applies_queued_steering_at_safe_boundary(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from catmaster.llm.config import LLMProfile
 from catmaster.research.knowledge_graph.context import ResearchGraphContextBuilder
+from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.runtime import RunControl
 from catmaster.runtime.document_access import MAX_DOCUMENT_TEXT_CHARS, read_document
 from catmaster.runtime.multimodal_blocks import (
@@ -48,6 +49,11 @@ _RESEARCH_GRAPH_CONTEXT_ENTRYPOINTS = {
     "literature_review",
     "writing",
 }
+_RESEARCH_TURN_CONTEXT_KEYS = (
+    "research_graph_id",
+    "research_focus_node_id",
+    "research_launch_id",
+)
 
 
 def _safe_attachment_filename(filename: str) -> str:
@@ -98,18 +104,16 @@ class ThreadAgentLoopService:
     def _research_graph_turn_content(
         self,
         *,
-        thread: Any,
         prompt: str,
         turn_content: str | list[dict[str, Any]] | None,
         entrypoint: str,
+        research_context: dict[str, str],
     ) -> str | list[dict[str, Any]] | None:
-        graph_id = str(
-            getattr(thread, "active_research_graph_id", "") or ""
-        ).strip()
+        graph_id = str(research_context.get("research_graph_id") or "").strip()
         if entrypoint not in _RESEARCH_GRAPH_CONTEXT_ENTRYPOINTS or not graph_id:
             return turn_content
         focus_node_id = str(
-            getattr(thread, "research_focus_node_id", "") or ""
+            research_context.get("research_focus_node_id") or ""
         ).strip()
         context = ResearchGraphContextBuilder(
             workspace=self.workspace
@@ -151,6 +155,91 @@ class ThreadAgentLoopService:
             else str(prompt or "").strip()
         )
         return f"{graph_markdown}\n\n# Current user request\n{current}"
+
+    def _research_turn_context(
+        self,
+        *,
+        thread: Any,
+        entrypoint: str,
+        inherited: dict[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """Capture one immutable Graph/focus/launch target for this execution."""
+
+        inherited_values = dict(inherited or {})
+        if inherited is None:
+            graph_id = str(
+                getattr(thread, "active_research_graph_id", "") or ""
+            ).strip()
+            focus_node_id = str(
+                getattr(thread, "research_focus_node_id", "") or ""
+            ).strip()
+        else:
+            graph_id = str(
+                inherited_values.get("research_graph_id") or ""
+            ).strip()
+            focus_node_id = str(
+                inherited_values.get("research_focus_node_id") or ""
+            ).strip()
+        context = {
+            "research_graph_id": graph_id,
+            "research_focus_node_id": focus_node_id,
+            "research_launch_id": "",
+        }
+        if not graph_id:
+            context["research_focus_node_id"] = ""
+            return context
+
+        graph_store = ResearchGraphStore(self.workspace)
+        graph_store.get_graph(graph_id)
+        focus = None
+        if focus_node_id:
+            focus = graph_store.get_node(graph_id, focus_node_id)
+
+        launch = None
+        inherited_launch_id = str(
+            inherited_values.get("research_launch_id") or ""
+        ).strip()
+        if inherited is not None:
+            if inherited_launch_id:
+                candidate = graph_store.get_launch(inherited_launch_id)
+                if str(candidate.get("status") or "") in {
+                    "claimed",
+                    "submitting",
+                    "running",
+                    "unknown",
+                }:
+                    launch = candidate
+        else:
+            launch = graph_store.find_active_launch_by_thread(thread.thread_id)
+
+        if launch is not None:
+            execution_lane = (
+                str((focus or {}).get("body", {}).get("execution_lane") or "")
+                .strip()
+            )
+            if (
+                str(launch.get("thread_id") or "") == thread.thread_id
+                and str(launch.get("graph_id") or "") == graph_id
+                and str(launch.get("experiment_node_id") or "")
+                == focus_node_id
+                and str((focus or {}).get("kind") or "") == "experiment"
+                and execution_lane == entrypoint
+            ):
+                context["research_launch_id"] = str(launch["launch_id"])
+        return context
+
+    def _resume_research_context(
+        self,
+        thread_id: str,
+    ) -> tuple[str, dict[str, str]]:
+        message_id = self.store.latest_message_id(thread_id, role="assistant")
+        message = self.store.get_message(thread_id, message_id) if message_id else None
+        meta = dict(message.meta or {}) if message is not None else {}
+        entrypoint = str(meta.get("entrypoint") or "").strip()
+        return entrypoint, {
+            key: str(meta.get(key) or "").strip()
+            for key in _RESEARCH_TURN_CONTEXT_KEYS
+        }
 
     def _capability_for_entrypoint(
         self,
@@ -763,12 +852,16 @@ class ThreadAgentLoopService:
         resume_tool_inputs = self.resume_tool_inputs_from_decisions(thread_id, decisions)
         resolved_parts = self.resolve_pending_interrupt_parts(thread_id, decisions)
         self.broker.emit(thread_id, "interrupt.resolved", status="running", data={"decisions": decisions, "resolved_parts": resolved_parts})
+        resume_entrypoint, research_context = self._resume_research_context(
+            thread_id
+        )
         assistant_message = await self.launch_turn(
             thread_id=thread_id,
             prompt=str(payload.text or ""),
-            entrypoint=thread.entrypoint,
+            entrypoint=resume_entrypoint or thread.entrypoint,
             resume_decisions=decisions,
             resume_tool_inputs=resume_tool_inputs,
+            research_context=research_context,
         )
         return {"accepted": True, "assistant_message": assistant_message, "thread": self.store.get_thread(thread_id)}
 
@@ -832,11 +925,17 @@ class ThreadAgentLoopService:
         resume_decisions: list[dict[str, Any]] | None = None,
         resume_tool_inputs: list[dict[str, Any]] | None = None,
         existing_user_message_id: str = "",
+        research_context: dict[str, Any] | None = None,
     ) -> ThreadMessage:
         thread = self.store.get_thread(thread_id)
         normalized_entrypoint = self.normalize_entrypoint(entrypoint)
-        if thread.entrypoint != normalized_entrypoint:
+        if resume_decisions is None and thread.entrypoint != normalized_entrypoint:
             thread = self.store.update_thread(thread_id, entrypoint=normalized_entrypoint)
+        turn_research_context = self._research_turn_context(
+            thread=thread,
+            entrypoint=normalized_entrypoint,
+            inherited=research_context,
+        )
         turn_permission_mode = self.permission_mode_for_thread(thread, permission_mode)
         prior_assistant_message_id = self.store.latest_message_id(
             thread_id,
@@ -844,7 +943,11 @@ class ThreadAgentLoopService:
         )
         assistant_message, text_part_id = self.append_assistant_message(
             thread_id,
-            meta={"permission_mode": turn_permission_mode, "entrypoint": normalized_entrypoint},
+            meta={
+                "permission_mode": turn_permission_mode,
+                "entrypoint": normalized_entrypoint,
+                **turn_research_context,
+            },
         )
         attachment_rows = [dict(item) for item in list(attachment_metadata or []) if isinstance(item, dict)]
         if turn_content is None and attachment_rows:
@@ -854,10 +957,10 @@ class ThreadAgentLoopService:
             turn_content = build_turn_content(prompt, rebuilt_attachments)
             attachment_rows = [item.sidecar() for item in rebuilt_attachments]
         turn_content = self._research_graph_turn_content(
-            thread=thread,
             prompt=prompt,
             turn_content=turn_content,
             entrypoint=normalized_entrypoint,
+            research_context=turn_research_context,
         )
         event_attachments: list[PreparedAttachment] = []
         if attachment_rows:
@@ -890,12 +993,16 @@ class ThreadAgentLoopService:
                     project_id=self.workspace_id or self.workspace.name,
                     preferred_entrypoint=normalized_entrypoint,
                     interrupt_on=self.interrupt_on_for_permission_mode(turn_permission_mode),
+                    runtime_context=turn_research_context,
                 )
                 active_run_context = built.run_context
                 self.store.update_message(
                     assistant_message.thread_id,
                     assistant_message.id,
-                    meta={"run_id": built.run_context.run_id, "permission_mode": turn_permission_mode},
+                    meta={
+                        **dict(assistant_message.meta or {}),
+                        "run_id": built.run_context.run_id,
+                    },
                 )
                 if event_attachments:
                     self.broker.emit(
@@ -973,6 +1080,9 @@ class ThreadAgentLoopService:
                                 else ""
                             ),
                             entrypoint=normalized_entrypoint,
+                            research_launch_id=turn_research_context[
+                                "research_launch_id"
+                            ],
                             terminal_status=terminal_status or "unknown",
                             model_config=model_config,
                         )
