@@ -31,7 +31,14 @@ from catmaster.webui.thread_models import (
 )
 from catmaster.webui.thread_store import ThreadStore, new_id
 from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
-from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text, _json_safe
+from catmaster.specialists.streaming_runner import (
+    CatMasterStreamTranslator,
+    StreamingSpecialistRunner,
+    _agent_run_id,
+    _extract_sidecar_artifact_paths,
+    _extract_workspace_paths_from_text,
+    _json_safe,
+)
 
 
 def _register_artifact_process(
@@ -2462,6 +2469,17 @@ def test_stream_translator_backfills_resumed_approved_tool_input(tmp_path: Path)
     assert [event for event in events if event.event == "tool_call.completed"][-1].data["input"] == expected
 
 
+def test_stream_activity_id_uses_task_lifecycle_and_groups_root_tools_by_agent() -> None:
+    assert _agent_run_id(
+        {"namespace": ["task:candidate_a", "tools:1"]},
+        source="materials_worker",
+    ) == "task:candidate_a"
+    assert _agent_run_id(
+        {"namespace": ["tools:root_call"]},
+        source="research_specialist",
+    ) == "agent:research_specialist"
+
+
 def test_stream_translator_attaches_subagent_source_to_tool_calls(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     store = ThreadStore(workspace=workspace, workspace_id="default")
@@ -2505,12 +2523,15 @@ def test_stream_translator_attaches_subagent_source_to_tool_calls(tmp_path: Path
     saved = store.get_message(thread.thread_id, message.id)
     tool_part = next(part for part in saved.parts if part.type == "tool-call")
     assert tool_part.meta["subagent_source"] == "materials_worker"
+    assert tool_part.meta["agent_run_id"] == "task:o2_relax"
     assert tool_part.meta["stream_namespace"] == ["task:o2_relax", "tools:1"]
     events = broker.replay(thread.thread_id)
     started = [event for event in events if event.event == "tool_call.started"][-1]
     completed = [event for event in events if event.event == "tool_call.completed"][-1]
     assert started.data["subagent_source"] == "materials_worker"
+    assert started.data["agent_run_id"] == "task:o2_relax"
     assert completed.data["subagent_source"] == "materials_worker"
+    assert completed.data["agent_run_id"] == "task:o2_relax"
 
 
 def test_stream_translator_creates_tool_part_for_orphan_tool_message(tmp_path: Path) -> None:
@@ -2598,6 +2619,60 @@ def test_stream_translator_separates_reasoning_and_internal_subagent_streams(tmp
     assert "reasoning.delta" in event_names
     assert "subagent.started" in event_names
     assert "subagent.delta" in event_names
+
+
+def test_stream_translator_keeps_same_named_subagent_invocations_separate(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id=new_id("msg"),
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", text="", status="streaming")],
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_parallel_materials",
+    )
+
+    for task_id, text in (
+        ("candidate_a", "Inspecting candidate A."),
+        ("candidate_b", "Inspecting candidate B."),
+    ):
+        translator.apply_v3_event(
+            {
+                "method": "messages",
+                "params": {
+                    "namespace": [f"task:{task_id}", "model_request:1"],
+                    "metadata": {"lc_agent_name": "materials_worker"},
+                    "data": [
+                        {
+                            "event": "content-block-delta",
+                            "delta": {"type": "text-delta", "text": text},
+                        }
+                    ],
+                },
+            }
+        )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    subagent_parts = [part for part in saved.parts if part.type == "subagent"]
+    assert len(subagent_parts) == 2
+    assert [part.meta["source"] for part in subagent_parts] == ["materials_worker", "materials_worker"]
+    assert [part.meta["agent_run_id"] for part in subagent_parts] == [
+        "task:candidate_a",
+        "task:candidate_b",
+    ]
+    assert [part.text for part in subagent_parts] == ["Inspecting candidate A.", "Inspecting candidate B."]
 
 
 def test_stream_translator_surfaces_reasoning_text_and_content_fields(tmp_path: Path) -> None:

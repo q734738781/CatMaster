@@ -470,6 +470,110 @@ def _assistant_parts(
             "error_code": "HTTP_502",
             "retry_safe": True,
         }
+    if pair_index == 39:
+        materials_meta_a = {
+            "agent_name": "materials_worker",
+            "subagent_source": "materials_worker",
+            "agent_run_id": "task:fixture_candidate_a",
+        }
+        materials_meta_b = {
+            "agent_name": "materials_worker",
+            "subagent_source": "materials_worker",
+            "agent_run_id": "task:fixture_candidate_b",
+        }
+        parts: list[MessagePart] = [
+            ToolCallPart(
+                id="part_fixture_plan_old",
+                tool_call_id="call_fixture_plan_old",
+                tool="write_todos",
+                status="completed",
+                input={
+                    "todos": [
+                        {"content": "Inspect both candidate structures", "status": "in_progress"},
+                        {"content": "Record the comparison", "status": "pending"},
+                    ]
+                },
+                output="Plan updated.",
+                meta=materials_meta_a,
+            ),
+            ToolCallPart(
+                id="part_fixture_plan_latest",
+                tool_call_id="call_fixture_plan_latest",
+                tool="write_todos",
+                status="completed",
+                input={
+                    "todos": [
+                        {"content": "Inspect both candidate structures", "status": "completed"},
+                        {"content": "Record the comparison", "status": "completed"},
+                    ]
+                },
+                output="Plan completed.",
+                meta=materials_meta_a,
+            ),
+            MessagePart(
+                id="part_fixture_long_reasoning",
+                type="reasoning",
+                status="completed",
+                text=(
+                    "Planning an independently checkable literature route and assigning "
+                    "bounded source checks. " * 24
+                ).strip(),
+            ),
+            MessagePart(
+                id="part_fixture_subagent_a",
+                type="subagent",
+                status="completed",
+                text="Candidate A lifecycle: checked the structure, inputs, and retained evidence.",
+                meta={"source": "materials_worker", **materials_meta_a},
+            ),
+            MessagePart(
+                id="part_fixture_subagent_b",
+                type="subagent",
+                status="completed",
+                text="Candidate B lifecycle: repeated the same bounded checks independently.",
+                meta={"source": "materials_worker", **materials_meta_b},
+            ),
+        ]
+        for run_label, run_meta, tool_names in (
+            ("a", materials_meta_a, ("read_file", "grep", "list_files", "write_file")),
+            ("b", materials_meta_b, ("read_file", "grep", "list_files", "read_file", "write_file")),
+        ):
+            for tool_index, tool_name in enumerate(tool_names, start=1):
+                parts.append(
+                    ToolCallPart(
+                        id=f"part_fixture_{run_label}_tool_{tool_index}",
+                        tool_call_id=f"call_fixture_{run_label}_tool_{tool_index}",
+                        tool=tool_name,
+                        status="completed",
+                        input={
+                            "path": f"files/candidate-{run_label}.dat",
+                            "task": (
+                                f"Candidate {run_label.upper()} check "
+                                f"{tool_index}"
+                            ),
+                        },
+                        output={
+                            "status": "completed",
+                            "summary": (
+                                f"Candidate {run_label.upper()} check "
+                                f"{tool_index} completed."
+                            ),
+                        },
+                        meta=run_meta,
+                    )
+                )
+        parts.append(
+            MessagePart(
+                id="part_fixture_lifecycle_answer",
+                type="text",
+                status="completed",
+                text=(
+                    "Both candidate checks completed. The activity trace above keeps the two "
+                    "same-named Materials invocations separate and preserves every tool record."
+                ),
+            )
+        )
+        return parts, status, meta
     return [
         MessagePart(
             id=f"part_fixture_answer_{pair_index:02d}",
@@ -532,7 +636,6 @@ def _write_research_graph(workspace: Path, thread_id: str) -> None:
                 "opposes it."
             ),
             execution_lane="experiment",
-            expected_value="high",
             estimated_compute_cost="medium",
             state="ready",
             tests_hypothesis_ids=[node["node_id"] for node in hypotheses],
@@ -588,7 +691,6 @@ def _write_research_graph(workspace: Path, thread_id: str) -> None:
                 "hypothesis; an unchanged ordering opposes it."
             ),
             execution_lane="experiment",
-            expected_value="high",
             estimated_compute_cost="high",
             state="draft",
             tests_hypothesis_ids=[next_hypothesis["node"]["node_id"]],

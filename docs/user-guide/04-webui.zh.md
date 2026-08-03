@@ -48,7 +48,7 @@ Entry 选错不会一定报错，但会让工作变得绕。例如用 Research �
 
 ## Chat 中能看到 Agent 的哪些工作
 
-Agent 回复时，Chat 不只显示最终文字。Progress 卡会保留当前推理与阶段说明；Activity 会汇总 tools、subagents 和远程 receipts；单个 tool 卡可以展开查看输入、状态和返回摘要。Agent 写出的结构、表格、图或报告会显示为 artifact，点击后在右侧 inspector 打开。
+Agent 回复时，Chat 不只显示最终文字。同一 turn 的最新 Todo 会合并到消息顶部的 Plan；推理、阶段说明和 tool calls 作为中间活动层显示在最终正文之前，并按一次具体的 subagent 生命周期归组。同名 worker 的两次调用仍是两个独立组。短组直接展开；活动较多或包含单条大段推理的组默认折叠，只显示当前或最后一项活动，展开后仍可查看未经摘要替换的完整轨迹。远程 receipts 和 artifacts 继续独立显示，点击 artifact 后可在右侧 inspector 打开。
 
 这些信息用来回答不同问题。Progress 说明 Agent 正在怎样理解任务，subagent 卡说明工作交给了哪个角色，tool 卡说明实际执行了什么动作，artifact 是可以继续使用的结果，remote receipt 则是远程作业的身份与状态证据。
 

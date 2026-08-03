@@ -11,6 +11,7 @@ from .common import (
     humanize_agent_name,
     humanize_identifier,
     parse_json_object,
+    public_activity_identity,
     redact_internal_text,
     safe_scalar_fields,
 )
@@ -297,6 +298,7 @@ def project_tool_part(
     status = str(raw.get("status") or "updated").strip().lower()
     part_id = str(raw.get("id") or raw.get("part_id") or "")
     diagnostics_ref = f"thread-message-part:{message_id}:{part_id}"
+    activity_group_id, activity_group_title = public_activity_identity(meta)
 
     todos = project_todo_items(raw, workspace=workspace)
     if todos:
@@ -307,6 +309,8 @@ def project_tool_part(
             type="progress",
             status=status,
             title=f"{humanize_agent_name(source)} plan" if source else "Research plan",
+            activity_group_id=activity_group_id,
+            activity_group_title=activity_group_title,
             summary=f"{complete} of {len(todos)} items complete.",
             items=todos,
             diagnostics_ref=diagnostics_ref,
@@ -350,6 +354,8 @@ def project_tool_part(
             type="tool",
             status=status,
             title=title,
+            activity_group_id=activity_group_id,
+            activity_group_title=activity_group_title,
             summary=summary,
             fields=[field for field in fields if field.label != "Type"],
             items=items,
@@ -382,6 +388,8 @@ def project_tool_part(
         type="tool",
         status=status,
         title=title,
+        activity_group_id=activity_group_id,
+        activity_group_title=activity_group_title,
         summary=summary,
         fields=fields,
         detail_ref=f"/api/threads/{thread_id}/messages/{message_id}/parts/{part_id}",

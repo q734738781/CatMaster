@@ -6,6 +6,15 @@ references describe the current system.
 
 ## Unreleased
 
+### WebUI
+
+- Long assistant activity traces now consolidate the latest Todo state at the
+  top and group reasoning, progress, and tool calls by subagent invocation.
+  Activity appears between the Plan and final prose. Groups with many events or
+  one substantial reasoning block collapse to their current or latest activity
+  while preserving the complete trace on expansion; same-named parallel
+  invocations remain separate.
+
 ### Runtime Reliability
 
 - Codex OAuth model calls now retry a prematurely closed chunked SSE response

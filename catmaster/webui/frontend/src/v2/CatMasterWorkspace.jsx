@@ -741,6 +741,7 @@ export default function CatMasterWorkspace({ boot }) {
                   hasMore={Boolean(runtimeState.messagePage?.truncated)}
                   onLoadOlder={runtimeState.loadOlderMessages}
                   loadingOlder={runtimeState.loadingOlder}
+                  todoParts={runtimeState.todoParts}
                 />
               </div>
               <ThreadComposer

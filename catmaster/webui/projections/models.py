@@ -80,6 +80,8 @@ class PublicPart(BaseModel):
     ]
     status: str = ""
     title: str = ""
+    activity_group_id: str = ""
+    activity_group_title: str = ""
     summary: str = ""
     text: str = ""
     fields: list[PublicField] = Field(default_factory=list)

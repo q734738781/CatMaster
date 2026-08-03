@@ -8,6 +8,7 @@ from .common import (
     encode_public_cursor,
     humanize_agent_name,
     humanize_identifier,
+    public_activity_identity,
     redact_internal_text,
     safe_scalar_fields,
     truncate_text,
@@ -329,6 +330,11 @@ def project_part(
             truncation=truncation,
         )
     if part_type == "reasoning":
+        meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+        activity_group_id, activity_group_title = public_activity_identity(
+            meta,
+            fallback_title="CatMaster",
+        )
         text, truncation = truncate_text(
             raw.get("text"),
             limit=max(0, int(progress_limit)),
@@ -341,12 +347,15 @@ def project_part(
             type="reasoning",
             status=status,
             title="Progress",
+            activity_group_id=activity_group_id,
+            activity_group_title=activity_group_title,
             text=text,
             diagnostics_ref=diagnostics_ref,
             truncation=truncation,
         )
     if part_type == "subagent":
         meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+        activity_group_id, activity_group_title = public_activity_identity(meta)
         text, truncation = truncate_text(
             raw.get("text"),
             limit=max(0, int(progress_limit)),
@@ -359,6 +368,8 @@ def project_part(
             type="progress",
             status=status,
             title=humanize_agent_name(meta.get("source"), fallback="Specialist progress"),
+            activity_group_id=activity_group_id,
+            activity_group_title=activity_group_title,
             text=text,
             diagnostics_ref=diagnostics_ref,
             truncation=truncation,

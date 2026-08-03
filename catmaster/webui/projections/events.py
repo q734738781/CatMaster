@@ -87,6 +87,8 @@ def project_event(
                 "output": data.get("output"),
                 "agent_name": data.get("agent_name"),
                 "subagent_source": data.get("subagent_source"),
+                "agent_run_id": data.get("agent_run_id"),
+                "stream_namespace": data.get("stream_namespace"),
             },
         }
         projected.part = project_part(

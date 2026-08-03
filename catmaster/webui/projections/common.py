@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -93,6 +94,35 @@ def humanize_agent_name(value: Any, *, fallback: str = "Specialist") -> str:
     if _OPAQUE_AGENT_SOURCE_RE.search(text):
         return fallback
     return humanize_identifier(text, fallback=fallback)
+
+
+def public_activity_identity(
+    meta: dict[str, Any],
+    *,
+    fallback_title: str = "Specialist",
+) -> tuple[str, str]:
+    """Project one internal agent lifecycle into an opaque UI grouping key."""
+
+    source = str(
+        meta.get("subagent_source")
+        or meta.get("agent_name")
+        or meta.get("source")
+        or ""
+    ).strip()
+    title = humanize_agent_name(source, fallback=fallback_title)
+    run_id = str(meta.get("agent_run_id") or "").strip()
+    if not run_id:
+        namespace = meta.get("stream_namespace")
+        if namespace not in (None, "", []):
+            run_id = json.dumps(namespace, ensure_ascii=True, separators=(",", ":"), default=str)
+    if not run_id and source:
+        # Hash the stable callback name so historical reasoning and tool parts
+        # share a group without exposing provider namespaces.
+        run_id = f"agent:{source.casefold()}"
+    if not run_id:
+        return "", ""
+    digest = hashlib.sha256(run_id.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return f"activity_{digest}", title
 
 
 def display_path(value: Any, *, workspace: Path | None = None) -> str:

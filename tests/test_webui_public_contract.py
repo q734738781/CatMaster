@@ -114,6 +114,7 @@ def test_ordinary_message_projection_hides_raw_and_diagnostics_recovers_it(
                         },
                         "output": {"status": "completed", "submission_hash": "private-hash"},
                         "agent_name": "materials_worker",
+                        "agent_run_id": "task:surface_relaxation:runtime-1",
                     },
                 )
             ],
@@ -129,7 +130,11 @@ def test_ordinary_message_projection_hides_raw_and_diagnostics_recovers_it(
     assert str(workspace) not in ordinary_text
     assert "provider_payload" not in ordinary_text
     assert "remote_submission" not in ordinary_text
-    assert ordinary.json()["messages"][0]["parts"][0]["title"] == "Materials · Remote submission"
+    public_part = ordinary.json()["messages"][0]["parts"][0]
+    assert public_part["title"] == "Materials · Remote submission"
+    assert public_part["activity_group_title"] == "Materials"
+    assert public_part["activity_group_id"].startswith("activity_")
+    assert "task:surface_relaxation" not in ordinary_text
 
     diagnostics = client.get(
         f"/api/diagnostics/threads/{thread_id}/messages/msg_projection"
@@ -179,6 +184,39 @@ def test_tool_projection_hides_truncated_json_and_opaque_agent_namespace() -> No
     assert "da002fa7" not in serialized
     assert projected.parts[0].summary == "Structured results are available in details."
     assert projected.parts[1].title == "Specialist plan"
+
+
+def test_reasoning_and_root_tools_share_public_activity_identity() -> None:
+    projected = project_message(
+        ThreadMessage(
+            id="msg_root_activity",
+            thread_id="thread_root_activity",
+            role="assistant",
+            status="completed",
+            parts=[
+                MessagePart(
+                    id="part_reasoning",
+                    type="reasoning",
+                    status="completed",
+                    text="Inspect the workspace first.",
+                    meta={"source": "research_specialist"},
+                ),
+                MessagePart(
+                    id="part_tool",
+                    type="tool-call",
+                    status="completed",
+                    meta={
+                        "tool": "read_file",
+                        "agent_name": "research_specialist",
+                        "agent_run_id": "agent:research_specialist",
+                    },
+                ),
+            ],
+        )
+    )
+
+    assert projected.parts[0].activity_group_title == "Research"
+    assert projected.parts[0].activity_group_id == projected.parts[1].activity_group_id
 
 
 def test_unknown_persisted_part_has_safe_fallback_and_raw_diagnostics(

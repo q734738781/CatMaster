@@ -46,7 +46,7 @@ Attachments are convenient for the current message. Files that will be reused sh
 
 ## What Chat reveals about agent work
 
-Chat contains more than final prose. Progress cards show the current reasoning or stage note. Activity groups tool calls, subagents, and remote receipts. Individual tool cards can be expanded to inspect input, status, and returned summaries. Files created by the agent appear as artifact cards and open in the right-side inspector.
+Chat contains more than final prose. The latest Todo state for a turn is consolidated into the Plan at the top of the message. Reasoning, stage notes, and tool calls follow as a middle activity layer before the final prose and are grouped by a specific subagent lifecycle, so two invocations of the same named worker remain separate. Short groups open directly; groups with many activities or one substantial reasoning block collapse to the current or latest activity and retain the complete unsummarized trace when expanded. Remote receipts and artifacts remain separate, and artifacts open in the right-side inspector.
 
 These parts answer different questions. Progress shows how the agent frames the task. Subagent activity shows which role owns the work. A tool card records the executed action. An artifact is a reusable result. A remote receipt identifies a submitted job and its recoverable state.
 

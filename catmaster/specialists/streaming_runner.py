@@ -260,6 +260,46 @@ def _subagent_source_name(metadata: dict[str, Any]) -> str:
     return _stream_source_name(metadata)
 
 
+def _agent_run_id(metadata: dict[str, Any], *, source: str = "") -> str:
+    """Return the smallest stable identity for one streamed agent invocation.
+
+    LangGraph v3 namespaces are paths whose segments carry a per-invocation
+    runtime id. Tool and model-request segments are children of the same
+    subagent, so retain the path only through the deepest ``task:`` segment.
+    Older callback streams may expose only ``langgraph_checkpoint_ns`` or an
+    agent name; those remain useful compatibility fallbacks.
+    """
+
+    namespace = metadata.get("namespace")
+    rows = (
+        [str(item).strip() for item in namespace if str(item).strip()]
+        if isinstance(namespace, (list, tuple))
+        else [str(namespace).strip()] if str(namespace or "").strip() else []
+    )
+    task_indexes = [index for index, row in enumerate(rows) if row.startswith("task:")]
+    if task_indexes:
+        return "/".join(rows[: task_indexes[-1] + 1])[:1_000]
+    if rows:
+        transient = {"agent", "model_request", "tools"}
+        retained = list(rows)
+        while retained and retained[-1].split(":", 1)[0] in transient:
+            retained.pop()
+        if retained:
+            return "/".join(retained)[:1_000]
+        if source:
+            return f"agent:{source}"[:1_000]
+        return rows[0][:1_000]
+    checkpoint_ns = str(
+        metadata.get("langgraph_checkpoint_ns")
+        or metadata.get("checkpoint_ns")
+        or ""
+    ).strip()
+    if checkpoint_ns:
+        return checkpoint_ns[:1_000]
+    label = str(source or "").strip()
+    return f"agent:{label}"[:1_000] if label else ""
+
+
 def _message_reasoning_text(message: Any) -> str:
     chunks: list[str] = []
 
@@ -467,7 +507,7 @@ class CatMasterStreamTranslator:
         self.reasoning_part_id = ""
         self.reasoning_text_emitted = ""
         self.observed_reasoning_event_id = 0
-        self.subagent_parts_by_source: dict[str, str] = {}
+        self.subagent_parts_by_run: dict[str, str] = {}
         existing_message = self.store.get_message(self.thread_id, self.message_id)
         self.projected_artifact_ids = {
             str(part.artifact_id)
@@ -970,17 +1010,23 @@ class CatMasterStreamTranslator:
         text = str(delta or "")
         if not text:
             return
-        source = _stream_source_name(metadata)
-        part_id = self.subagent_parts_by_source.get(source)
+        source = _subagent_source_name(metadata) or _stream_source_name(metadata)
+        agent_run_id = _agent_run_id(metadata, source=source)
+        group_key = agent_run_id or source
+        part_id = self.subagent_parts_by_run.get(group_key)
         if not part_id:
             part_id = new_id("part_subagent")
-            self.subagent_parts_by_source[source] = part_id
+            self.subagent_parts_by_run[group_key] = part_id
             part = MessagePart(
                 id=part_id,
                 type="subagent",
                 text="",
                 status="running",
-                meta={"source": source, "metadata": _json_safe(metadata, max_text=2_000)},
+                meta={
+                    "source": source,
+                    "agent_run_id": agent_run_id,
+                    "metadata": _json_safe(metadata, max_text=2_000),
+                },
             )
             self.store.append_part(self.thread_id, self.message_id, part)
             self._emit(
@@ -1304,6 +1350,9 @@ class CatMasterStreamTranslator:
         if source:
             fields["agent_name"] = source
             fields["subagent_source"] = source
+        agent_run_id = _agent_run_id(metadata, source=source)
+        if agent_run_id:
+            fields["agent_run_id"] = agent_run_id
         namespace = metadata.get("namespace")
         if namespace not in (None, "", []):
             fields["stream_namespace"] = _json_safe(namespace, max_text=2_000)

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Clipboard,
+  ChevronDown,
   FileBox,
   Hammer,
   Link as LinkIcon,
@@ -19,6 +20,11 @@ import {
 } from "lucide-react";
 
 import { normalizeMathMarkdown } from "../markdown";
+import {
+  isLongActivityGroup,
+  organizeTurnParts,
+  withCanonicalTodoParts,
+} from "../activityPresentation";
 import { entrypointMeta } from "../entrypoints";
 import {
   displayValue,
@@ -171,10 +177,11 @@ function progressTitle(part) {
   const title = displayValue(part?.title, "");
   const generic = !title || ["execution update", "progress", "update"].includes(title.toLowerCase());
   if (!generic) return title;
+  if (String(part?.type || "") === "reasoning") return "Reasoning trace";
   const status = String(part?.status || "").toLowerCase();
   if (["completed", "complete", "done", "success"].includes(status)) return "Step completed";
   if (["failed", "error"].includes(status)) return "Step needs attention";
-  return String(part?.type || "") === "reasoning" ? "Reasoning trace" : "Work in progress";
+  return "Work in progress";
 }
 
 function LongTextPart({ part, progress = false, onSelect }) {
@@ -609,6 +616,111 @@ function RenderProjectedPart({ part, onSelect, onResume }) {
   return <SemanticCard part={part} icon={CircleAlert} className="unknown" onSelect={onSelect} />;
 }
 
+function TurnPlanOverview({ parts, onSelect }) {
+  const rows = Array.isArray(parts) ? parts : [];
+  if (!rows.length) return null;
+  const items = rows.flatMap((part) => (Array.isArray(part.items) ? part.items : []));
+  const complete = items.filter((item) => ["done", "completed", "complete"].includes(String(item.status || "").toLowerCase())).length;
+  return (
+    <section className="v2-turn-plan" aria-label="Current plan">
+      <div className="v2-turn-plan-head">
+        <ListChecks size={17} />
+        <div>
+          <strong>Plan</strong>
+          <small>Latest Todo state</small>
+        </div>
+        <code>{complete}/{items.length} done</code>
+      </div>
+      <div className="v2-turn-plan-groups">
+        {rows.map((part) => (
+          <section key={part.id} className="v2-turn-plan-group">
+            <div className="v2-turn-plan-source">
+              <strong>{displayValue(part.plan_source, "CatMaster")}</strong>
+              <small>{statusLabel(part.status)}</small>
+            </div>
+            <ItemList items={part.items} ordered />
+            <TruncationNotice
+              truncation={part.truncation || {}}
+              onOpenFull={part.detail_ref ? () => onSelect?.({ type: "activity", part }) : null}
+            />
+          </section>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function activityPartLabel(part, groupTitle) {
+  const label = ["reasoning", "progress"].includes(String(part?.type || ""))
+    ? progressTitle(part)
+    : displayValue(part?.title, "Activity");
+  const prefix = `${String(groupTitle || "").trim()} · `;
+  if (prefix.trim() && label.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return label.slice(prefix.length) || "Activity";
+  }
+  if (label.toLowerCase() === String(groupTitle || "").trim().toLowerCase()) {
+    return String(part?.type || "") === "progress" ? "Progress" : label;
+  }
+  return label;
+}
+
+function ActivityGroup({ group, onSelect, onResume }) {
+  const isLong = isLongActivityGroup(group);
+  const [expanded, setExpanded] = useState(!isLong);
+  const userChanged = useRef(false);
+  const previousLong = useRef(isLong);
+
+  useEffect(() => {
+    if (previousLong.current !== isLong && !userChanged.current) {
+      setExpanded(!isLong);
+    }
+    previousLong.current = isLong;
+  }, [isLong]);
+
+  const failed = group.status === "failed";
+  const running = group.status === "running";
+  const StatusIcon = failed ? CircleAlert : running ? LoaderCircle : CheckCircle2;
+  const latestLabel = activityPartLabel(group.activePart, group.title);
+  return (
+    <section
+      className={`v2-activity-group status-${group.status}`}
+      data-activity-group={group.id}
+      aria-label={`${group.title} activity`}
+    >
+      <button
+        type="button"
+        className="v2-activity-group-toggle"
+        aria-expanded={expanded}
+        onClick={() => {
+          userChanged.current = true;
+          setExpanded((value) => !value);
+        }}
+      >
+        <ChevronDown className={expanded ? "expanded" : ""} size={16} aria-hidden="true" />
+        <StatusIcon className={running ? "spin" : ""} size={15} aria-hidden="true" />
+        <strong>{group.title}</strong>
+        <span title={latestLabel}>{latestLabel}</span>
+        <small>
+          {group.parts.length} {group.parts.length === 1 ? "activity" : "activities"}
+          {" · "}{statusLabel(group.status)}
+        </small>
+      </button>
+      {expanded ? (
+        <div className="v2-activity-list">
+          {group.parts.map((part, index) => (
+            <RenderProjectedPart
+              key={part.id || `${part.type || "part"}-${index}`}
+              part={part}
+              onSelect={onSelect}
+              onResume={onResume}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function partFromAssistantContent(part) {
   if (part?.type === "data") return part.data || {};
   return {
@@ -623,7 +735,7 @@ function partFromAssistantContent(part) {
   };
 }
 
-function CatMasterMessage({ onSelect, onResume }) {
+function CatMasterMessage({ canonicalTodoMessageId, canonicalTodoParts, onSelect, onResume }) {
   const message = useMessage();
   const role = String(message?.role || "assistant");
   const status = message?.status?.type || message?.status || "";
@@ -638,6 +750,11 @@ function CatMasterMessage({ onSelect, onResume }) {
   const [loadingParts, setLoadingParts] = useState(false);
   const [partsError, setPartsError] = useState("");
   const parts = [...initialParts, ...additionalParts];
+  const presentation = organizeTurnParts(
+    message?.id === canonicalTodoMessageId
+      ? withCanonicalTodoParts(parts, canonicalTodoParts)
+      : parts,
+  );
 
   useEffect(() => {
     setAdditionalParts([]);
@@ -683,7 +800,16 @@ function CatMasterMessage({ onSelect, onResume }) {
             <small>{statusLabel(status)}</small>
           </div>
           <div className="v2-message-parts">
-            {parts.map((part, index) => (
+            <TurnPlanOverview parts={presentation.planParts} onSelect={onSelect} />
+            {presentation.activityGroups.map((group) => (
+              <ActivityGroup
+                key={group.id}
+                group={group}
+                onSelect={onSelect}
+                onResume={onResume}
+              />
+            ))}
+            {presentation.contentParts.map((part, index) => (
               <RenderProjectedPart
                 key={part.id || `${part.type || "part"}-${index}`}
                 part={part}
@@ -708,7 +834,7 @@ function CatMasterMessage({ onSelect, onResume }) {
 
 export default function ThreadMessages({
   threadId = "",
-  messages,
+  messages = [],
   loading,
   error,
   onSelect,
@@ -716,11 +842,18 @@ export default function ThreadMessages({
   hasMore = false,
   onLoadOlder,
   loadingOlder = false,
+  todoParts = [],
 }) {
   const viewportRef = useRef(null);
   const [preservingHistoryAnchor, setPreservingHistoryAnchor] = useState(false);
   const preservingHistoryRef = useRef(false);
   const followBottomRef = useRef(true);
+  const latestUserIndex = messages.reduce((latest, message, index) => (
+    message?.role === "user" ? index : latest
+  ), -1);
+  const canonicalTodoMessageId = [...messages.slice(latestUserIndex + 1)]
+    .reverse()
+    .find((message) => message?.role === "assistant")?.id || "";
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -853,7 +986,14 @@ export default function ThreadMessages({
             </button>
           ) : null}
           <ThreadPrimitive.Messages>
-            {() => <CatMasterMessage onSelect={onSelect} onResume={onResume} />}
+            {() => (
+              <CatMasterMessage
+                canonicalTodoMessageId={canonicalTodoMessageId}
+                canonicalTodoParts={todoParts}
+                onSelect={onSelect}
+                onResume={onResume}
+              />
+            )}
           </ThreadPrimitive.Messages>
         </div>
         <ThreadPrimitive.ScrollToBottom className="v2-new-messages">
