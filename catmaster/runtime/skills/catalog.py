@@ -264,7 +264,11 @@ class SkillCatalog:
                         if not lanes:
                             lanes = ["literature_review", "research"]
                         if not roles:
-                            roles = ["literature_deep_research", "research_lead"]
+                            roles = [
+                                "literature_deep_research",
+                                "literature_worker",
+                                "research_lead",
+                            ]
                         if not tags:
                             tags = ["literature"]
                     elif source_root_name in {

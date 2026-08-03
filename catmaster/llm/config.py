@@ -39,6 +39,7 @@ AgentRole = Literal[
     "tool_selector",
     "image_analyzer",
     "literature_deep_research",
+    "literature_worker",
     "self_evolution_proposer",
     "self_evolution_reviewer",
 ]
@@ -59,6 +60,7 @@ OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
     "tool_selector": "task_runner",
     "image_analyzer": "task_runner",
     "literature_deep_research": "director",
+    "literature_worker": "literature_deep_research",
     "self_evolution_proposer": "memory_patch",
     "self_evolution_reviewer": "write_reviewer",
 }
@@ -80,6 +82,7 @@ AGENT_ROLES: tuple[AgentRole, ...] = (
     "tool_selector",
     "image_analyzer",
     "literature_deep_research",
+    "literature_worker",
     "self_evolution_proposer",
     "self_evolution_reviewer",
 )
@@ -100,6 +103,7 @@ AGENT_ROLE_ALIASES: dict[str, str] = {
     "run_summary": "summary",
     "tool_router": "tool_selector",
     "litreview_agent": "literature_deep_research",
+    "litreview_worker_agent": "literature_worker",
     "self_evolution_proposer_agent": "self_evolution_proposer",
     "self_evolution_reviewer_agent": "self_evolution_reviewer",
 }
@@ -632,6 +636,10 @@ class LLMProfile:
     @property
     def literature_deep_research(self) -> LLMConfig:
         return self.config_for_role("literature_deep_research")
+
+    @property
+    def literature_worker(self) -> LLMConfig:
+        return self.config_for_role("literature_worker")
 
     @staticmethod
     def from_env() -> "LLMProfile":

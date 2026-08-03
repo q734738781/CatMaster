@@ -74,6 +74,7 @@ agents:
 | `tool_selector` | General tool-selection support | `task_runner` |
 | `image_analyzer` | Image understanding | `task_runner` |
 | `literature_deep_research` | Literature Review | `director` |
+| `literature_worker` | Bounded literature discovery, reading, extraction, and audit | `literature_deep_research` |
 | `self_evolution_proposer` | Improvement candidate generation | `memory_patch` |
 | `self_evolution_reviewer` | Independent candidate review | `write_reviewer` |
 

@@ -11,10 +11,10 @@
 #   conda activate catmaster
 #   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
 #
-# Copy this file to configs/llm.yaml on the deployment target. The default
-# matches the validated local OAuth lane: GPT-5.6 Sol with xhigh reasoning for
-# specialists and high reasoning for workers/helpers. Both expose Responses API
-# reasoning summaries for monitor observability.
+# Copy this file to configs/llm.yaml on the deployment target. The default keeps
+# GPT-5.6 Sol for coordinators and compute-oriented roles, and uses GPT-5.6 Luna
+# xhigh for literature and section-writing workers. All profiles expose
+# Responses API reasoning summaries for monitor observability.
 
 models:
   codex-oauth-main:
@@ -65,6 +65,30 @@ models:
             summary: auto
           verbosity: medium
 
+  codex-oauth-luna-worker:
+    provider: codex_oauth
+    model: gpt-5.6-luna
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 180
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning:
+            effort: xhigh
+            summary: auto
+          verbosity: medium
+
   google/nanobanana_2:
     provider: openrouter
     model: google/gemini-3.1-flash-image-preview
@@ -81,7 +105,7 @@ agents:
   hypothesis_proposer: codex-oauth-main
   evidence_judge: codex-oauth-worker
   write_director: codex-oauth-main
-  section_writer: codex-oauth-worker
+  section_writer: codex-oauth-luna-worker
   write_reviewer: codex-oauth-main
   academic_polisher: codex-oauth-worker
   tex_compile_fixer: codex-oauth-worker
@@ -90,6 +114,7 @@ agents:
   tool_selector: codex-oauth-worker
   image_analyzer: codex-oauth-worker
   literature_deep_research: codex-oauth-main
+  literature_worker: codex-oauth-luna-worker
   self_evolution_proposer: codex-oauth-worker
   self_evolution_reviewer: codex-oauth-worker
 

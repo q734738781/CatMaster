@@ -23,6 +23,7 @@ _OPAQUE_AGENT_SOURCE_RE = re.compile(
 _AGENT_LABELS = {
     "general-purpose": "Research assistant",
     "litreview_agent": "Literature review",
+    "litreview_worker_agent": "Literature research",
     "research_specialist": "Research",
     "materials_worker": "Materials",
     "ml_worker": "Machine learning",

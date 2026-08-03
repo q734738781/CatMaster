@@ -443,10 +443,12 @@ def test_litreview_graph_tools_follow_the_turn_snapshot(
         top_level=True,
     )
     assert [item.kwargs["name"] for item in direct_agent.kwargs["subagents"]] == [
-        "general-purpose"
+        "general-purpose",
+        "litreview_worker_agent",
     ]
     assert [item.kwargs["name"] for item in bound_agent.kwargs["subagents"]] == [
         "general-purpose",
+        "litreview_worker_agent",
         "evidence_judge",
     ]
 
@@ -664,10 +666,15 @@ def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
     policy = runtime_mod.SpecialistRunner._tool_policy()
     checksum_rule = "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it."
     contract_rule = "Do not create, freeze, or persist an ad hoc contract, schema, manifest, baseline, lockfile, acceptance checklist, or similar governance artifact merely to formalize a one-off task."
+    overlap_rule = "Before launching multiple subagents, consider whether their work may modify overlapping files or directories."
     assert policy.startswith(checksum_rule)
     assert policy.count("hash") == 1
     assert contract_rule in policy
     assert "existing API, tool, reproducibility requirement, or downstream machine consumer actually requires it" in policy
+    assert overlap_rule in policy
+    assert "Read-only branches may run in parallel without special isolation." in policy
+    assert "separate output paths, designate a single writer, or run those tasks sequentially" in policy
+    assert "Preserve concurrent changes you did not create." in policy
     assert "use targeted inspection or a version-control diff when the question is edit scope" in policy
 
     shared_prompts = (
@@ -684,6 +691,7 @@ def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
     for prompt in shared_prompts:
         assert checksum_rule in prompt
         assert contract_rule in prompt
+        assert overlap_rule in prompt
 
 
 def test_general_purpose_policy_is_context_only_without_lane_or_concurrency_rules() -> None:
@@ -926,6 +934,7 @@ def test_specialist_prompts_default_to_on_demand_delegation() -> None:
         assert "current shared workspace makes parallel subagents unsafe" not in prompt
     assert "Run delegated review episodes sequentially" in peer_review_prompt
     assert "general-purpose" not in litreview_prompt
+    assert "litreview_worker_agent" in litreview_prompt
     assert "acquire_literature_source" not in litreview_prompt
     assert "finalize_citations" not in litreview_prompt
     assert "treat its execution and domain QC as authoritative" in experiment_prompt
@@ -1977,7 +1986,7 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
                 "orca_xtb_worker",
             ],
         ),
-        ("literature_review", ["general-purpose"]),
+        ("literature_review", ["general-purpose", "litreview_worker_agent"]),
         ("writing", ["general-purpose", "writing_worker_agent", "writing_polisher_agent"]),
         ("peer_review", ["general-purpose", "peer_review_worker_agent"]),
     ],
@@ -2126,8 +2135,15 @@ def test_specialist_lanes_start_with_staged_skills(
         general_purpose = [spec for spec in specs if spec["name"] == "general-purpose"]
         assert len(general_purpose) == 1
         spec = general_purpose[0]
-        assert "tools" not in spec
-        assert "model" not in spec
+        if owner_kwargs["name"] == "litreview_agent":
+            assert spec["model"] == {"model": "literature_worker-model"}
+            assert {tool.name for tool in spec["tools"]} == (
+                _LITREVIEW_LOCAL_TOOL_ALLOWLIST
+                | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+            )
+        else:
+            assert "tools" not in spec
+            assert "model" not in spec
         assert spec["skills"] == list(owner_kwargs.get("skills") or [])
         assert "CatMaster's general-purpose context worker" in spec["system_prompt"]
         assert "The brief is the source of scope" in spec["system_prompt"]
@@ -2341,7 +2357,22 @@ def test_specialist_lanes_start_with_staged_skills(
         )
         _assert_native_memory(litreview_agent_kwargs)
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in litreview_agent_kwargs["middleware"])
-        assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == ["general-purpose"]
+        assert [subagent.kwargs["name"] for subagent in litreview_agent_kwargs["subagents"]] == [
+            "general-purpose",
+            "litreview_worker_agent",
+        ]
+        litreview_worker_kwargs = next(
+            subagent.kwargs
+            for subagent in litreview_agent_kwargs["subagents"]
+            if subagent.kwargs["name"] == "litreview_worker_agent"
+        )
+        assert litreview_worker_kwargs["model"] == {"model": "literature_worker-model"}
+        assert {tool.name for tool in litreview_worker_kwargs["tools"]} == (
+            _LITREVIEW_LOCAL_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
+        assert "runnable" not in litreview_worker_kwargs
+        assert "subagents" not in litreview_worker_kwargs
+        assert "Do not delegate and do not take over the full review" in litreview_worker_kwargs["system_prompt"]
         assert "requested scope" in litreview_agent_kwargs["system_prompt"]
         assert "fixed paper count or full-text count" in litreview_agent_kwargs["system_prompt"]
         assert "50-60" not in litreview_agent_kwargs["system_prompt"]
@@ -2367,11 +2398,23 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "acquire_literature_source" not in agent_kwargs["system_prompt"]
         assert "finalize_citations" not in agent_kwargs["system_prompt"]
         assert "general-purpose" not in agent_kwargs["system_prompt"]
+        assert "litreview_worker_agent" in agent_kwargs["system_prompt"]
         assert "50-60" not in agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "Do not perform computational execution" in agent_kwargs["system_prompt"]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in agent_kwargs["middleware"])
-        assert [subagent.kwargs["name"] for subagent in agent_kwargs["subagents"]] == ["general-purpose"]
+        assert [subagent.kwargs["name"] for subagent in agent_kwargs["subagents"]] == [
+            "general-purpose",
+            "litreview_worker_agent",
+        ]
+        litreview_worker_kwargs = subagents_by_name["litreview_worker_agent"]
+        assert litreview_worker_kwargs["model"] == {"model": "literature_worker-model"}
+        assert {tool.name for tool in litreview_worker_kwargs["tools"]} == (
+            _LITREVIEW_LOCAL_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
+        assert "runnable" not in litreview_worker_kwargs
+        assert "subagents" not in litreview_worker_kwargs
+        assert "Do not delegate and do not take over the full review" in litreview_worker_kwargs["system_prompt"]
         assert not _created_agents_named("literature_agent")
         assert not _created_agents_named("metadata_agent")
     elif entrypoint == "experiment":

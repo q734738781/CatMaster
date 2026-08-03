@@ -52,6 +52,9 @@ They are built in [runtime.py](specialists/runtime.py).
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
   - Uses direct public-source checking only for tightly bounded background supplementation needed by the current manuscript or note.
+- `litreview_agent`
+  - Literature-review coordinator for both direct entry and Research delegation.
+  - Delegates bounded discovery, source reading, extraction, and evidence-audit branches to the leaf `litreview_worker_agent`, then retains coverage, conflict resolution, and final synthesis.
 
 Layered capability visibility is part of the runtime contract. Research
 delegates remote-capability probes to `experiment_specialist`; experiment may
@@ -59,15 +62,14 @@ use the remote task catalog only to make worker briefs accurate; concrete
 resource checks, worker skill/SOP interpretation, and managed submissions belong
 to the worker agent that owns the domain.
 
-In the current shared-workspace runtime, all specialist and worker subagent
-episodes are sequential by default. A parent must issue at most one subagent
-delegation in a model response, wait for it to
-finish, consume its result, and only then decide whether
-another delegation is required. Do not launch multiple subagents in the same
-turn: they share the workspace and can race on scripts, outputs, and cleanup.
-A future parallel-hypothesis runtime may opt into concurrency only when it
-provides explicit workspace/write-scope isolation and a deterministic merge
-contract.
+Subagent contexts share the workspace even when their task calls execute
+concurrently. Before launching multiple subagents, consider whether their work
+may modify overlapping files or directories. Read-only branches may run in
+parallel without special isolation. If write overlap is plausible, give the
+tasks separate output paths, designate one writer, or run them sequentially;
+preserve concurrent changes rather than overwriting or undoing them. A lane may
+apply a stricter rule when its workflow requires one canonical writer; the
+peer-review lane currently runs its delegated review episodes sequentially.
 
 Execution guidance for the active experiment path:
 
@@ -110,13 +112,17 @@ tool or compatibility route.
 - local full-text corpus ingest/query tools;
 - one deterministic batch citation finalizer.
 
-It declares no custom literature or metadata worker. CatMaster explicitly
+It declares one leaf `litreview_worker_agent` for bounded discovery, reading,
+extraction, and evidence-audit branches. The coordinator still owns review
+coverage, conflicting evidence, and final synthesis. CatMaster explicitly
 replaces DeepAgents' auto-added `general-purpose` child with one shared
-context-worker specification. That child inherits the current layer's model,
-tools, permissions, and interrupt policy; CatMaster passes the same staged skill
-roots explicitly and adds bounded document access plus nonfatal tool-error
-handling. Its role is context isolation within the caller's current lane, not
-coordination or responsibility transfer.
+context-worker specification. That child normally inherits the current layer's
+model and capabilities; Literature Review binds its fallback to the same model
+and tools as `litreview_worker_agent`. CatMaster passes staged skill roots
+explicitly and adds bounded document access plus nonfatal tool-error handling.
+Both literature workers are non-coordinating leaves; the named worker is the
+normal delegation target, while `general-purpose` remains a compatibility
+fallback for context isolation.
 
 `open_public_page`, `find_in_page`, OpenAlex, and Semantic Scholar tools are not
 part of the LitReview model-visible surface. OpenAlex may remain an internal

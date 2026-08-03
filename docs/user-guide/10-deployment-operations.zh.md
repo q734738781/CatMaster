@@ -76,6 +76,7 @@ agents:
 | `tool_selector` | 通用 tool 选择辅助 | `task_runner` |
 | `image_analyzer` | 图片理解 | `task_runner` |
 | `literature_deep_research` | Literature Review | `director` |
+| `literature_worker` | 有边界的文献发现、阅读、提取与证据审计 | `literature_deep_research` |
 | `self_evolution_proposer` | 改进候选生成 | `memory_patch` |
 | `self_evolution_reviewer` | 候选独立审查 | `write_reviewer` |
 

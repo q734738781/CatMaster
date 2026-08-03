@@ -6,7 +6,7 @@ import pytest
 from catmaster.llm.config import LLMConfig, LLMProfile
 
 
-def test_codex_oauth_template_routes_specialists_and_workers_by_reasoning_effort() -> None:
+def test_codex_oauth_template_routes_coordinators_and_workers_by_role() -> None:
     config_path = Path(__file__).resolve().parents[1] / "configs" / "llm_codex_oauth.template.yaml"
     profile = LLMProfile.from_env_or_file(str(config_path))
 
@@ -23,12 +23,15 @@ def test_codex_oauth_template_routes_specialists_and_workers_by_reasoning_effort
         "write_reviewer",
         "literature_deep_research",
     ):
+        assert profile.config_for_role(role).model == "gpt-5.6-sol"
+        assert effort(role) == "xhigh"
+    for role in ("literature_worker", "section_writer"):
+        assert profile.config_for_role(role).model == "gpt-5.6-luna"
         assert effort(role) == "xhigh"
     for role in (
         "task_runner",
         "research_state_updater",
         "evidence_judge",
-        "section_writer",
         "academic_polisher",
         "tex_compile_fixer",
         "memory_patch",
@@ -171,6 +174,7 @@ def test_llm_profile_accepts_current_specialist_alias_role_names(tmp_path: Path)
                 "  writing_worker_agent: 'main-online'",
                 "  peer_review_specialist: 'main-online'",
                 "  litreview_agent: 'main-online'",
+                "  litreview_worker_agent: 'main-online'",
                 "  memory_patcher: 'main-online'",
                 "  run_summary: 'summary-mini'",
             ]
@@ -184,6 +188,8 @@ def test_llm_profile_accepts_current_specialist_alias_role_names(tmp_path: Path)
     assert profile.config_for_role("task_runner").model == "openai/gpt-5.4"
     assert profile.config_for_role("litreview_agent").model == "openai/gpt-5.4"
     assert profile.config_for_role("literature_deep_research").model == "openai/gpt-5.4"
+    assert profile.config_for_role("litreview_worker_agent").model == "openai/gpt-5.4"
+    assert profile.config_for_role("literature_worker").model == "openai/gpt-5.4"
     assert profile.label_for_role("run_summary") == "summary-mini"
     assert profile.summary.model == "openai/gpt-5.4-mini"
 
@@ -475,6 +481,7 @@ def test_llm_profile_literature_deep_research_fallbacks_to_director(tmp_path: Pa
 
     profile = LLMProfile.from_env_or_file(str(cfg))
     assert profile.literature_deep_research.model == "openai/gpt-5-nano"
+    assert profile.literature_worker.model == "openai/gpt-5-nano"
 
 
 def test_llm_profile_agent_runtime_legacy_keys_are_rejected(tmp_path: Path) -> None:

@@ -24,6 +24,17 @@ references describe the current system.
 
 ### Agent Prompting
 
+- Literature Review now has a named, non-delegating
+  `litreview_worker_agent` for bounded discovery, source reading, extraction,
+  and evidence-audit branches; `litreview_agent` retains coverage decisions,
+  conflict resolution, and final synthesis. The Codex OAuth profile routes this
+  worker and `writing_worker_agent` to GPT-5.6 Luna with xhigh reasoning while
+  keeping their coordinators on GPT-5.6 Sol.
+- Shared tool guidance now asks delegators to assess possible write overlap
+  before launching concurrent subagents. Read-only branches remain freely
+  parallel; potentially overlapping writers use separate output paths, one
+  designated writer, or sequential execution without imposing mandatory
+  per-task workspaces.
 - Writing system prompts no longer prescribe claim counts or fixed review,
   polishing, and compilation pass counts. Conditional planning guidance now
   lives in writing skills, while runtime prompts retain qualitative completion
