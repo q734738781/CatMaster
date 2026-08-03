@@ -39,8 +39,8 @@ axes:
 
 references:
   on_demand:
-    - condition: full source reliability tiers (T1/T2/T3) and fallback routing rules
-      path: references/source-tiers.md
+    - condition: source coverage, structure, access, quota, and availability routing
+      path: references/source-routing.md
     - condition: deduplication across sources (used by WFs 1, 2, 5a)
       path: references/dedup-engine.md
     - condition: extracting citations from documents (WF 2)

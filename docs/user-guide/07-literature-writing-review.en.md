@@ -42,7 +42,7 @@ and list alternative explanations the paper does not exclude.
 
 The most useful intermediate artifact in a review is often an evidence table rather than prose. Literature Review can record the scientific modality, inspected access depth, system, method, conditions, reported observation, interpretation, provenance, and relationship to each claim. These are evidence attributes, not a high/medium/low grade assigned to the whole paper. Writing can use that map without guessing which citation belongs to each sentence.
 
-The scheduled literature pipeline may also calculate a six-component LATS selection score to rank candidate papers for reading, delivery, or archival. It retains topic fit, novelty/contribution, method quality, source/author signal, practical value, and archive value together with the total, rationale, access depth, and provisional status. This operational score is useful for triage but does not measure evidence strength, scientific truth, or confidence in a claim.
+The scheduled literature pipeline records each candidate as `selected`, `deferred`, or `excluded`, with a concrete reason. Selected papers affect the current synthesis or decision, deferred papers are relevant but not needed yet, and excluded papers are out of scope, duplicates, or unable to answer the question. Access depth and claim relationship remain separate attributes. The pipeline does not assign a composite paper score or use journal prestige as an evidence grade.
 
 Deduplicate title, DOI, preprint, and journal versions early. After paper selection, `finalize_citations` resolves author, journal, year, DOI, and export records in one batch. `nature-ref-verifier` can audit an existing bibliography field by field and flag volume-year, author-order, pagination, and DOI conflicts.
 
@@ -72,6 +72,10 @@ Skills are `nature-academic-search`, `nature-reader`, `nature-citation`, `nature
 ## Writing agent: turning evidence into deliverables
 
 Writing can begin from Chinese notes, result tables, figures, code output, a bibliography, an existing LaTeX project, an older PDF, or reviewer comments. Its job is not simply to polish the material. It interprets the writing target and evidence boundary, then selects writing skills for argument design, drafting, revision, figures, layout, or compilation.
+
+### Use Research Graph to locate original evidence
+
+When the current Writing thread explicitly attaches a Research Graph, the agent reads the partial focus and uses a read-only query to locate the relevant Hypotheses, every directly supporting, opposing, or inconclusive Result, their producing Experiments, and Sources. It then opens only the note, artifact, run, thread message, or literature source needed for the section. Claim-critical values, conditions, mechanisms, and limitations still come from the original owner material. If the graph does not cover a claim, Writing searches the workspace locally and states the gap. This adds no manuscript schema and gives Writing no graph mutation capability.
 
 ### Manuscripts, reports, and proposals
 
@@ -115,7 +119,7 @@ Audit the [CITATION NEEDED] markers in writing/introduction.md.
 Extract the externally verifiable claim in each sentence, find sources that directly support it,
 and state whether evidence comes from full text or abstract. Do not force citations onto ordinary transitions.
 
-Save a claim, candidate source, support strength, and DOI table. Wait for confirmation before updating
+Save a claim, candidate source, claim relationship, access depth, and DOI table. Wait for confirmation before updating
 references.bib or the manuscript.
 ```
 
@@ -156,7 +160,7 @@ and citations. End with conclusions supported by the paper and questions that re
 <details>
 <summary>Sources of Writing capability</summary>
 
-Entry tools are `generate_nanobanana_figure` and `review_pdf_manuscript`. The writing worker also uses `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, plus common file and scripting capabilities.
+Entry tools are the read-only `query_research_graph_sql`, `generate_nanobanana_figure`, and `review_pdf_manuscript`. The Writing coordinator uses the graph query for evidence navigation; the writing worker still uses `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, plus common file and scripting capabilities.
 
 Skills cover manuscript and proposal writing, polishing, citations, data statements, figures, full-paper reading, reference verification, response letters, pre-submission review, PPT, patent drafts, ACS LaTeX, venue templates, and Markdown PDF. `citation-management` supplies a general reference workflow, while `humanizer` performs the final style audit. External actions still depend on installed software, APIs, and supplied source material.
 

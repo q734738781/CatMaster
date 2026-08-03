@@ -69,7 +69,7 @@ New graph 只强制填写研究问题。标题、完成条件、编排模式和 
 图中只有三种科学节点：
 
 - Hypothesis 显示简短命题、相对重要性及由所有 Result 派生的关系概览；这不是证据等级。
-- Experiment proposal 显示 objective、plan、decision rule、execution lane、预期决策价值、粗粒度算力成本和准备或执行状态。
+- Experiment proposal 显示 objective、plan、decision rule、execution lane、粗粒度算力成本和准备或执行状态。临时 planning candidate 还会显示当前的创新评价和保守评价；这些数值不属于永久 Experiment。
 - Result 显示简短观察或结果，并通过带文字标签的关系连接它支持、反对或无法区分的 Hypothesis。文献发现、合作组结果和历史观察可以不绑定图中 Experiment 直接记录。
 
 画布支持平移、缩放、fit、minimap、键盘访问、focus neighborhood，以及 5、25、100 个节点的密度选择。节点卡保留完整标题和可访问名称。点击节点后，右侧 inspector 显示完整科学字段和来源，不会用不可恢复的字符截断代替内容。
@@ -77,19 +77,25 @@ New graph 只强制填写研究问题。标题、完成条件、编排模式和 
 “Add scientific input” 支持先写一两句话：Hypothesis 只需 claim，draft Experiment 只需 objective，Observation/Result 只需 summary；标题、rationale、predictions、关系、优先级、解释和来源都在可选细节中。draft Experiment 可以暂时不完整，但没有 plan 和 decision rule 时不能标记为 Ready，也不能运行。Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment；它对任一 Hypothesis 的支持、反对或无法区分判断也可以事后新增、替换或清除，不必重建 Result。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
 
 Research Specialist 创建 graph 后会自动附着到当前 thread。由 Experiment 或
-Literature Review 启动的 child 会得到同一个有界 graph focus，但只能为绑定的
-Experiment 写回 Result 或具体阻塞原因，且系统会自动把 child thread 附成来源。
-如果 child 结束时没有 Result，launch 会显示为 blocked，而不是 completed。
+Literature Review 启动的 child 会得到同一个 partial graph focus 和绑定的只读查询面，
+但只能为绑定的 Experiment 写回 Result 或具体阻塞原因。自动写回 Result 前，共享的
+evidence judge 会判断该 Result 真正涉及哪些 Hypothesis，也可以返回空 judgments。
+系统会自动把 child thread 附成来源。如果 child 结束时没有 Result，launch 会显示为
+blocked，而不是 completed。
 
 运行 Experiment 会原子占用一次 launch，再创建绑定 graph 和 focus node 的普通 child thread。同一个 active launch 的重复点击会合并，但完成后的 Experiment 可以显式启动 replicate。来源 thread 正在运行、停止或已经删除，都不会阻塞 graph。远程状态不明时，系统先对账已有 thread、run 和 receipt，不会自动重提。
 
-Research planning 会先让 `hypothesis_proposer` 阅读当前证据，并按需检索网络、受控浏览器和本地文献 corpus。它给 Research 返回普通科学语言的 memo，也可以通过绑定的 staging action 发布带来源的临时 Hypothesis/Experiment 分支。分支数量由当前证据支持的科学差异决定，不要求固定的 Hypothesis/Experiment 数量或比例；开始重复已有解释时就停止扩展。临时 Experiment 可以只是只有 objective 的 draft，只有补齐可执行 plan 和 decision rule 后才会成为 runnable。规划会同时考虑完整 runnable frontier，但推荐依据是一段科学理由，而不是持久化数值分数。候选分支在落图前以半透明节点显示。规划 run 属于内部编排，不会污染普通 thread 列表；对用户有用的进度和推荐直接显示在 graph 上。Manual 模式下可以点击任一临时节点把相关路线原子加入图中；未选分支会随下一次规划替换，不进入永久科学图。
+Research planning 先给 `hypothesis_proposer` 一份 partial focus snippet，并提供完整绑定图的只读 SQL 查询。proposer 也可以按需检索网络与本地 corpus，并读取或获取已选来源。Result-focused planning 会先比较新 Result、已有预测和旧 Result，再决定是否需要真正不同的新 Hypothesis；也可以判断本轮无需新增分支。staging action 只发布带来源的临时 Hypothesis/Experiment，不会实体化或启动。分支数量由当前证据支持的科学差异决定。临时 Experiment 可以只是只有 objective 的 draft，补齐可执行 plan 和 decision rule 后才会成为 runnable。
 
-Automatic orchestration 会在每次 graph 变化后先重新规划，再最多运行一个真实 Experiment；这只限制执行并发，不限制图中并行 Hypothesis 的数量。如果规划推荐临时路线，系统只实体化该路线；如果推荐已有 ready Experiment，则直接推进它。完成条件被已有 Result 满足后，graph 标记为 Completed 并停止自动推进。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
+evaluator 会比较当前 revision 的全部候选 Experiment，包括完整 runnable frontier，并分别给出创新分和保守分。这些数值及两种推荐只存在于当前 preview。候选分支在落图前以半透明节点显示，inspector 会同时展示两种分数和推荐。planning run 不会污染普通 thread 列表。Manual 模式下可以点击临时节点把相关路线原子加入图中；未选分支会随下一次 planning 替换，不进入永久科学图。
+
+Automatic orchestration 会在每次 graph 变化后先重新规划，再最多运行一个真实 Experiment；这只限制执行并发，不限制图中并行 Hypothesis 的数量。系统默认采用当前 revision 的保守推荐。推荐临时 Experiment 时先通过独立转换实体化；推荐已有 ready Experiment 时可以直接启动。no-change、评价缺失或无效、推荐为空，或 graph 被并发修改时，系统会保持等待，不会退回 runnable frontier 的第一项。完成条件被已有 Result 满足后，graph 标记为 Completed 并停止自动推进。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
 
 Completed 是停止推进标记，不是写保护：新增或修改科学内容会自动重新打开 graph，只补一条来源不会改变完成状态。Archived graph 则是只读的，必须显式 Restore 后才能继续修改。
 
 Graph 节点只保存短科学命题。论文、详细笔记、结构、日志、报告、artifact 和 receipt 仍在原有位置，通过 Sources 连接。来源被移动或删除后会显示 "Source unavailable"，不会静默删除引用。Graph 操作也不等于批准受保护执行；计算仍经过相应 specialist、受管执行和原有审批卡。
+
+Writing thread 显式 Attach graph 后，每个 turn 会得到同一份 partial focus context，Writing coordinator 也可只读查询完整绑定图。它先定位与当前章节有关的 Result、相反或无法区分的判断及其 Sources，再定点打开原始 note、artifact、run、thread message、DOI 或 URL。Result summary 只是导航，不替代原始证据；Writing 不能修改 graph。未 Attach graph 的 Writing 行为保持不变，存在多个 graph 时也不会按标题猜测。
 
 其他 thread 更新同一 graph 时，页面通过持久事件流刷新。若你提交编辑前 graph 已变化，服务端会拒绝覆盖并显示可读的冲突说明。刷新后核对新内容，再重新提交。
 
@@ -140,7 +146,9 @@ Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机�
 
 ## 右侧 inspector 适合边对话边审阅
 
-点击 artifact 或文件后，右侧 inspector 会打开标签页。你可以保持 Chat 可见，同时对照结构、报告、表格或日志继续提问。Todo 标签显示当前 turn 中最新 `write_todos` 的 canonical 只读投影，消息分页和页面刷新不会改变其完成状态；它不是用户需要手工维护的项目管理器。
+点击 artifact 或文件后，右侧 inspector 会打开标签页。你可以保持 Chat 可见，同时对照结构、报告、表格或日志继续提问。Todo 标签显示当前 turn 中最新计划的 canonical 只读投影：运行中跟随 `write_todos` 更新；assistant message 完成时，由服务端推送终态投影，并移除未闭合的子代理临时计划。消息分页和页面刷新会保持这一状态。它不是用户需要手工维护的项目管理器。
+
+已完成的 specialist task 卡直接使用返回的科学 Markdown：卡片展示内容标题、核心判断和简短分节提纲；Details 中保留扩展提纲和技术引用。
 
 一个自然的复查请求可以直接指向刚打开的文件：
 

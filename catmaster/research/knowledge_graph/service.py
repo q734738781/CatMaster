@@ -13,7 +13,7 @@ from catmaster.webui.artifact_registry import ArtifactRegistry
 from catmaster.webui.thread_models import ThreadSubmitRequest, ThreadStatus
 from catmaster.webui.thread_store import ThreadStore
 
-from .context import ResearchGraphContextBuilder, ranked_frontier_ids
+from .context import ResearchGraphContextBuilder, runnable_frontier_ids
 from .models import (
     EdgeRelation,
     ExperimentCreateRequest,
@@ -25,6 +25,7 @@ from .models import (
     NodePatchRequest,
     RefKind,
     ResearchExperimentProposal,
+    ResearchExperimentEvaluationDraft,
     ResearchGraphPlanningDraft,
     ResearchGraphPlanningProposal,
     ResearchHypothesisProposal,
@@ -38,9 +39,6 @@ from .store import ResearchGraphConflict, ResearchGraphStore
 _DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$", re.IGNORECASE)
 _ACTIVE_LAUNCH_STATUSES = {"claimed", "submitting", "running", "unknown"}
 _PLANNING_THREAD_KIND = "research_graph_planning"
-# Operational circuit breaker for one staged tool payload, not a scientific
-# branching target. It intentionally stays out of the agent-visible schema.
-_MAX_STAGED_PLAN_NODES = 64
 
 
 class ResearchGraphService:
@@ -103,7 +101,7 @@ class ResearchGraphService:
 
     @staticmethod
     def _frontier_ids(snapshot: dict[str, Any]) -> list[str]:
-        return ranked_frontier_ids(snapshot["nodes"], snapshot["edges"])
+        return runnable_frontier_ids(snapshot["nodes"], snapshot["edges"])
 
     @staticmethod
     def _is_internal_planning_thread(thread: Any) -> bool:
@@ -143,11 +141,16 @@ class ResearchGraphService:
             threads = [
                 thread for thread in threads if thread.thread_id == thread_hint
             ]
+        matches: list[tuple[Any, Any]] = []
         for thread in threads:
             message = self.thread_store.get_message(thread.thread_id, message_id)
             if message is not None:
-                return thread, message
-        return None
+                matches.append((thread, message))
+        # Bare message IDs are accepted for legacy callers only when ownership
+        # is unambiguous. Persisted refs are canonicalized below so later SQL
+        # projection cannot accidentally expose a same-ID message in another
+        # thread.
+        return matches[0] if len(matches) == 1 else None
 
     def validate_ref(self, ref: ResearchRefInput | dict[str, Any]) -> dict[str, str]:
         model = (
@@ -165,11 +168,14 @@ class ResearchGraphService:
                     "Thread reference is not available in this workspace."
                 ) from exc
         elif kind is RefKind.MESSAGE:
-            if self._message_ref(ref_id) is None:
+            found = self._message_ref(ref_id)
+            if found is None:
                 raise ValueError(
                     "Message reference is not available in this workspace. "
                     "Use thread_id:message_id when the message ID is ambiguous."
                 )
+            thread, message = found
+            ref_id = f"{thread.thread_id}:{message.id}"
         elif kind is RefKind.ARTIFACT:
             if self.artifact_registry.get(ref_id) is None:
                 raise ValueError(
@@ -401,34 +407,24 @@ class ResearchGraphService:
                     snapshot,
                     proposal,
                     focus_node_id=str(stored_preview.get("focus_node_id") or ""),
+                    evaluation=(
+                        ResearchExperimentEvaluationDraft.model_validate(
+                            stored_preview["evaluation"]
+                        )
+                        if isinstance(stored_preview.get("evaluation"), dict)
+                        else None
+                    ),
                 )
-            else:
-                # Read legacy previews without carrying their duplicated shape
-                # into newly written planning state.
-                public_preview = {
-                    key: stored_preview[key]
-                    for key in (
-                        "focus_node_id",
-                        "nodes",
-                        "edges",
-                        "recommended_target_id",
-                        "recommended_proposal_id",
-                        "recommended_existing_node_id",
-                        "route_ids",
-                        "summary",
-                    )
-                    if key in stored_preview
+                for node in public_preview.get("nodes", []):
+                    node["refs"] = [
+                        self.resolve_ref(ref)
+                        for ref in list(node.get("refs") or [])
+                    ]
+                result["planning_preview"] = {
+                    "planning_id": str(planning["planning_id"]),
+                    "revision": int(planning["revision"]),
+                    **public_preview,
                 }
-            for node in public_preview.get("nodes", []):
-                node["refs"] = [
-                    self.resolve_ref(ref)
-                    for ref in list(node.get("refs") or [])
-                ]
-            result["planning_preview"] = {
-                "planning_id": str(planning["planning_id"]),
-                "revision": int(planning["revision"]),
-                **public_preview,
-            }
         return result
 
     def catalog(
@@ -476,10 +472,9 @@ class ResearchGraphService:
                             "node_id": node_id,
                             "title": str(by_id[node_id]["title"]),
                         }
-                        for node_id in frontier_ids[:3]
+                        for node_id in frontier_ids
                         if node_id in by_id
                     ],
-                    "frontier_omitted_count": max(0, len(frontier_ids) - 3),
                     "bound_thread_count": len(bound),
                     "bound_to_current_thread": any(
                         thread.thread_id == current_thread_id for thread in bound
@@ -604,8 +599,8 @@ class ResearchGraphService:
                 "objective": request.objective,
                 "plan_summary": request.plan_summary,
                 "decision_rule": request.decision_rule,
+                "blocking_reason": request.blocking_reason,
                 "execution_lane": request.execution_lane,
-                "expected_value": request.expected_value,
                 "estimated_compute_cost": request.estimated_compute_cost,
             },
             state=request.state.value,
@@ -762,9 +757,10 @@ class ResearchGraphService:
             f"Decision rule: {body['decision_rule']}\n\n"
             "Keep detailed calculations, receipts, and reports in their normal "
             "workspace owners. When execution reaches a scientifically "
-            "meaningful outcome, record a concise Result in the bound graph, "
-            "attach the source run/artifacts as refs, and judge each tested "
-            "hypothesis as supporting, opposing, or inconclusive. If execution "
+            "meaningful outcome, collect a concise Result and attach the source "
+            "run/artifacts as refs. Before the atomic graph writeback, ask the "
+            "shared evidence judge to assess only the hypotheses the evidence "
+            "actually distinguishes; an empty judgment set is valid. If execution "
             "cannot proceed, record the concrete blocking reason."
         )
 
@@ -902,15 +898,16 @@ class ResearchGraphService:
             has_staged_proposal = bool(
                 dict(planning.get("preview") or {}).get("proposal")
             )
+            graph_revision = int(graph["revision"])
+            planning_revision = int(planning["revision"])
             self.store.update_planning(
                 planning["graph_id"],
                 planning["planning_id"],
-                start_revision=int(planning["revision"]),
+                start_revision=planning_revision,
                 status=(
-                    "finished"
-                    if has_staged_proposal
-                    or int(graph["revision"]) > int(planning["revision"])
-                    else "no_change"
+                    "stale"
+                    if graph_revision != planning_revision
+                    else ("finished" if has_staged_proposal else "no_change")
                 ),
                 thread_id=child_thread_id,
             )
@@ -975,15 +972,6 @@ class ResearchGraphService:
         proposed_experiment_ids = {
             str(item["proposal_id"]) for item in payload["experiments"]
         }
-        proposal_ids = proposed_hypothesis_ids | proposed_experiment_ids
-        if len(payload["hypotheses"]) + len(payload["experiments"]) > (
-            _MAX_STAGED_PLAN_NODES
-        ):
-            raise ValueError(
-                "This planning pass exceeds the host safety limit for temporary "
-                "nodes. Keep the scientifically distinct branches and continue "
-                "additional exploration in a later planning pass."
-            )
         valid_hypothesis_ids = {
             node_id
             for node_id, node in durable_by_id.items()
@@ -1044,12 +1032,12 @@ class ResearchGraphService:
         ready_ids = set(self._frontier_ids(snapshot))
         if (
             recommended_target_id
-            and recommended_target_id not in proposal_ids
+            and recommended_target_id not in proposed_experiment_ids
             and recommended_target_id not in ready_ids
         ):
             raise ValueError(
-                "The recommended route must be a proposal in this plan or an "
-                "existing ready experiment."
+                "The recommended route must be a proposed Experiment or an "
+                "existing ready Experiment."
             )
         return ResearchGraphPlanningProposal.model_validate(payload)
 
@@ -1183,8 +1171,6 @@ class ResearchGraphService:
         for target_id, item in zip(hypothesis_ids, draft.hypotheses, strict=True):
             self._add_planning_alias(hypothesis_aliases, item.title, target_id)
             self._add_planning_alias(hypothesis_aliases, item.claim, target_id)
-            self._add_planning_alias(ready_route_aliases, item.title, target_id)
-            self._add_planning_alias(ready_route_aliases, item.claim, target_id)
         for target_id, item in zip(experiment_ids, draft.experiments, strict=True):
             self._add_planning_alias(experiment_aliases, item.title, target_id)
             self._add_planning_alias(experiment_aliases, item.objective, target_id)
@@ -1214,9 +1200,7 @@ class ResearchGraphService:
                 title=item.title,
                 plan_summary=item.plan_summary,
                 decision_rule=item.decision_rule,
-                blocking_reason=item.blocking_reason,
                 execution_lane=item.execution_lane,
-                expected_value=item.expected_value,
                 estimated_compute_cost=item.estimated_compute_cost,
                 tests_hypothesis_ids=[
                     self._resolve_planning_alias(
@@ -1329,39 +1313,89 @@ class ResearchGraphService:
             start_revision=expected_revision,
             preview=stored_preview,
         )
-
-        materialized: dict[str, Any] | None = None
-        graph = snapshot["graph"]
-        route_ids = set(public_preview.get("route_ids") or [])
-        auto_route_is_runnable = all(
-            item.plan_summary and item.decision_rule
-            for item in proposal.experiments
-            if item.proposal_id in route_ids
-        )
-        if (
-            graph["orchestration_mode"] == "auto"
-            and public_preview.get("recommended_proposal_id")
-            and auto_route_is_runnable
-        ):
-            materialized = self.materialize_planning_proposal(
-                graph_id,
-                planning["planning_id"],
-                expected_revision=expected_revision,
-                proposal_id=str(public_preview["recommended_proposal_id"]),
-                keep_preview_for_scheduler=True,
-            )
-        result = {
+        return {
             "accepted": True,
             "planning_id": str(planning["planning_id"]),
+            "revision": int(expected_revision),
             "summary": str(public_preview.get("summary") or ""),
-            "recommended_target_id": str(
-                public_preview.get("recommended_target_id") or ""
+            "candidate_experiment_ids": list(
+                public_preview.get("candidate_experiment_ids") or []
             ),
-            **self.presentation(graph_id),
+            "staged": {
+                "hypotheses": len(proposal.hypotheses),
+                "experiments": len(proposal.experiments),
+            },
         }
-        if materialized is not None:
-            result["materialized"] = materialized
-        return result
+
+    def stage_planning_evaluation(
+        self,
+        graph_id: str,
+        *,
+        expected_revision: int,
+        planning_thread_id: str,
+        evaluation: ResearchExperimentEvaluationDraft,
+    ) -> dict[str, Any]:
+        """Attach model-generated Experiment comparisons to this revision's preview."""
+
+        planning = self.store.find_planning_by_thread(planning_thread_id)
+        if planning is None or str(planning["graph_id"]) != str(graph_id):
+            raise ValueError(
+                "This tool is available only inside the active bound Research "
+                "Graph planning thread."
+            )
+        graph = self.store.get_graph(graph_id)
+        if (
+            int(planning["revision"]) != int(expected_revision)
+            or int(graph["revision"]) != int(expected_revision)
+        ):
+            raise ResearchGraphConflict(
+                expected_revision=int(expected_revision),
+                current_revision=int(graph["revision"]),
+            )
+        preview = dict(planning.get("preview") or {})
+        raw_proposal = preview.get("proposal")
+        if not isinstance(raw_proposal, dict):
+            raise ValueError(
+                "The planning proposer must publish the temporary plan before "
+                "Experiments can be evaluated."
+            )
+        proposal = ResearchGraphPlanningProposal.model_validate(raw_proposal)
+        projected = build_planning_preview(
+            self.store.get_snapshot(graph_id),
+            proposal,
+            focus_node_id=str(preview.get("focus_node_id") or ""),
+        )
+        candidates = set(projected.get("candidate_experiment_ids") or [])
+        supplied = set(evaluation.experiment_ids)
+        if supplied != candidates:
+            missing = sorted(candidates - supplied)
+            unknown = sorted(supplied - candidates)
+            details: list[str] = []
+            if missing:
+                details.append("missing: " + ", ".join(missing))
+            if unknown:
+                details.append("unknown: " + ", ".join(unknown))
+            raise ValueError(
+                "The evaluation must cover every current candidate Experiment"
+                + (" (" + "; ".join(details) + ")" if details else "")
+                + "."
+            )
+        preview["evaluation"] = evaluation.model_dump(mode="json")
+        self.store.set_planning_preview(
+            graph_id,
+            str(planning["planning_id"]),
+            start_revision=expected_revision,
+            preview=preview,
+        )
+        return {
+            "accepted": True,
+            "planning_id": str(planning["planning_id"]),
+            "revision": int(expected_revision),
+            "experiment_ids": list(evaluation.experiment_ids),
+            "innovation_recommendation": evaluation.innovation_recommendation,
+            "conservative_recommendation": evaluation.conservative_recommendation,
+            "evaluation_memo": evaluation.evaluation_memo,
+        }
 
     def materialize_planning_proposal(
         self,
@@ -1495,6 +1529,21 @@ class ResearchGraphService:
                 in durable_ids
             )
         ]
+        focus_node_id = str(preview.get("focus_node_id") or "")
+        focus_node = (
+            self.store.get_node(graph_id, focus_node_id)
+            if focus_node_id
+            else None
+        )
+        if focus_node is not None and focus_node["kind"] == NodeKind.RESULT.value:
+            edges.extend(
+                {
+                    "source_node_id": focus_node_id,
+                    "target_node_id": hypothesis_id,
+                    "relation": EdgeRelation.SUGGESTS.value,
+                }
+                for hypothesis_id in sorted(selected_hypotheses)
+            )
         mapping, _event_id = self.store.materialize_plan_bundle(
             graph_id,
             expected_revision=expected_revision,
@@ -1504,22 +1553,28 @@ class ResearchGraphService:
         current = self.store.get_snapshot(graph_id)
         frontier = self._frontier_ids(current)
         materialized_ids = set(mapping.values())
-        next_experiment_id = next(
-            (
-                node_id
-                for node_id in frontier
-                if node_id in materialized_ids
-            ),
-            "",
+        selected_experiment_id = str(mapping.get(proposal_id) or "")
+        next_experiment_id = (
+            selected_experiment_id
+            if selected_experiment_id in materialized_ids
+            and selected_experiment_id in frontier
+            else ""
         )
         if keep_preview_for_scheduler:
-            preview["materialized_node_ids"] = mapping
-            preview["materialized_next_experiment_id"] = next_experiment_id
+            # Scores belong only to their pre-materialization revision. Replace
+            # them with a minimal recovery receipt that can authorize exactly
+            # the evaluator-selected Experiment, never another runnable member
+            # of the materialized route.
+            scheduler_receipt = {
+                "materialized_node_ids": mapping,
+                "materialized_next_experiment_id": next_experiment_id,
+                "materialized_revision": int(current["graph"]["revision"]),
+            }
             self.store.set_planning_preview(
                 graph_id,
                 planning_id,
                 start_revision=int(planning["revision"]),
-                preview=preview,
+                preview=scheduler_receipt,
             )
         return {
             "proposal_id": proposal_id,
@@ -1594,24 +1649,44 @@ class ResearchGraphService:
                 thread_id=child.thread_id,
             )
             if not self.thread_store.list_messages(child.thread_id):
+                focus = next(
+                    (
+                        node
+                        for node in snapshot["nodes"]
+                        if str(node["node_id"]) == focus_node_id
+                    ),
+                    None,
+                )
+                focus_description = (
+                    f"The bound focus is {focus['kind']} {focus['title']} "
+                    f"({focus['node_id']})."
+                    if focus is not None
+                    else "No individual focus node is bound."
+                )
                 await self.agent_loop_factory(
                     self.workspace, self.workspace_id
                 ).submit(
                     thread_id=child.thread_id,
                     payload=ThreadSubmitRequest(
                         text=(
-                            "Run a bounded scientific planning pass for the bound "
-                            "Research Graph. Inspect the focused node, active hypotheses, "
-                            "and runnable experiment frontier, then ask "
-                            "hypothesis_proposer to compare the meaningful alternatives "
-                            "using graph and literature evidence. The proposer should "
-                            "publish useful provisional branches through its bound "
-                            "planning tool and return a concise scientific memo in normal "
-                            "language. Do not request JSON, numeric route scores, or a "
-                            "mechanical judgment for every branch. Preserve competing "
-                            "hypotheses when evidence does not distinguish them. Return "
-                            "the memo to the planning thread; do not copy the proposer's "
-                            "payload into another tool call."
+                            "Run one result-focused scientific planning pass for the bound "
+                            f"Research Graph. {focus_description} The supplied graph text "
+                            "is an explicitly partial focus snippet; use the narrow graph "
+                            "query and evidence-reconciliation skills to inspect canonical "
+                            "state and decisive sources as needed. First ask "
+                            "hypothesis_proposer to compare the focus, existing predictions, "
+                            "related older Results, dependencies, and the complete runnable "
+                            "frontier. Existing Hypotheses may already be sufficient; create "
+                            "a new falsifiable explanation only when the Result warrants one. "
+                            "The proposer may publish one temporary H/E plan and should return "
+                            "a concise scientific memo, or return no-change without staging. "
+                            "If a plan was staged, subsequently ask experiment_evaluator to "
+                            "compare every current candidate Experiment under both innovation "
+                            "and conservative policies and publish the current-revision "
+                            "evaluation. Empty recommendations are valid when no route is "
+                            "worth selecting or the alternatives cannot be distinguished. "
+                            "Return the scientific memos in ordinary language; do not copy a "
+                            "delegate payload into another tool call."
                         ),
                         entrypoint="research",
                     ),
@@ -1714,6 +1789,34 @@ class ResearchGraphService:
                 for launch in snapshot["launches"]
             ):
                 continue
+            frontier = set(self._frontier_ids(snapshot))
+            planning = self.store.latest_planning_preview(
+                graph["graph_id"],
+                current_revision_only=False,
+            )
+            preview = dict(planning.get("preview") or {}) if planning else {}
+            materialized_id = str(
+                preview.get("materialized_next_experiment_id") or ""
+            )
+            try:
+                materialized_revision = int(preview.get("materialized_revision") or 0)
+            except (TypeError, ValueError):
+                materialized_revision = 0
+            if (
+                materialized_id
+                and materialized_revision == int(graph["revision"])
+            ):
+                if materialized_id not in frontier:
+                    continue
+                try:
+                    await self.launch_experiment(
+                        graph["graph_id"],
+                        materialized_id,
+                        expected_revision=graph["revision"],
+                    )
+                except (ResearchGraphConflict, ValueError):
+                    continue
+                continue
             if not self.store.planning_covers_current_graph(graph["graph_id"]):
                 try:
                     await self._launch_planning_child(
@@ -1723,39 +1826,62 @@ class ResearchGraphService:
                 except (ResearchGraphConflict, ValueError):
                     continue
                 continue
-            frontier = self._frontier_ids(snapshot)
-            if frontier:
-                selected_id = ""
-                planning = self.store.latest_planning_preview(
-                    graph["graph_id"],
-                    current_revision_only=False,
+            if planning is None:
+                continue
+
+            # Scores and choices are valid only against the exact graph
+            # revision on which the evaluator produced them.
+            if int(planning["revision"]) != int(graph["revision"]):
+                continue
+            raw_evaluation = preview.get("evaluation")
+            raw_proposal = preview.get("proposal")
+            if not isinstance(raw_evaluation, dict) or not isinstance(
+                raw_proposal, dict
+            ):
+                continue
+            try:
+                evaluation = ResearchExperimentEvaluationDraft.model_validate(
+                    raw_evaluation
                 )
-                if planning is not None:
-                    preview = dict(planning.get("preview") or {})
-                    selected_id = str(
-                        preview.get("materialized_next_experiment_id") or ""
-                    )
-                    if not selected_id and isinstance(preview.get("proposal"), dict):
-                        proposal = ResearchGraphPlanningProposal.model_validate(
-                            preview["proposal"]
-                        )
-                        if proposal.recommended_target_id in frontier:
-                            selected_id = proposal.recommended_target_id
-                    elif not selected_id:
-                        selected_id = str(
-                            preview.get("recommended_existing_node_id") or ""
-                        )
-                experiment_id = (
-                    selected_id if selected_id in frontier else frontier[0]
-                )
+                proposal = ResearchGraphPlanningProposal.model_validate(raw_proposal)
+            except ValueError:
+                continue
+            # Auto orchestration deliberately defaults to the conservative
+            # current-revision policy. An empty or invalid choice means wait.
+            selected_id = str(evaluation.conservative_recommendation or "")
+            if not selected_id:
+                continue
+            if selected_id in frontier:
                 try:
                     await self.launch_experiment(
                         graph["graph_id"],
-                        experiment_id,
+                        selected_id,
                         expected_revision=graph["revision"],
                     )
                 except (ResearchGraphConflict, ValueError):
                     continue
+                continue
+
+            proposed_experiments = {
+                item.proposal_id: item for item in proposal.experiments
+            }
+            selected = proposed_experiments.get(selected_id)
+            if (
+                selected is None
+                or not selected.plan_summary
+                or not selected.decision_rule
+            ):
+                continue
+            try:
+                self.materialize_planning_proposal(
+                    graph["graph_id"],
+                    str(planning["planning_id"]),
+                    expected_revision=graph["revision"],
+                    proposal_id=selected_id,
+                    keep_preview_for_scheduler=True,
+                )
+            except (ResearchGraphConflict, ValueError):
+                continue
 
 
 __all__ = ["ResearchGraphService"]

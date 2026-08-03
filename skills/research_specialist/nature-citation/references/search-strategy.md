@@ -19,24 +19,29 @@ Create search queries at three levels:
 For Chinese claims, translate the scientific concepts, not the sentence literally. Keep acronyms and
 standard nomenclature unchanged.
 
-## Support grading
+## Claim relation and access depth
 
-Use the smallest support grade that is defensible:
+Record the paper's relationship to this claim separately from what was read:
 
-| Grade | Meaning | Good use |
+| Claim relation | Meaning | Good use |
 |---|---|---|
-| strong support | Directly tests the same core relationship in a similar context | Experimental, mechanistic, or quantitative manuscript claims |
-| partial support | Supports one component or a narrower setting | Carefully qualified claims |
-| background support | Establishes field context or prior observation | Introduction/background sentences |
-| contradictory/limiting | Conflicts with or narrows the claim | Discussion, limitations, or avoid citing as support |
-| metadata-only candidate | Metadata suggests relevance; abstract/full text not checked | Screening only |
+| direct | Directly tests and supports the same core relationship in comparable conditions | Experimental, mechanistic, or quantitative claims |
+| partial | Supports one component or a narrower setting | Carefully qualified claims |
+| context | Establishes field context or prior observation | Introduction/background sentences |
+| limiting | Narrows scope or conditions | Discussion and limitations |
+| contradictory | Reports an incompatible outcome under comparable conditions | Discussion or claim revision |
+| unassessed | Relationship was not assessed from source content | Metadata discovery only |
+
+Use `access_depth: metadata`, `abstract`, `full_text`, or `supplementary`. Metadata
+rows always have `claim_relation: unassessed`.
 
 ## Evidence note template
 
 ```text
 Claim: [original claim]
 Paper: [first author/year/title/journal/DOI]
-Support grade: [grade]
+Claim relation: [direct/partial/context/limiting/contradictory/unassessed]
+Access depth: [metadata/abstract/full_text/supplementary]
 Evidence basis: [title/abstract/publisher page/full text]
 Reasoning: [why the result supports or does not support the exact claim]
 Citation wording: [how to phrase the manuscript sentence if using this citation]

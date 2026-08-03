@@ -23,7 +23,7 @@ Create stable IDs for source blocks:
 - `F001`, `F002`, ... for figures
 - `T001`, `T002`, ... for tables
 
-For each block, capture: page number, block type, original text, translation, reading-order index, nearby figure or table references, first substantive figure/table mention when applicable, and confidence level when extraction is uncertain.
+For each block, capture: page number, block type, original text, translation, reading-order index, nearby figure or table references, first substantive figure/table mention when applicable, and `extraction_confidence` when OCR, crop boundaries, reading order, or text extraction is uncertain. This field never evaluates the paper's scientific evidence.
 
 Keep the source map stable so later questions can point back to the same IDs. For long papers, add a page index so the reader can jump across the whole document without losing location.
 

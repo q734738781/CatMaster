@@ -29,14 +29,16 @@ If direct hits = 0, decompose the system into sub-systems:
 | MgCl₂-KCl-ZnCl₂ (ternary) | keyword | studied / not studied |
 | MgCl₂-NaCl-ZnCl₂ (ternary) | keyword | studied / not studied |
 
-Classify hits into three tiers:
-- **直接相关**: exact quaternary system → if 0, confirmed gap
-- **边缘相关**: contains 2-3 of 4 components → extract key data (method, salt composition, findings)
-- **无关**: only 1 component → skip
+Record scope relationship without turning it into a tier or score:
+- `direct`: exact quaternary system; zero direct hits can support a carefully bounded gap statement.
+- `adjacent`: contains 2-3 of 4 components; extract only the methods, composition, and findings relevant to the gap.
+- `out_of_scope`: shares too little of the system to answer the question.
+
+Then assign `selected`, `deferred`, or `excluded` with a short task-specific reason.
 
 ### Step 3: Extract edge papers
 
-For each 边缘相关 paper, extract:
+For each selected `adjacent` paper, extract:
 - Full citation (authors, journal, year, DOI if available)
 - Salt composition used
 - Method (CV, DSC, XRD, simulation, etc.)
@@ -55,9 +57,8 @@ Write to `outputs/literature/<topic>_gap_report.md` with these sections:
 6. **建议下一步** — concrete experimental/computational next steps
 7. **搜索方法论记录** — all search terms and hit counts (for reproducibility)
 
-### Cost control
+### Source access and stopping
 
-- Search: ≤4 parallel web_search calls per decomposition level
-- Extract: only edge papers (≤5), not every hit
-- No browser: use web_extract, skip paywalled pages silently
-- Aim for ≤6 tool calls total
+- Continue across the relevant search routes until the recorded queries stop producing new direct or decision-relevant adjacent candidates.
+- Open selected sources only as deeply as the gap claim requires.
+- Use authorized selected-source acquisition when full text is necessary. If access fails, retain the DOI or URL and report the blocker instead of silently treating the paper as absent.

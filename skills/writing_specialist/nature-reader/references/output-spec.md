@@ -49,7 +49,7 @@ Keep a stable source map so follow-up questions can cite the same anchors.
       "original_text": "",
       "translation": "",
       "bbox": [0, 0, 0, 0],
-      "confidence": "high|medium|low",
+      "extraction_confidence": "high|medium|low",
       "refs": ["F001", "T001"],
       "insert_after": "S001"
     }

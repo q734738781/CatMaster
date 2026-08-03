@@ -40,8 +40,8 @@ When the input text is longer than roughly 3000 characters (about 10+ segments),
 2. **Split by section.** Prefer splitting at paragraph double-line breaks or explicit section headings (`Introduction`, `Results`, etc.) so each batch is a coherent unit, not arbitrary sentence groups.
 3. **Process each batch independently.** Run the script once per batch using `--batch-size` or `--max-segments`, OR split the text externally and call the script once per chunk. Each call writes its own intermediate export file.
 4. **Merge results at the end.** After all batches finish, combine the intermediate files into one final export. Deduplicate by DOI.
-5. **Minimize inline analysis.** For long articles, do NOT write detailed support-grade notes for every single segment inline. Instead:
-   - Write a compact summary table (segment ID → best candidate → support grade).
+5. **Minimize inline analysis.** For long articles, do not write detailed claim-relation and access-depth notes for every segment inline. Instead:
+   - Write a compact summary table (segment ID → best candidate → `claim_relation` → `access_depth`).
    - Point the user to the HTML visualization for full browsing.
    - Only elaborate on segments where no candidate was found or evidence is contradictory.
 

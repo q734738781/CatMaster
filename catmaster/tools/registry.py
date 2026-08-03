@@ -220,10 +220,11 @@ class ToolRegistry:
             AddResearchExperimentInput,
             AddResearchHypothesisInput,
             CreateResearchGraphInput,
-            InspectResearchGraphInput,
+            EvaluateResearchExperimentsInput,
             ListResearchGraphsInput,
             MarkBoundResearchExperimentFailedInput,
             MarkResearchExperimentFailedInput,
+            QueryResearchGraphSQLInput,
             RecordBoundResearchResultInput,
             RecordResearchResultInput,
             SetResearchGraphCompletionInput,
@@ -232,10 +233,11 @@ class ToolRegistry:
             add_research_experiment,
             add_research_hypothesis,
             create_research_graph,
-            inspect_research_graph,
+            evaluate_research_experiments,
             list_research_graphs,
             mark_bound_research_experiment_failed,
             mark_research_experiment_failed,
+            query_research_graph_sql,
             record_bound_research_result,
             record_research_result,
             set_research_graph_completion,
@@ -337,7 +339,11 @@ class ToolRegistry:
         self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
         self.register_tool("list_research_graphs", list_research_graphs, ListResearchGraphsInput)
         self.register_tool("create_research_graph", create_research_graph, CreateResearchGraphInput)
-        self.register_tool("inspect_research_graph", inspect_research_graph, InspectResearchGraphInput)
+        self.register_tool(
+            "query_research_graph_sql",
+            query_research_graph_sql,
+            QueryResearchGraphSQLInput,
+        )
         self.register_tool("add_research_hypothesis", add_research_hypothesis, AddResearchHypothesisInput)
         self.register_tool("add_research_experiment", add_research_experiment, AddResearchExperimentInput)
         self.register_tool("record_research_result", record_research_result, RecordResearchResultInput)
@@ -350,6 +356,11 @@ class ToolRegistry:
             "stage_research_plan",
             stage_research_plan,
             StageResearchPlanInput,
+        )
+        self.register_tool(
+            "evaluate_research_experiments",
+            evaluate_research_experiments,
+            EvaluateResearchExperimentsInput,
         )
         self.register_tool(
             "set_research_graph_completion",

@@ -127,6 +127,7 @@ class PublicEventData(BaseModel):
     delta: str = ""
     message: PublicMessage | SkipJsonSchema[None] = None
     part: PublicPart | SkipJsonSchema[None] = None
+    todo_parts: list[PublicPart] = Field(default_factory=list)
     title: str = ""
     summary: str = ""
     status: str = ""

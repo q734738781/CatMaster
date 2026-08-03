@@ -24,7 +24,7 @@ _ACTIVE_LAUNCH_STATUSES = ("claimed", "submitting", "running", "unknown")
 _TERMINAL_PLANNING_STATUSES = ("finished", "no_change", "stale")
 _PLANNING_LEASE_SECONDS = 120
 _SCHEMA_COMPONENT = "research_knowledge_graph"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 
 def _now() -> float:
@@ -240,6 +240,8 @@ class ResearchGraphStore:
                     "ADD COLUMN preview_json TEXT NOT NULL DEFAULT '{}'"
                 )
             ensure_workspace_ui_events(connection)
+            if previous_version < 5:
+                self._migrate_removed_experiment_value(connection)
             if previous_version < 4:
                 self._migrate_legacy_blocker_results(connection)
             connection.execute(
@@ -348,6 +350,64 @@ class ResearchGraphStore:
                 """,
                 [(now, graph_id) for graph_id in changed_graphs],
             )
+
+    @staticmethod
+    def _migrate_removed_experiment_value(
+        connection: sqlite3.Connection,
+    ) -> None:
+        """Remove the retired durable route-value field and stale old previews."""
+
+        rows = connection.execute(
+            """
+            SELECT graph_id, node_id, body_json
+            FROM research_nodes
+            WHERE kind = 'experiment'
+            """
+        ).fetchall()
+        changed_graphs: set[str] = set()
+        now = _now()
+        for row in rows:
+            try:
+                body = json.loads(str(row["body_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(body, dict) or "expected_value" not in body:
+                continue
+            body.pop("expected_value", None)
+            body = validate_node_body(NodeKind.EXPERIMENT, body)
+            graph_id = str(row["graph_id"])
+            connection.execute(
+                """
+                UPDATE research_nodes
+                SET body_json = ?, revision = revision + 1, updated_at = ?
+                WHERE graph_id = ? AND node_id = ?
+                """,
+                (_json(body), now, graph_id, str(row["node_id"])),
+            )
+            changed_graphs.add(graph_id)
+
+        if changed_graphs:
+            connection.executemany(
+                """
+                UPDATE research_graphs
+                SET revision = revision + 1, updated_at = ?
+                WHERE graph_id = ?
+                """,
+                [(now, graph_id) for graph_id in changed_graphs],
+            )
+
+        # Version-four previews can carry the retired field and old single-route
+        # semantics. Planning is disposable, so require a fresh exact-revision
+        # pass instead of translating a scientific recommendation.
+        connection.execute(
+            """
+            UPDATE research_planning
+            SET status = 'stale', preview_json = '{}', lease_until = 0,
+                updated_at = ?
+            WHERE status IN ('claimed', 'attached') OR preview_json != '{}'
+            """,
+            (now,),
+        )
 
     @staticmethod
     def _graph_row(row: sqlite3.Row) -> dict[str, Any]:
@@ -2286,8 +2346,6 @@ class ResearchGraphStore:
         planning_id = _safe_id(planning_id, label="planning_id")
         payload = dict(preview or {})
         encoded = _json(payload)
-        if len(encoded) > 120_000:
-            raise ValueError("The temporary Research Graph plan is too large.")
         with connect_workspace_db(self.workspace) as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -2302,7 +2360,7 @@ class ResearchGraphStore:
             planning = self._planning_row(row)
             if int(planning["revision"]) != int(start_revision):
                 raise ValueError("Planning preview revision does not match its turn.")
-            if planning["status"] not in {"claimed", "attached"}:
+            if planning["status"] not in {"claimed", "attached", "finished"}:
                 raise ValueError("This planning turn is no longer active.")
             now = _now()
             # The preview is a UI handoff, not planning history. Retain only
@@ -2383,26 +2441,23 @@ class ResearchGraphStore:
         return planning
 
     def planning_covers_current_graph(self, graph_id: str) -> bool:
-        """Whether a terminal planning turn finished after the latest graph edit."""
+        """Whether a terminal planning turn evaluated the exact current revision."""
 
         graph_id = _safe_id(graph_id, label="graph_id")
         with connect_workspace_db(self.workspace) as connection:
             graph = self._get_graph_row(connection, graph_id)
             row = connection.execute(
                 """
-                SELECT updated_at
+                SELECT 1
                 FROM research_planning
                 WHERE graph_id = ?
+                  AND start_revision = ?
                   AND status IN ('finished', 'no_change')
-                ORDER BY updated_at DESC
                 LIMIT 1
                 """,
-                (graph_id,),
+                (graph_id, int(graph["revision"])),
             ).fetchone()
-        return bool(
-            row is not None
-            and float(row["updated_at"]) >= float(graph["updated_at"])
-        )
+        return row is not None
 
     def scheduler_snapshot(self, graph_id: str) -> dict[str, Any]:
         graph = self.get_graph(graph_id)

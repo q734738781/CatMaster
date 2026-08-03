@@ -106,7 +106,7 @@ def _docx_tool_message() -> ToolMessage:
     )
 
 
-def test_read_document_schema_uses_non_nullable_optional_pages(tmp_path: Path) -> None:
+def test_read_document_schema_uses_non_nullable_optional_controls(tmp_path: Path) -> None:
     schema = ReadDocumentInput.model_json_schema()
     tool_schema = DocumentAccessMiddleware(files_root=tmp_path).tools[0].args
 
@@ -118,6 +118,12 @@ def test_read_document_schema_uses_non_nullable_optional_pages(tmp_path: Path) -
     assert tool_schema["pages"]["type"] == "string"
     assert tool_schema["pages"]["default"] == ""
     assert "anyOf" not in tool_schema["pages"]
+    cursor = schema["properties"]["cursor"]
+    assert cursor["type"] == "string"
+    assert cursor["default"] == ""
+    assert "cursor" not in schema["required"]
+    assert tool_schema["cursor"]["type"] == "string"
+    assert tool_schema["cursor"]["default"] == ""
 
 
 def test_extract_pdf_text_is_bounded_by_requested_pages(tmp_path: Path, monkeypatch) -> None:
@@ -187,6 +193,57 @@ def test_xlsx_parser_reads_workbook_in_read_only_value_mode(tmp_path: Path) -> N
     assert "--- Sheet: Kinetics ---" in extraction.text
     assert "temperature\trate" in extraction.text
     assert "650\t1.25" in result
+
+
+def test_docx_and_xlsx_cursors_make_every_unit_reachable_without_loss(
+    tmp_path: Path,
+) -> None:
+    docx_path = tmp_path / "long.docx"
+    document = Document()
+    for index in range(18):
+        document.add_paragraph(
+            f"Paragraph {index:02d}: " + (f"detail-{index} " * 12)
+        )
+    document.save(docx_path)
+
+    xlsx_path = tmp_path / "long.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "LongData"
+    for index in range(30):
+        sheet.append([index, f"observation-{index}-" + ("value " * 10)])
+    workbook.save(xlsx_path)
+    workbook.close()
+
+    for extractor, source, virtual_path in (
+        (extract_docx_text, docx_path, "/long.docx"),
+        (extract_xlsx_text, xlsx_path, "/long.xlsx"),
+    ):
+        complete = extractor(
+            source,
+            virtual_path=virtual_path,
+            max_chars=1_000_000,
+        )
+        cursor = ""
+        chunks: list[str] = []
+        seen_cursors: set[str] = set()
+        paths: list[str] = []
+        while True:
+            page = extractor(
+                source,
+                virtual_path=virtual_path,
+                cursor=cursor,
+                max_chars=97,
+            )
+            chunks.append(page.text)
+            paths.extend([page.start_unit_path, page.end_unit_path])
+            if not page.next_cursor:
+                break
+            assert page.next_cursor not in seen_cursors
+            seen_cursors.add(page.next_cursor)
+            cursor = page.next_cursor
+        assert "".join(chunks) == complete.text
+        assert any("paragraph:" in path or "sheet:" in path for path in paths)
 
 
 def test_pptx_parser_reads_slide_text_and_tables_with_slide_ranges(tmp_path: Path) -> None:

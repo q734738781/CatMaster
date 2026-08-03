@@ -3499,9 +3499,6 @@ def create_app(
             ).context_builder.build(
                 graph_id,
                 focus_node_id=payload.focus_node_id,
-                query=payload.query,
-                max_nodes=payload.max_nodes,
-                max_chars=payload.max_chars,
             )
         except Exception as exc:
             _raise_research_graph_http(exc)

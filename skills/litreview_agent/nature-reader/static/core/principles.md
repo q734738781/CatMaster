@@ -23,7 +23,7 @@ Do not replace the reader with:
 - a list of key points detached from source locations
 - only the abstract, introduction, or selected highlights
 
-If constraints prevent full processing, still create a draft reader and clearly label missing pages, missing figures/tables, untranslated blocks, or low-confidence OCR/crops in `translation_notes.md`.
+If constraints prevent full processing, still create a draft reader and clearly label missing pages, missing figures/tables, untranslated blocks, or OCR/crops with low `extraction_confidence` in `translation_notes.md`.
 
 ## Core principle
 

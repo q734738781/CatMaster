@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field
-
-ResearchDepth = Literal["none", "quick", "standard", "focused", "deep_report"]
 
 
 class PaperRecord(BaseModel):
@@ -34,7 +30,11 @@ class PaperSearchHit(BaseModel):
 
     query: str = Field(..., description="Query that produced this hit.")
     rank: int = Field(..., ge=1, description="1-based rank in the current retrieval pass.")
-    score_hint: float | None = Field(None, description="Optional score/rerank hint.")
+    score_hint: float | None = Field(
+        None,
+        exclude=True,
+        description="Internal retrieval-order hint; never part of scientific evidence output.",
+    )
     paper: PaperRecord = Field(..., description="Normalized paper record.")
 
 
@@ -45,31 +45,6 @@ class PublicWebHit(BaseModel):
     url: str | None = Field(None, description="Public URL.")
     snippet: str = Field(..., description="Short normalized snippet.")
     source: str = Field("public_web", description="Source bucket.")
-
-
-class LiteratureEvidenceRow(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(..., description="Question/subquestion this evidence row addresses.")
-    finding: str = Field(..., description="Short finding grounded in the retrieved literature.")
-    support_level: Literal["high", "medium", "low"] = Field(..., description="Support confidence for this row.")
-    paper_title: str = Field(..., description="Most relevant supporting paper title.")
-    citation: str = Field(..., description="Compact citation string with year/venue or DOI.")
-
-
-class LiteratureContextPack(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(..., description="User-facing literature query that was investigated.")
-    depth: ResearchDepth = Field(..., description="Resolved research depth actually used.")
-    topic: str | None = Field(None, description="Optional topic bucket for reuse/caching.")
-    summary: str = Field(..., description="Concise synthesis for the caller.")
-    key_papers: list[PaperRecord] = Field(default_factory=list, description="Most relevant papers to cite or inspect next.")
-    evidence_table: list[LiteratureEvidenceRow] = Field(default_factory=list, description="Question-specific evidence rows.")
-    citations: list[dict[str, str]] = Field(default_factory=list, description="Compact citation/link records for downstream reuse.")
-    followup_questions: list[str] = Field(default_factory=list, description="Open questions or suggested follow-up reading angles.")
-    confidence: Literal["high", "medium", "low"] = Field(..., description="Overall confidence in this synthesis.")
-    sources_used: list[str] = Field(default_factory=list, description="Source families used, e.g. semantic_scholar/public_web.")
 
 
 class PublicWebSearchResult(BaseModel):
@@ -110,7 +85,6 @@ class FindInPageResult(BaseModel):
 
 
 __all__ = [
-    "ResearchDepth",
     "PaperRecord",
     "PaperSearchHit",
     "PublicWebHit",
@@ -118,6 +92,4 @@ __all__ = [
     "PublicPageSnapshot",
     "InPageMatch",
     "FindInPageResult",
-    "LiteratureEvidenceRow",
-    "LiteratureContextPack",
 ]

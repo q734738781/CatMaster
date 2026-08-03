@@ -40,7 +40,7 @@ Literature Review 可以处理快速查证，也可以承担较完整的主题�
 
 主题综述最有价值的中间产物往往不是一段文字，而是一张可审查的证据表。Agent 可以记录科学模态、实际查看的访问深度、材料体系、方法、条件、直接观察、作者解释、来源独立性，以及它与具体 claim 的关系。这些是证据属性，不是给整篇论文打高、中、低等级。这样 Writing Agent 后续起草时，不必重新猜每句话应该引用哪篇论文。
 
-持续更新的文献管线仍可计算六维 LATS 候选筛选分，用于安排精读、推送或归档优先级。它同时保留主题匹配、创新/贡献、方法质量、来源/作者信号、实践价值、归档价值六个分项，以及总分、理由、访问深度和 provisional 状态。这个操作性分数用于文献分流，不表示证据强度、科学真实性或某个 claim 的置信度。
+持续更新的文献管线把候选记录为 `selected`、`deferred` 或 `excluded`，并写明具体理由。selected 表示论文会影响当前综合或决策；deferred 表示有关但当前不需要；excluded 表示范围不符、重复或无法回答问题。访问深度与 claim relationship 分开记录。管线不再给论文计算综合分，也不把期刊声望当作证据等级。
 
 对题名、DOI、预印本和期刊版本的去重应在检索早期进行。确定最终论文后，`finalize_citations` 会统一解析 DOI、作者、期刊、年份等字段并导出引用文件。`nature-ref-verifier` 还可以逐字段检查已有参考文献，标出卷年冲突、作者顺序、页码和 DOI 异常。
 
@@ -69,6 +69,10 @@ unavailable.md。不要让同一篇论文的预印本与期刊版本重复计数
 ## Writing Agent：把已有证据变成可交付文稿
 
 Writing Agent 的输入可以很杂：中文笔记、结果表、图、代码输出、参考文献库、LaTeX 工程、PDF 旧稿或审稿意见。它的工作不是把这些材料"润色一下"，而是先理解写作目标与证据边界，再选择适合的 writing skills 组织论证、起草、修改、制图或编译。
+
+### 用 Research Graph 快速定位原始证据
+
+如果当前 Writing thread 已显式 Attach 一个 Research Graph，Agent 会先读取 partial focus，并用只读查询定位相关 Hypothesis、所有直接支持、反对或无法区分的 Results、产生它们的 Experiment 及 Sources。随后只打开本节真正需要的 note、artifact、run、thread message 或文献来源；涉及关键数值、条件、机理或限制时，仍以原始 owner 内容为准。Graph 覆盖不足时才局部搜索 workspace，并说明缺口。这个过程不增加稿件专用 schema，也不允许 Writing 修改科学图。
 
 ### 起草论文、报告和项目书
 
@@ -110,7 +114,7 @@ Writing 可以调用 citation skills 为现有段落寻找支持文献，也可�
 逐条提取可以被外部文献验证的主张，优先寻找真正直接支持该主张的论文，
 并说明证据来自全文还是摘要。不要给常识性过渡句硬加引用。
 
-把建议以 claim、候选来源、支持程度和 DOI 的对应表保存下来，
+把建议以 claim、候选来源、claim relationship、访问深度和 DOI 的对应表保存下来，
 确认后再更新 references.bib；不要直接覆盖正文。
 ```
 
@@ -150,7 +154,7 @@ Writing 可以调用 citation skills 为现有段落寻找支持文献，也可�
 <details>
 <summary>Writing 的能力来源</summary>
 
-入口 tools 包括 `generate_nanobanana_figure` 和 `review_pdf_manuscript`。Writing worker 还使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`，并可通过 workspace 的文件和脚本能力生成实际交付物。
+入口 tools 包括只读的 `query_research_graph_sql`、`generate_nanobanana_figure` 和 `review_pdf_manuscript`。Graph 查询由 Writing coordinator 用于证据导航；Writing worker 仍使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`，并可通过 workspace 的文件和脚本能力生成实际交付物。
 
 Skills 覆盖论文与项目书写作、润色、引用、数据声明、图件、全文阅读、参考文献核验、审稿回复、投稿前审稿、PPT、专利、ACS LaTeX、期刊模板和 Markdown PDF。`citation-management` 提供通用引用管理方法，`humanizer` 负责最终文风审计。某个 skill 能否完成所有外部动作仍取决于本机安装的软件、可用 API 和用户提供的源材料。
 

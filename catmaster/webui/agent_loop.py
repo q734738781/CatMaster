@@ -46,6 +46,7 @@ _RESEARCH_GRAPH_CONTEXT_ENTRYPOINTS = {
     "research",
     "experiment",
     "literature_review",
+    "writing",
 }
 
 
@@ -110,21 +111,11 @@ class ThreadAgentLoopService:
         focus_node_id = str(
             getattr(thread, "research_focus_node_id", "") or ""
         ).strip()
-        meta = getattr(thread, "meta", {})
-        planning = (
-            isinstance(meta, dict)
-            and str(meta.get("internal_kind") or "")
-            == "research_graph_planning"
-        )
         context = ResearchGraphContextBuilder(
             workspace=self.workspace
         ).build(
             graph_id,
             focus_node_id=focus_node_id,
-            query=prompt,
-            max_nodes=100 if planning else 24,
-            max_chars=40_000 if planning else 12_000,
-            planning=planning,
         )
         graph_markdown = str(context["markdown"]).strip()
         if isinstance(turn_content, list):

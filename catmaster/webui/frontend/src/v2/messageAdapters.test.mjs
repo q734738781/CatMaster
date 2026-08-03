@@ -6,7 +6,7 @@ import { entrypointMeta, normalizeEntrypoint, normalizedEntrypoints } from "./en
 import { selectionFromHash, selectionToHash, tabFromHash } from "./inspectorSelection.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
 import { artifactForSelection } from "./artifactSelection.js";
-import { todoGroupsFromMessages } from "./todoPanel.js";
+import { canonicalTodoPartsFromEvent, todoGroupsFromMessages } from "./todoPanel.js";
 import { normalizeMathMarkdown } from "./markdown.js";
 
 test("catMessageToAssistant preserves only projected presentation parts", () => {
@@ -208,6 +208,26 @@ test("todoGroupsFromMessages scopes todos to the latest user turn", () => {
   assert.equal(groups.length, 1);
   assert.equal(groups[0].source, "Experiment specialist");
   assert.deepEqual(groups[0].rows, [{ content: "New interrupted task", status: "in_progress" }]);
+});
+
+test("message completion pushes the canonical terminal todo projection", () => {
+  const completed = [{
+    id: "part_final_plan",
+    type: "progress",
+    items: [{ label: "Write synthesis", status: "completed" }],
+  }];
+  assert.deepEqual(canonicalTodoPartsFromEvent({
+    event: "message.completed",
+    data: { todo_parts: completed },
+  }), completed);
+  assert.deepEqual(canonicalTodoPartsFromEvent({
+    event: "message.completed",
+    data: {},
+  }), []);
+  assert.equal(canonicalTodoPartsFromEvent({
+    event: "activity.updated",
+    data: { todo_parts: completed },
+  }), null);
 });
 
 test("applyThreadEvent completes a message without requiring a repeated full snapshot", () => {

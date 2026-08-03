@@ -49,6 +49,19 @@ def _json_safe(value: Any, *, max_text: int = 12_000) -> Any:
             "name": str(getattr(value, "name", "") or ""),
             "tool_call_id": str(getattr(value, "tool_call_id", "") or ""),
         }
+    if isinstance(value, Command):
+        # Command is a LangGraph dataclass, not a Pydantic model. Preserve its
+        # documented public state instead of falling back to an opaque Python
+        # repr; task results place the subagent's final ToolMessage in update.
+        payload: dict[str, Any] = {"type": "Command"}
+        for field_name in ("graph", "update", "resume", "goto"):
+            field_value = getattr(value, field_name, None)
+            if field_value is None:
+                continue
+            if isinstance(field_value, (dict, list, tuple, set)) and not field_value:
+                continue
+            payload[field_name] = _json_safe(field_value, max_text=max_text)
+        return payload
     if hasattr(value, "value"):
         payload = {
             "type": value.__class__.__name__,

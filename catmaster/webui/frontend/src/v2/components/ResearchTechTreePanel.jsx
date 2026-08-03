@@ -81,6 +81,22 @@ function bandLabel(value) {
   }[String(value || "").toLowerCase()] || "Not specified";
 }
 
+function scoreLabel(value) {
+  if (value === null || value === undefined || value === "") return "";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed.toFixed(2) : "";
+}
+
+function recommendationLabel(node) {
+  if (node.innovation_recommended && node.conservative_recommended) {
+    return "Innovation and conservative recommendation";
+  }
+  if (node.innovation_recommended) return "Innovation recommendation";
+  if (node.conservative_recommended) return "Conservative recommendation";
+  if (node.proposer_recommended) return "Proposer route";
+  return "";
+}
+
 function nodeRankLabel(node) {
   if (node.kind === "hypothesis") {
     return node.body?.importance
@@ -89,8 +105,11 @@ function nodeRankLabel(node) {
   }
   if (node.kind === "experiment") {
     return [
-      node.body?.expected_value
-        ? `${bandLabel(node.body.expected_value)} expected value`
+      scoreLabel(node.innovation_score)
+        ? `${scoreLabel(node.innovation_score)} innovation`
+        : "",
+      scoreLabel(node.conservative_score)
+        ? `${scoreLabel(node.conservative_score)} conservative`
         : "",
       node.body?.estimated_compute_cost
         ? `${bandLabel(node.body.estimated_compute_cost)} compute`
@@ -108,10 +127,12 @@ function ResearchNodeCard({ data, selected }) {
     experiment: provisional ? "Proposed experiment" : "Experiment proposal",
     result: "Result",
   }[node.kind] || "Research node";
+  const recommendation = recommendationLabel(node);
+  const recommended = Boolean(node.innovation_recommended || node.conservative_recommended);
   const state = provisional
-    ? (node.recommended ? "Recommended temporary route" : "Temporary planning branch")
-    : node.recommended
-      ? `Recommended next · ${node.kind === "experiment" ? experimentStateLabel(node.state) : evidenceStateLabel(node.evidence_state)}`
+    ? (recommendation ? `${recommendation} · Temporary planning branch` : "Temporary planning branch")
+    : recommendation
+      ? `${recommendation} · ${node.kind === "experiment" ? experimentStateLabel(node.state) : evidenceStateLabel(node.evidence_state)}`
       : node.kind === "hypothesis"
         ? evidenceStateLabel(node.evidence_state)
         : node.kind === "experiment"
@@ -121,7 +142,7 @@ function ResearchNodeCard({ data, selected }) {
   return (
     <button
       type="button"
-      className={`v2-rg-node kind-${node.kind} ${provisional ? "provisional" : ""} ${node.recommended ? "recommended" : ""} ${selected ? "selected" : ""}`}
+      className={`v2-rg-node kind-${node.kind} ${provisional ? "provisional" : ""} ${recommended ? "recommended" : ""} ${selected ? "selected" : ""}`}
       aria-label={`${kindLabel}: ${node.title}. ${state}${rank ? `. ${rank}` : ""}`}
       data-research-node-id={node.node_id}
       title={node.title}
@@ -562,25 +583,31 @@ function ResearchGraphPanelContent({
   const graphId = selectedGraphId || activeGraphId;
   const graph = payload?.graph || null;
   const displayPayload = useMemo(() => {
-    const recommendedExistingId = String(
-      payload?.planning_preview?.recommended_existing_node_id || "",
-    );
+    const planning = payload?.planning_preview || {};
     const planningSummary = String(payload?.planning_preview?.summary || "");
-    const durableNodes = (Array.isArray(payload?.nodes) ? payload.nodes : []).map(
-      (node) => (
-        recommendedExistingId
-        && String(node.node_id || "") === recommendedExistingId
-          ? {
-              ...node,
-              recommended: true,
-              planning_reason: planningSummary,
-            }
-          : node
-      ),
+    const evaluations = new Map(
+      (Array.isArray(planning.experiment_evaluations)
+        ? planning.experiment_evaluations
+        : []).map((row) => [String(row.experiment_id || ""), row]),
     );
+    const innovationId = String(planning.innovation_recommendation || "");
+    const conservativeId = String(planning.conservative_recommendation || "");
+    const proposerId = String(planning.proposer_recommended_target_id || "");
+    const decorateNode = (node) => {
+      const nodeId = String(node.node_id || "");
+      return {
+        ...node,
+        ...(evaluations.get(nodeId) || {}),
+        innovation_recommended: Boolean(innovationId && nodeId === innovationId),
+        conservative_recommended: Boolean(conservativeId && nodeId === conservativeId),
+        proposer_recommended: Boolean(proposerId && nodeId === proposerId),
+        planning_reason: proposerId && nodeId === proposerId ? planningSummary : "",
+      };
+    };
+    const durableNodes = (Array.isArray(payload?.nodes) ? payload.nodes : []).map(decorateNode);
     const durableEdges = Array.isArray(payload?.edges) ? payload.edges : [];
     const previewNodes = Array.isArray(payload?.planning_preview?.nodes)
-      ? payload.planning_preview.nodes
+      ? payload.planning_preview.nodes.map(decorateNode)
       : [];
     const previewEdges = Array.isArray(payload?.planning_preview?.edges)
       ? payload.planning_preview.edges
@@ -863,7 +890,6 @@ function ResearchGraphPanelContent({
             plan_summary: form.plan_summary || "",
             decision_rule: form.decision_rule || "",
             execution_lane: form.execution_lane || "experiment",
-            expected_value: form.expected_value || "",
             estimated_compute_cost: form.estimated_compute_cost || "",
             state: form.state || "draft",
             tests_hypothesis_ids: form.tests_hypothesis_ids || [],
@@ -921,7 +947,6 @@ function ResearchGraphPanelContent({
             plan_summary: form.plan_summary || "",
             decision_rule: form.decision_rule || "",
             execution_lane: form.execution_lane || "experiment",
-            expected_value: form.expected_value || "",
             estimated_compute_cost: form.estimated_compute_cost || "",
             blocking_reason: selectedNode.body?.blocking_reason || "",
           }
@@ -993,7 +1018,6 @@ function ResearchGraphPanelContent({
       plan_summary: body.plan_summary,
       decision_rule: body.decision_rule,
       execution_lane: body.execution_lane,
-      expected_value: body.expected_value || "",
       estimated_compute_cost: body.estimated_compute_cost || "",
       summary: body.summary,
   });
@@ -1171,7 +1195,7 @@ function countLabel(count, singular, plural = `${singular}s`) {
               </small>
               <small>
                 {item.frontier?.length
-                  ? `Ready next: ${item.frontier.map((node) => node.title).join(", ")}${item.frontier_omitted_count ? ` and ${item.frontier_omitted_count} more` : ""}`
+                  ? `Ready next: ${item.frontier.map((node) => node.title).join(", ")}`
                   : "No experiment is ready to run."}
               </small>
             </div>
@@ -1291,6 +1315,23 @@ function countLabel(count, singular, plural = `${singular}s`) {
               <div>
                 <strong>Evidence-aware route planning</strong>
                 <p>{payload.planning_preview.summary}</p>
+                {payload.planning_preview.experiment_evaluations?.length ? (
+                  <>
+                    <p>
+                      Innovation recommendation: {displayPayload.nodes.find((node) => node.node_id === payload.planning_preview.innovation_recommendation)?.title || "No selection"}
+                      {" · "}
+                      Conservative recommendation: {displayPayload.nodes.find((node) => node.node_id === payload.planning_preview.conservative_recommendation)?.title || "No selection"}
+                    </p>
+                    <ul>
+                      {payload.planning_preview.experiment_evaluations.map((row) => (
+                        <li key={row.experiment_id}>
+                          {displayPayload.nodes.find((node) => node.node_id === row.experiment_id)?.title || row.experiment_id}: innovation {scoreLabel(row.innovation_score)}, conservative {scoreLabel(row.conservative_score)}
+                        </li>
+                      ))}
+                    </ul>
+                    {payload.planning_preview.evaluation_memo ? <p>{payload.planning_preview.evaluation_memo}</p> : null}
+                  </>
+                ) : <p className="v2-muted">Waiting for the independent experiment evaluation.</p>}
               </div>
             </section>
           ) : null}
@@ -1395,18 +1436,15 @@ function countLabel(count, singular, plural = `${singular}s`) {
                       <p className={selectedNode.body.decision_rule ? "" : "v2-muted"}>
                         {selectedNode.body.decision_rule || "Not specified yet; add one before marking the experiment ready."}
                       </p>
-                      {selectedNode.body.expected_value || selectedNode.body.estimated_compute_cost ? (
+                      {scoreLabel(selectedNode.innovation_score) || scoreLabel(selectedNode.conservative_score) ? (
                         <>
-                          <h4>Planning order</h4>
-                          <p>{[
-                            selectedNode.body.expected_value
-                              ? `${bandLabel(selectedNode.body.expected_value)} expected value`
-                              : "",
-                            selectedNode.body.estimated_compute_cost
-                              ? `${bandLabel(selectedNode.body.estimated_compute_cost)} compute`
-                              : "",
-                          ].filter(Boolean).join(" · ")}</p>
+                          <h4>Current planning evaluation</h4>
+                          <p>Innovation {scoreLabel(selectedNode.innovation_score)} · Conservative {scoreLabel(selectedNode.conservative_score)}</p>
+                          {recommendationLabel(selectedNode) ? <p>{recommendationLabel(selectedNode)}</p> : null}
                         </>
+                      ) : null}
+                      {selectedNode.body.estimated_compute_cost ? (
+                        <><h4>Estimated compute cost</h4><p>{bandLabel(selectedNode.body.estimated_compute_cost)}</p></>
                       ) : null}
                       {selectedNode.state === "blocked" && selectedNode.body.blocking_reason ? (
                         <>
@@ -1738,7 +1776,6 @@ function countLabel(count, singular, plural = `${singular}s`) {
                   )) : <p className="v2-muted">No hypothesis exists yet; this proposal can be linked later.</p>}
                   </fieldset>
                   <Field label="Execution lane"><select value={form.execution_lane || "experiment"} onChange={(event) => setForm({ ...form, execution_lane: event.target.value })}><option value="experiment">Experiment</option><option value="research">Research</option><option value="literature_review">Literature review</option></select></Field>
-                  <Field label="Expected decision value" hint="Optional; usefulness of a usable result, not success probability."><select value={form.expected_value || ""} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}><option value="">Not specified</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
                   <Field label="Estimated compute cost" hint="Optional; leave unspecified rather than inventing an estimate."><select value={form.estimated_compute_cost || ""} onChange={(event) => setForm({ ...form, estimated_compute_cost: event.target.value })}><option value="">Not specified</option><option value="none">None</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></Field>
                   <Field label="Readiness"><select value={form.state || "draft"} onChange={(event) => setForm({ ...form, state: event.target.value })}><option value="draft">Draft</option><option value="ready">Ready to run</option></select></Field>
                   <OptionalSourceFields form={form} setForm={setForm} />
@@ -1851,14 +1888,6 @@ function countLabel(count, singular, plural = `${singular}s`) {
                         <option value="experiment">Experiment</option>
                         <option value="research">Research</option>
                         <option value="literature_review">Literature review</option>
-                      </select>
-                    </Field>
-                    <Field label="Expected decision value" hint="Usefulness of a usable result, not success probability.">
-                      <select value={form.expected_value || ""} onChange={(event) => setForm({ ...form, expected_value: event.target.value })}>
-                        <option value="">Not specified</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
                       </select>
                     </Field>
                     <Field label="Estimated compute cost">

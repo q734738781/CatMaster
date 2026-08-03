@@ -76,19 +76,15 @@ Format: `{FirstAuthorLast}{Year}_{中文核心关键词}.md`
 
 ## Directory Discipline
 
-Subagents frequently create short directory names (`A/笔记/`, `B/笔记/`). Always verify and correct to full names:
-
-- `A_核心主线/笔记/`
-- `B_章节支撑/笔记/`
-- `C_工程背景/笔记/`
-- `D_方法借鉴/笔记/`
-- `E_暂存低优先/笔记/`
+Use explicit selection-state directories only when the archive is organized by
+this pipeline: `selected/`, `deferred/`, and `excluded/`. Preserve the reason in
+frontmatter so moving a note does not erase why its status changed.
 
 ## Bulk Standardization
 
 When standardizing a batch of existing notes, the Python script pattern is:
 
-1. Inventory all `.md` files across A-E directories
+1. Inventory all `.md` files across selection-state directories
 2. Parse existing frontmatter → extract known fields
 3. Infer missing fields from body content (year regex, author regex, title from H1)
 4. Generate standardized frontmatter + remove body H1 duplicates
@@ -100,5 +96,5 @@ Key extraction patterns:
 - Year: `(19|20)\d{2}` in filename or frontmatter
 - Authors: `\*\*([^*]+?)\s*\((\d{4})\)\*\*` in body for old-format notes
 - Title: frontmatter `title` field or body `# Heading`
-- Classification: normalize `A`/`B`/`C`/`D` → full Chinese names, default to directory name
+- Selection status: normalize to `selected`, `deferred`, or `excluded`
 - Tags: keyword pattern matching on title + body[:1000] against a Chinese tech-term map

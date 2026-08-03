@@ -40,7 +40,7 @@ def test_literature_corpus_ingest_query_and_cache(tmp_path: Path) -> None:
         )
         second_content, _ = ingest_literature_files({"paths": ["papers/her.txt"]})
         query_content, query_artifact = query_literature_corpus(
-            {"query": "platinum hydrogen adsorption", "top_k": 3}
+            {"query": "platinum hydrogen adsorption", "page_size": 3}
         )
 
     assert "ingested: papers/her.txt" in first_content
@@ -79,7 +79,7 @@ def test_literature_corpus_accepts_jats_and_keeps_successes_when_one_file_fails(
             {"paths": ["papers/operando.xml", "papers/binary.dat"]}
         )
         query_content, query_artifact = query_literature_corpus(
-            {"query": "reversible coordination change", "top_k": 3}
+            {"query": "reversible coordination change", "page_size": 3}
         )
 
     assert artifact["data"]["status"] == "partial"
@@ -96,6 +96,92 @@ def test_literature_corpus_accepts_jats_and_keeps_successes_when_one_file_fails(
     assert "coordination change" in query_content
     assert query_artifact["data"]["evidence"][0]["source_path"] == (
         "papers/operando.xml"
+    )
+
+
+def test_literature_corpus_cursor_reaches_every_partial_locator_once(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    layout = ensure_project_space_layout(project)
+    source = layout["files_root"] / "papers" / "long-operando.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "\n".join(
+            f"operando-cursor-marker section {index} " + ("measurement detail " * 80)
+            for index in range(12)
+        ),
+        encoding="utf-8",
+    )
+
+    with workspace_scope(project):
+        ingest_literature_files({"paths": ["papers/long-operando.txt"]})
+        cursor = ""
+        locators: list[tuple[str, int, str, str]] = []
+        total = 0
+        while True:
+            _content, artifact = query_literature_corpus(
+                {
+                    "query": "operando cursor marker",
+                    "page_size": 1,
+                    "cursor": cursor,
+                }
+            )
+            data = artifact["data"]
+            assert set(data) == {
+                "query",
+                "partial",
+                "evidence",
+                "total_count",
+                "next_cursor",
+            }
+            total = data["total_count"]
+            assert data["partial"] is True
+            assert "score" not in json.dumps(data["evidence"])
+            assert all("chunk_rowid" not in item for item in data["evidence"])
+            locators.extend(
+                (
+                    str(item["document_id"]),
+                    int(item["page"]),
+                    str(item["section"]),
+                    str(item["snippet"]),
+                )
+                for item in data["evidence"]
+            )
+            cursor = data["next_cursor"]
+            if not cursor:
+                break
+
+    assert total > 1
+    assert len(locators) == total
+    assert len(set(locators)) == total
+
+
+def test_literature_corpus_query_does_not_discard_later_terms(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    layout = ensure_project_space_layout(project)
+    source = layout["files_root"] / "papers" / "late-query-term.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "A measurement reports the seventeenthmarker under controlled conditions.",
+        encoding="utf-8",
+    )
+    earlier_terms = " ".join(f"missingterm{index}" for index in range(16))
+
+    with workspace_scope(project):
+        ingest_literature_files({"paths": ["papers/late-query-term.txt"]})
+        _content, artifact = query_literature_corpus(
+            {
+                "query": f"{earlier_terms} seventeenthmarker",
+                "page_size": 1,
+            }
+        )
+
+    assert artifact["data"]["total_count"] == 1
+    assert artifact["data"]["evidence"][0]["source_path"] == (
+        "papers/late-query-term.txt"
     )
 
 
@@ -204,6 +290,13 @@ def test_literature_agent_visible_schemas_are_non_nullable() -> None:
         "query_literature_corpus",
         "finalize_citations",
     }
+    query_schema = next(
+        tool["parameters"]
+        for tool in tools
+        if tool["name"] == "query_literature_corpus"
+    )
+    assert set(query_schema["properties"]) == {"query", "page_size", "cursor"}
+    assert "top_k" not in query_schema["properties"]
 
 
 def test_direct_search_openalex_tool_returns_normalized_json(monkeypatch) -> None:

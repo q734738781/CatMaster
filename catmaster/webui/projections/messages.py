@@ -647,7 +647,7 @@ def project_current_todo_parts(
             source_key = str(projected.title or "Research plan").casefold()
             latest_by_source[source_key] = (order, projected)
             order += 1
-    return [
+    projected_parts = [
         projected
         for _order, projected in sorted(
             latest_by_source.values(),
@@ -655,3 +655,19 @@ def project_current_todo_parts(
             reverse=True,
         )
     ]
+    latest_assistant_status = next(
+        (
+            str(message.get("status") or "").lower()
+            for message in reversed(rows[latest_user + 1 :])
+            if str(message.get("role") or "").lower() == "assistant"
+        ),
+        "",
+    )
+    if latest_assistant_status == "completed":
+        terminal_statuses = {"done", "completed", "complete"}
+        return [
+            part
+            for part in projected_parts
+            if part.items and all(str(item.status or "").lower() in terminal_statuses for item in part.items)
+        ]
+    return projected_parts

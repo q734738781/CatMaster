@@ -33,7 +33,7 @@ Read [manifest.yaml](manifest.yaml). It declares the `workflow` axis, the allowe
 Also read every file listed under `always_load`:
 
 - `static/core/tools.md` — the MCP tool inventory (core search, extended search, PubMed utilities) and the shared-module map.
-- `static/core/routing-and-ops.md` — the T1→T2→T3 source routing quick guide, environment setup, error handling, and limitations.
+- `static/core/routing-and-ops.md` — capability-based source routing, environment setup, error handling, and limitations.
 
 ### 2. Detect the workflow
 
@@ -56,7 +56,7 @@ Read the file mapped for each detected workflow (under `references/workflows/`).
 
 Apply the loaded material in this order:
 
-1. Core tools and routing (`core/tools.md`, `core/routing-and-ops.md`) — which MCP tool for which need, and the T1→T2→T3 fallback chain that is the standard execution order across all workflows.
+1. Core tools and routing (`core/tools.md`, `core/routing-and-ops.md`) — choose sources by coverage, structure, access, quota, and current availability.
 2. The workflow fragment — its specific steps.
 3. Shared modules and scripts on demand (dedup, citation parser, search strategy, RIS/BibTeX format, format converter).
 
@@ -64,7 +64,7 @@ Report specific tool failures and continue with remaining tools; broaden terms w
 
 ### 5. Reach for references only when needed
 
-The files under `references/` (and `scripts/`) are deep references, not defaults. Open them on demand per the `references.on_demand` table in the manifest — for example `references/source-tiers.md` for the full reliability classification, `references/dedup-engine.md` / `references/citation-parser.md` / `references/search-strategy.md` / `references/ris-bibtex-format.md` for the shared modules, and `scripts/academic_search.py` (no-MCP fallback discovery search) / `scripts/format-converter.py` / `scripts/preflight.py` for the tooling.
+The files under `references/` (and `scripts/`) are deep references, not defaults. Open them on demand per the `references.on_demand` table in the manifest — for example `references/source-routing.md` for capability-based routing, `references/dedup-engine.md` / `references/citation-parser.md` / `references/search-strategy.md` / `references/ris-bibtex-format.md` for the shared modules, and `scripts/academic_search.py` (no-MCP fallback discovery search) / `scripts/format-converter.py` / `scripts/preflight.py` for the tooling.
 
 ## Why this split
 

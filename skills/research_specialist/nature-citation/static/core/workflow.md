@@ -21,7 +21,7 @@ For each citable segment:
 - Identify entities, intervention/exposure, outcome, population/model, directionality, and boundary.
 - Convert the claim into 2-4 English search queries: one precise query with all key terms; one synonym query; one broader background query; one methods or model query if relevant.
 
-If the claim is too broad, split it into citable subclaims rather than searching the whole sentence. For deeper help turning a claim into queries and support grades, open `references/search-strategy.md`.
+If the claim is too broad, split it into citable subclaims rather than searching the whole sentence. For deeper help turning a claim into queries and separate claim-relation/access-depth records, open `references/search-strategy.md`.
 
 ## 3. Search candidate papers
 
@@ -40,15 +40,12 @@ When the topic is biomedical or PubMed-indexed, also search PubMed with journal 
 
 ## 4. Evaluate whether each paper supports the segment
 
-Use a conservative support scale:
-
-- `strong support`: the paper directly tests the same relationship/mechanism/method and the result supports the segment.
-- `partial support`: the paper supports part of the segment, a related model, or a narrower condition.
-- `background support`: the paper supports field context, not the specific claim.
-- `contradictory/limiting`: the paper conflicts with or narrows the claim.
-- `metadata-only candidate`: title/metadata suggest relevance, but abstract/full text has not been checked.
-
-Never cite a `metadata-only candidate` as support without checking the abstract or publisher page. If a paper is a review, label it as review/context and avoid using it as primary evidence for an experimental claim when primary articles are available.
+Record `claim_relation` as `direct`, `partial`, `context`, `limiting`,
+`contradictory`, or `unassessed`. Record `access_depth` independently as
+`metadata`, `abstract`, `full_text`, or `supplementary`. Metadata-only discovery
+always has `claim_relation: unassessed` and cannot support a scientific claim.
+If a paper is a review, use `context` and avoid presenting it as primary evidence
+for an experimental claim when primary articles are available.
 
 ## 5. Export reference-manager file
 
@@ -74,7 +71,8 @@ Unless the user asks for a different format, return:
 分段引用对应关系
 S001: [source segment]
   - [Author, year, title, journal, DOI]
-  - 支撑等级: [strong/partial/background/limiting/metadata-only]
+  - claim_relation: [direct/partial/context/limiting/contradictory/unassessed]
+  - access_depth: [metadata/abstract/full_text/supplementary]
   - 插入建议: [e.g. after sentence / after clause]
 
 导出文件

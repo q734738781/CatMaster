@@ -9,13 +9,11 @@ from .corpus import (
 from .models import (
     FindInPageResult,
     InPageMatch,
-    LiteratureEvidenceRow,
     PaperRecord,
     PaperSearchHit,
     PublicPageSnapshot,
     PublicWebHit,
     PublicWebSearchResult,
-    ResearchDepth,
 )
 from .openalex_client import OpenAlexClient
 from .online_search_adapter import OnlineSearchAdapter
@@ -42,7 +40,6 @@ from .tools import (
 )
 
 __all__ = [
-    "ResearchDepth",
     "PaperRecord",
     "PaperSearchHit",
     "PublicWebHit",
@@ -50,7 +47,6 @@ __all__ = [
     "PublicPageSnapshot",
     "InPageMatch",
     "FindInPageResult",
-    "LiteratureEvidenceRow",
     "OpenAlexClient",
     "SemanticScholarClient",
     "SemanticScholarRateLimitError",

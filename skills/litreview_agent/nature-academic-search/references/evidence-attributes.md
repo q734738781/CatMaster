@@ -30,10 +30,9 @@ Use only the axes that change the scientific interpretation:
 These are descriptive attributes, not ordered labels. Do not convert them into
 a score, confidence percentage, or high/medium/low evidence grade.
 
-A separate candidate-selection or LATS utility score may rank what to read,
-deliver, or archive next. Keep its component scores, total, rationale, access
-depth, and provisional status together. That operational score does not measure
-scientific truth and must not replace these claim-level evidence attributes.
+For reading selection, use `selected`, `deferred`, or `excluded` with a concise
+task-specific reason and a separate access-depth attribute. Do not convert these
+attributes into a paper value or evidence grade.
 
 ## Claim-relative use
 

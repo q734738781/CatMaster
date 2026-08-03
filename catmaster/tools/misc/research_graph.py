@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -9,6 +10,7 @@ from catmaster.research.knowledge_graph.models import (
     GraphCreateRequest,
     GraphPatchRequest,
     HypothesisCreateRequest,
+    ResearchExperimentEvaluationDraft,
     ResearchGraphPlanningDraft,
     ResearchRefInput,
     ResultJudgmentInput,
@@ -16,7 +18,7 @@ from catmaster.research.knowledge_graph.models import (
     ResultJudgmentSetRequest,
 )
 from catmaster.research.knowledge_graph.service import ResearchGraphService
-from catmaster.research.knowledge_graph.store import ResearchGraphConflict
+from catmaster.research.knowledge_graph.query import ResearchGraphSQLQuery
 from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.runtime.tool_runtime import current_tool_context
 from catmaster.tools.base import project_space_root
@@ -38,7 +40,6 @@ class CreateResearchGraphInput(GraphCreateRequest):
 
     completion_criterion: str = Field(
         "",
-        max_length=4_000,
         description=(
             "Optional human-readable scientific completion criterion. Leave empty "
             "to use the default defensible-answer criterion."
@@ -46,31 +47,20 @@ class CreateResearchGraphInput(GraphCreateRequest):
     )
 
 
-class InspectResearchGraphInput(BaseModel):
-    """[research/graph] Read a bounded human-readable neighborhood from one explicit graph."""
+class QueryResearchGraphSQLInput(BaseModel):
+    """[research/graph] Query the current thread-bound graph through read-only logical SQLite tables."""
 
     model_config = ConfigDict(extra="forbid")
 
-    graph_id: str = Field(..., min_length=3, description="Explicit graph ID from list or bound context.")
-    focus_node_id: str = Field(
-        "",
-        description="Optional node ID to center; leave empty to inspect the graph frontier.",
-    )
-    query: str = Field(
-        "",
-        description="Optional scientific phrase for FTS retrieval; leave empty when focus is sufficient.",
-    )
-    max_nodes: int = Field(
-        24,
-        ge=4,
-        le=100,
-        description="Hard node budget; use 24 unless a broader view is necessary.",
-    )
-    max_chars: int = Field(
-        12_000,
-        ge=2_000,
-        le=40_000,
-        description="Hard character budget for model-visible Markdown.",
+    sql: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "One standard SELECT or WITH statement over research_graphs, "
+            "research_nodes, research_edges, research_refs, research_launches, "
+            "research_planning, workspace_artifacts, or thread_messages. Use "
+            "ordinary LIMIT/OFFSET or keyset pagination when desired."
+        ),
     )
 
 
@@ -88,6 +78,10 @@ class AddResearchExperimentInput(ExperimentCreateRequest):
 
 class StageResearchPlanInput(ResearchGraphPlanningDraft):
     """[research/graph] Publish science-first temporary branches from the bound planning turn."""
+
+
+class EvaluateResearchExperimentsInput(ResearchExperimentEvaluationDraft):
+    """[research/graph] Publish flat dual scores for every current candidate Experiment."""
 
 
 class SetResearchGraphCompletionInput(BaseModel):
@@ -136,10 +130,9 @@ class MarkResearchExperimentFailedInput(BaseModel):
     graph_id: str = Field(..., min_length=3, description="Explicit target graph ID.")
     expected_revision: int = Field(..., ge=1, description="Latest inspected graph revision.")
     experiment_node_id: str = Field(..., min_length=3, description="Experiment node that could not proceed.")
-    reason: str = Field(..., min_length=1, max_length=2_000, description="Concrete execution blocker.")
+    reason: str = Field(..., min_length=1, description="Concrete execution blocker.")
     refs: list[ResearchRefInput] = Field(
         default_factory=list,
-        max_length=100,
         description="Typed source refs; omit or pass [] when no durable source exists.",
     )
 
@@ -149,11 +142,10 @@ class RecordBoundResearchResultInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field("", max_length=300, description="Short result title; leave empty to derive it from the summary.")
+    title: str = Field("", description="Short result title; leave empty to derive it from the summary.")
     summary: str = Field(
         ...,
         min_length=1,
-        max_length=4_000,
         description=(
             "Concise observed or derived scientific outcome, including what the "
             "decision rule needs. Separate observation from causal interpretation "
@@ -163,12 +155,10 @@ class RecordBoundResearchResultInput(BaseModel):
     )
     judgments: list[ResultJudgmentInput] = Field(
         default_factory=list,
-        max_length=100,
         description="Typed effects on the hypothesis node IDs shown in the bound graph context; omit or pass [] when the result is not discriminating.",
     )
     refs: list[ResearchRefInput] = Field(
         default_factory=list,
-        max_length=98,
         description=(
             "Durable result sources such as artifact, note, DOI, or URL refs. "
             "The host attaches the bound child thread and current run refs automatically."
@@ -184,12 +174,10 @@ class MarkBoundResearchExperimentFailedInput(BaseModel):
     reason: str = Field(
         ...,
         min_length=1,
-        max_length=2_000,
         description="Concrete reason the bound experiment cannot produce a scientific result.",
     )
     refs: list[ResearchRefInput] = Field(
         default_factory=list,
-        max_length=98,
         description=(
             "Optional durable sources for the blocker. The host attaches the "
             "bound child thread and current run refs automatically."
@@ -300,34 +288,40 @@ def _refs_with_bound_sources(
     return values
 
 
-def _context_result(
+def _mutation_result(
     *,
+    service: ResearchGraphService,
     tool_name: str,
     graph_id: str,
-    focus_node_id: str = "",
-    prefix: str = "",
+    changed: dict[str, Any],
+    message: str,
 ) -> tuple[str, dict[str, Any]]:
-    context = _service().context_builder.build(
-        graph_id,
-        focus_node_id=focus_node_id,
-        max_nodes=24,
-        max_chars=12_000,
-    )
-    content = context["markdown"]
-    if prefix:
-        content = f"{prefix}\n\n{content}"
-    presentation = context["presentation"]
-    return content, _artifact(
+    revision = int(service.store.get_graph(graph_id)["revision"])
+    data = {
+        "graph_id": graph_id,
+        "revision": revision,
+        "changed": changed,
+    }
+    return f"{message}\nLatest graph revision: {revision}.", _artifact(
         tool_name,
-        {
-            "graph": presentation["graph"],
-            "focus_node_id": presentation["focus_node_id"],
-            "frontier_node_ids": presentation["frontier_node_ids"],
-            "shown_count": presentation["shown_count"],
-            "total_count": presentation["total_count"],
-            "omitted_count": presentation["omitted_count"],
-        },
+        data,
     )
+
+
+def _bound_graph(service: ResearchGraphService) -> tuple[str, int]:
+    thread_id = _trusted_thread_id()
+    if not thread_id:
+        raise ValueError("The graph query has no trusted runtime thread binding.")
+    planning = service.store.find_planning_by_thread(thread_id)
+    if planning is not None:
+        graph_id = str(planning["graph_id"])
+    else:
+        thread = service.thread_store.get_thread(thread_id)
+        graph_id = str(thread.active_research_graph_id or "").strip()
+    if not graph_id:
+        raise ValueError("The current thread is not bound to a Research Graph.")
+    graph = service.store.get_graph(graph_id)
+    return graph_id, int(graph["revision"])
 
 
 def list_research_graphs(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -395,11 +389,16 @@ def create_research_graph(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
             graph_id=graph_id,
             focus_node_id=focus_node_id,
         )
-        return _context_result(
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=graph_id,
-            focus_node_id=focus_node_id,
-            prefix=(
+            changed={
+                "graph": result["graph"],
+                "initial_nodes": result.get("nodes") or [],
+                "bound_thread_id": bound_thread_id,
+            },
+            message=(
                 f"Created Research Graph {graph_id} and attached it to the "
                 f"current thread {bound_thread_id}."
                 if bound_thread_id
@@ -412,29 +411,25 @@ def create_research_graph(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]
         _error(tool_name, "", exc)
 
 
-def inspect_research_graph(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    tool_name = "inspect_research_graph"
-    graph_id = str(payload.get("graph_id") or "")
+def query_research_graph_sql(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tool_name = "query_research_graph_sql"
+    graph_id = ""
     try:
-        params = InspectResearchGraphInput.model_validate(payload)
-        context = _service().context_builder.build(
-            params.graph_id,
-            focus_node_id=params.focus_node_id,
-            query=params.query,
-            max_nodes=params.max_nodes,
-            max_chars=params.max_chars,
+        params = QueryResearchGraphSQLInput.model_validate(payload)
+        service = _service()
+        graph_id, revision = _bound_graph(service)
+        result = ResearchGraphSQLQuery(service.workspace).execute(
+            graph_id=graph_id,
+            sql=params.sql,
         )
-        presentation = context["presentation"]
-        return context["markdown"], _artifact(
+        data = {
+            "graph_id": graph_id,
+            "revision": revision,
+            **result,
+        }
+        return json.dumps(data, ensure_ascii=False), _artifact(
             tool_name,
-            {
-                "graph": presentation["graph"],
-                "focus_node_id": presentation["focus_node_id"],
-                "frontier_node_ids": presentation["frontier_node_ids"],
-                "shown_count": presentation["shown_count"],
-                "total_count": presentation["total_count"],
-                "omitted_count": presentation["omitted_count"],
-            },
+            data,
         )
     except CatMasterToolExecutionError:
         raise
@@ -450,12 +445,18 @@ def add_research_hypothesis(payload: dict[str, Any]) -> tuple[str, dict[str, Any
         request = HypothesisCreateRequest.model_validate(
             params.model_dump(mode="json", exclude={"graph_id"})
         )
-        result = _service().add_hypothesis(params.graph_id, request)
-        return _context_result(
+        service = _service()
+        result = service.add_hypothesis(params.graph_id, request)
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            focus_node_id=result["node"]["node_id"],
-            prefix=f"Added hypothesis {result['node']['title']}.",
+            changed={
+                "node": result["node"],
+                "refs": [ref.model_dump(mode="json") for ref in request.refs],
+                "suggested_by_result_ids": request.suggested_by_result_ids,
+            },
+            message=f"Added hypothesis {result['node']['title']}.",
         )
     except CatMasterToolExecutionError:
         raise
@@ -471,12 +472,19 @@ def add_research_experiment(payload: dict[str, Any]) -> tuple[str, dict[str, Any
         request = ExperimentCreateRequest.model_validate(
             params.model_dump(mode="json", exclude={"graph_id"})
         )
-        result = _service().add_experiment(params.graph_id, request)
-        return _context_result(
+        service = _service()
+        result = service.add_experiment(params.graph_id, request)
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            focus_node_id=result["node"]["node_id"],
-            prefix=f"Added experiment proposal {result['node']['title']}.",
+            changed={
+                "node": result["node"],
+                "refs": [ref.model_dump(mode="json") for ref in request.refs],
+                "tests_hypothesis_ids": request.tests_hypothesis_ids,
+                "depends_on_experiment_ids": request.depends_on_experiment_ids,
+            },
+            message=f"Added experiment proposal {result['node']['title']}.",
         )
     except CatMasterToolExecutionError:
         raise
@@ -508,24 +516,54 @@ def stage_research_plan(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             ),
         )
         summary = str(result.get("summary") or "Temporary plan published.")
-        materialized = dict(result.get("materialized") or {})
         return summary, _artifact(
             tool_name,
             {
                 "graph_id": graph_id,
                 "planning_id": result["planning_id"],
-                "recommended_target_id": result["recommended_target_id"],
-                "materialized": {
-                    key: materialized[key]
-                    for key in (
-                        "proposal_id",
-                        "node_ids",
-                        "next_experiment_node_id",
-                    )
-                    if key in materialized
-                },
+                "revision": result["revision"],
+                "candidate_experiment_ids": result["candidate_experiment_ids"],
+                "staged": result["staged"],
             },
         )
+    except CatMasterToolExecutionError:
+        raise
+    except Exception as exc:
+        _error(tool_name, graph_id, exc)
+
+
+def evaluate_research_experiments(
+    payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    tool_name = "evaluate_research_experiments"
+    graph_id = ""
+    try:
+        params = EvaluateResearchExperimentsInput.model_validate(payload)
+        planning_thread_id = _trusted_thread_id()
+        if not planning_thread_id:
+            raise ValueError("The planning turn has no trusted thread binding.")
+        service = _service()
+        planning = service.store.find_planning_by_thread(planning_thread_id)
+        if planning is None:
+            raise ValueError(
+                "The current thread is not an active Research Graph planning turn."
+            )
+        graph_id = str(planning["graph_id"])
+        result = service.stage_planning_evaluation(
+            graph_id,
+            expected_revision=int(planning["revision"]),
+            planning_thread_id=planning_thread_id,
+            evaluation=ResearchExperimentEvaluationDraft.model_validate(
+                params.model_dump(mode="json")
+            ),
+        )
+        content = (
+            "Published current-revision Experiment evaluation. "
+            f"Innovation recommendation: {result['innovation_recommendation'] or 'none'}; "
+            f"conservative recommendation: "
+            f"{result['conservative_recommendation'] or 'none'}."
+        )
+        return content, _artifact(tool_name, {"graph_id": graph_id, **result})
     except CatMasterToolExecutionError:
         raise
     except Exception as exc:
@@ -540,17 +578,19 @@ def set_research_graph_completion(
     try:
         params = SetResearchGraphCompletionInput.model_validate(payload)
         service = _service()
-        service.patch_graph(
+        result = service.patch_graph(
             params.graph_id,
             GraphPatchRequest(
                 expected_revision=params.expected_revision,
                 completed=params.completed,
             ),
         )
-        return _context_result(
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            prefix=(
+            changed={"graph": result["graph"]},
+            message=(
                 "Research Graph completion criterion marked satisfied."
                 if params.completed
                 else "Research Graph reopened."
@@ -570,12 +610,21 @@ def record_research_result(payload: dict[str, Any]) -> tuple[str, dict[str, Any]
         request = ResultCreateRequest.model_validate(
             params.model_dump(mode="json", exclude={"graph_id"})
         )
-        result = _service().record_result(params.graph_id, request)
-        return _context_result(
+        service = _service()
+        result = service.record_result(params.graph_id, request)
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            focus_node_id=result["node"]["node_id"],
-            prefix=f"Recorded result {result['node']['title']}.",
+            changed={
+                "node": result["node"],
+                "experiment_node_id": request.experiment_node_id,
+                "judgments": [
+                    item.model_dump(mode="json") for item in request.judgments
+                ],
+                "refs": [ref.model_dump(mode="json") for ref in request.refs],
+            },
+            message=f"Recorded result {result['node']['title']}.",
         )
     except CatMasterToolExecutionError:
         raise
@@ -596,17 +645,23 @@ def set_research_result_judgment(
                 exclude={"graph_id", "result_node_id", "hypothesis_node_id"},
             )
         )
-        _service().set_result_judgment(
+        service = _service()
+        service.set_result_judgment(
             params.graph_id,
             params.result_node_id,
             params.hypothesis_node_id,
             request,
         )
-        return _context_result(
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            focus_node_id=params.result_node_id,
-            prefix=(
+            changed={
+                "result_node_id": params.result_node_id,
+                "hypothesis_node_id": params.hypothesis_node_id,
+                "relation": params.relation,
+            },
+            message=(
                 f"Result judgment set to {params.relation} for hypothesis "
                 f"{params.hypothesis_node_id}."
             ),
@@ -633,11 +688,15 @@ def mark_research_experiment_failed(
             reason=params.reason,
             refs=refs,
         )
-        return _context_result(
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=params.graph_id,
-            focus_node_id=node["node_id"],
-            prefix=f"Marked experiment blocked: {params.reason}",
+            changed={
+                "node": service._public_node(node),
+                "refs": [ref.model_dump(mode="json") for ref in params.refs],
+            },
+            message=f"Marked experiment blocked: {params.reason}",
         )
     except CatMasterToolExecutionError:
         raise
@@ -655,29 +714,31 @@ def record_bound_research_result(
         service = _service()
         thread_id, graph_id, experiment_node_id = _bound_execution_target(service)
         refs = _refs_with_bound_sources(params.refs, thread_id=thread_id)
-        for attempt in range(2):
-            graph = service.store.get_graph(graph_id)
-            try:
-                result = service.record_result(
-                    graph_id,
-                    ResultCreateRequest(
-                        expected_revision=int(graph["revision"]),
-                        title=params.title,
-                        summary=params.summary,
-                        experiment_node_id=experiment_node_id,
-                        judgments=params.judgments,
-                        refs=refs,
-                    ),
-                )
-                break
-            except ResearchGraphConflict:
-                if attempt:
-                    raise
-        return _context_result(
+        graph = service.store.get_graph(graph_id)
+        result = service.record_result(
+            graph_id,
+            ResultCreateRequest(
+                expected_revision=int(graph["revision"]),
+                title=params.title,
+                summary=params.summary,
+                experiment_node_id=experiment_node_id,
+                judgments=params.judgments,
+                refs=refs,
+            ),
+        )
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=graph_id,
-            focus_node_id=result["node"]["node_id"],
-            prefix=(
+            changed={
+                "node": result["node"],
+                "experiment_node_id": experiment_node_id,
+                "judgments": [
+                    item.model_dump(mode="json") for item in params.judgments
+                ],
+                "refs": [ref.model_dump(mode="json") for ref in refs],
+            },
+            message=(
                 f"Recorded the bound experiment result {result['node']['title']} "
                 f"with child thread source {thread_id}."
             ),
@@ -701,25 +762,23 @@ def mark_bound_research_experiment_failed(
             service.validate_ref(ref)
             for ref in _refs_with_bound_sources(params.refs, thread_id=thread_id)
         ]
-        for attempt in range(2):
-            graph = service.store.get_graph(graph_id)
-            try:
-                node, _event_id = service.store.mark_experiment_blocked(
-                    graph_id,
-                    experiment_node_id,
-                    expected_revision=int(graph["revision"]),
-                    reason=params.reason,
-                    refs=refs,
-                )
-                break
-            except ResearchGraphConflict:
-                if attempt:
-                    raise
-        return _context_result(
+        graph = service.store.get_graph(graph_id)
+        node, _event_id = service.store.mark_experiment_blocked(
+            graph_id,
+            experiment_node_id,
+            expected_revision=int(graph["revision"]),
+            reason=params.reason,
+            refs=refs,
+        )
+        return _mutation_result(
+            service=service,
             tool_name=tool_name,
             graph_id=graph_id,
-            focus_node_id=node["node_id"],
-            prefix=(
+            changed={
+                "node": service._public_node(node),
+                "refs": [ref.model_dump(mode="json") for ref in refs],
+            },
+            message=(
                 f"Marked the bound experiment blocked and attached child "
                 f"thread source {thread_id}: {params.reason}"
             ),
@@ -734,10 +793,11 @@ __all__ = [
     "AddResearchExperimentInput",
     "AddResearchHypothesisInput",
     "CreateResearchGraphInput",
-    "InspectResearchGraphInput",
+    "EvaluateResearchExperimentsInput",
     "ListResearchGraphsInput",
     "MarkBoundResearchExperimentFailedInput",
     "MarkResearchExperimentFailedInput",
+    "QueryResearchGraphSQLInput",
     "RecordBoundResearchResultInput",
     "RecordResearchResultInput",
     "SetResearchResultJudgmentInput",
@@ -746,10 +806,11 @@ __all__ = [
     "add_research_experiment",
     "add_research_hypothesis",
     "create_research_graph",
-    "inspect_research_graph",
+    "evaluate_research_experiments",
     "list_research_graphs",
     "mark_bound_research_experiment_failed",
     "mark_research_experiment_failed",
+    "query_research_graph_sql",
     "record_bound_research_result",
     "record_research_result",
     "set_research_result_judgment",

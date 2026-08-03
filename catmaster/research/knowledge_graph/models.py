@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -74,9 +74,9 @@ def _clean_string_list(values: list[str]) -> list[str]:
 class HypothesisBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    claim: str = Field(..., min_length=1, max_length=2_000)
-    rationale: str = Field("", max_length=4_000)
-    predictions: list[str] = Field(default_factory=list, max_length=20)
+    claim: str = Field(..., min_length=1)
+    rationale: str = ""
+    predictions: list[str] = Field(default_factory=list)
     importance: PriorityBand = Field(
         "",
         description=(
@@ -94,10 +94,9 @@ class HypothesisBody(BaseModel):
 class ExperimentBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    objective: str = Field(..., min_length=1, max_length=2_000)
+    objective: str = Field(..., min_length=1)
     plan_summary: str = Field(
         "",
-        max_length=4_000,
         description=(
             "Optional while the proposal is a draft. Required before the "
             "experiment is marked ready to run."
@@ -105,7 +104,6 @@ class ExperimentBody(BaseModel):
     )
     decision_rule: str = Field(
         "",
-        max_length=2_000,
         description=(
             "Optional while the proposal is a draft. Required before the "
             "experiment is marked ready to run."
@@ -113,21 +111,12 @@ class ExperimentBody(BaseModel):
     )
     blocking_reason: str = Field(
         "",
-        max_length=2_000,
         description=(
             "Concrete scientific or practical reason this experiment cannot "
             "proceed. Leave empty unless the experiment is explicitly blocked."
         ),
     )
     execution_lane: ExecutionLane = ExecutionLane.EXPERIMENT
-    expected_value: PriorityBand = Field(
-        "",
-        description=(
-            "Optional expected decision value if this experiment produces a "
-            "usable result. Leave empty when unknown. This is not a probability "
-            "of success."
-        ),
-    )
     estimated_compute_cost: ComputeCostBand = Field(
         "",
         description=(
@@ -148,7 +137,6 @@ class ResultBody(BaseModel):
     summary: str = Field(
         ...,
         min_length=1,
-        max_length=4_000,
         description=(
             "Observed or derived scientific outcome. Separate the observation "
             "from causal interpretation, and state modality, applicable conditions, "
@@ -182,7 +170,6 @@ class ResearchRefInput(BaseModel):
     ref_id: str = Field(
         ...,
         min_length=1,
-        max_length=2_000,
         description=(
             "Exact existing identifier, DOI, or URL. Omit the reference when no "
             "durable identifier is available; never invent one."
@@ -193,8 +180,8 @@ class ResearchRefInput(BaseModel):
 
 
 class HypothesisSeed(HypothesisBody):
-    title: str = Field("", max_length=300)
-    refs: list[ResearchRefInput] = Field(default_factory=list, max_length=100)
+    title: str = ""
+    refs: list[ResearchRefInput] = Field(default_factory=list)
 
     _clean_title = field_validator("title")(_clean_text)
 
@@ -202,11 +189,11 @@ class HypothesisSeed(HypothesisBody):
 class GraphCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    question: str = Field(..., min_length=1, max_length=4_000)
-    title: str = Field("", max_length=300)
-    completion_criterion: str = Field("", max_length=4_000)
+    question: str = Field(..., min_length=1)
+    title: str = ""
+    completion_criterion: str = ""
     orchestration_mode: OrchestrationMode = OrchestrationMode.MANUAL
-    initial_hypotheses: list[HypothesisSeed] = Field(default_factory=list, max_length=50)
+    initial_hypotheses: list[HypothesisSeed] = Field(default_factory=list)
 
     _clean_question = field_validator("question")(_clean_text)
     _clean_title = field_validator("title")(_clean_text)
@@ -236,10 +223,10 @@ class ResearchExperimentProposal(ExperimentBody):
     model_config = ConfigDict(extra="forbid")
 
     proposal_id: str = Field(..., min_length=1, max_length=160)
-    title: str = Field("", max_length=300)
-    tests_hypothesis_ids: list[str] = Field(default_factory=list, max_length=100)
-    depends_on_experiment_ids: list[str] = Field(default_factory=list, max_length=100)
-    refs: list[ResearchRefInput] = Field(default_factory=list, max_length=100)
+    title: str = ""
+    tests_hypothesis_ids: list[str] = Field(default_factory=list)
+    depends_on_experiment_ids: list[str] = Field(default_factory=list)
+    refs: list[ResearchRefInput] = Field(default_factory=list)
 
     _clean_proposal_id = field_validator("proposal_id")(_clean_text)
     _clean_title = field_validator("title")(_clean_text)
@@ -303,9 +290,7 @@ class ResearchExperimentDraft(BaseModel):
         "",
         description="Optional for a draft; include the outcome-specific rule when known.",
     )
-    blocking_reason: str = ""
     execution_lane: ExecutionLane = ExecutionLane.EXPERIMENT
-    expected_value: PriorityBand = ""
     estimated_compute_cost: ComputeCostBand = ""
     tests_hypotheses: list[str] = Field(
         default_factory=list,
@@ -333,7 +318,6 @@ class ResearchExperimentDraft(BaseModel):
     _clean_title = field_validator("title")(_clean_text)
     _clean_plan = field_validator("plan_summary")(_clean_text)
     _clean_rule = field_validator("decision_rule")(_clean_text)
-    _clean_blocker = field_validator("blocking_reason")(_clean_text)
     _clean_tests = field_validator("tests_hypotheses")(_clean_string_list)
     _clean_dependencies = field_validator("depends_on_experiments")(
         _clean_string_list
@@ -402,7 +386,6 @@ class ResearchGraphPlanningProposal(BaseModel):
     )
     recommended_target_id: str = Field(
         "",
-        max_length=160,
         description=(
             "Optional proposal_id or existing ready experiment ID recommended "
             "as the next route. Leave empty when evidence does not distinguish "
@@ -411,7 +394,6 @@ class ResearchGraphPlanningProposal(BaseModel):
     )
     recommendation_reason: str = Field(
         "",
-        max_length=2_000,
         description="Short scientific reason for the recommendation, when present.",
     )
 
@@ -443,9 +425,9 @@ class GraphPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(..., ge=1)
-    title: str = Field("", max_length=300)
-    question: str = Field("", max_length=4_000)
-    completion_criterion: str = Field("", max_length=4_000)
+    title: str = ""
+    question: str = ""
+    completion_criterion: str = ""
     completed: bool = False
     orchestration_mode: OrchestrationMode = OrchestrationMode.MANUAL
     archived: bool = False
@@ -459,9 +441,9 @@ class HypothesisCreateRequest(HypothesisBody):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(..., ge=1)
-    title: str = Field("", max_length=300)
-    suggested_by_result_ids: list[str] = Field(default_factory=list, max_length=100)
-    refs: list[ResearchRefInput] = Field(default_factory=list, max_length=100)
+    title: str = ""
+    suggested_by_result_ids: list[str] = Field(default_factory=list)
+    refs: list[ResearchRefInput] = Field(default_factory=list)
 
     _clean_title = field_validator("title")(_clean_text)
     _clean_result_ids = field_validator("suggested_by_result_ids")(_clean_string_list)
@@ -471,11 +453,11 @@ class ExperimentCreateRequest(ExperimentBody):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(..., ge=1)
-    title: str = Field("", max_length=300)
+    title: str = ""
     state: ExperimentState = ExperimentState.DRAFT
-    tests_hypothesis_ids: list[str] = Field(default_factory=list, max_length=100)
-    depends_on_experiment_ids: list[str] = Field(default_factory=list, max_length=100)
-    refs: list[ResearchRefInput] = Field(default_factory=list, max_length=100)
+    tests_hypothesis_ids: list[str] = Field(default_factory=list)
+    depends_on_experiment_ids: list[str] = Field(default_factory=list)
+    refs: list[ResearchRefInput] = Field(default_factory=list)
 
     _clean_title = field_validator("title")(_clean_text)
     _clean_tests = field_validator("tests_hypothesis_ids")(_clean_string_list)
@@ -495,7 +477,7 @@ class ResultCreateRequest(ResultBody):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(..., ge=1)
-    title: str = Field("", max_length=300)
+    title: str = ""
     experiment_node_id: str = Field(
         "",
         max_length=160,
@@ -504,8 +486,8 @@ class ResultCreateRequest(ResultBody):
             "observation or result obtained outside this graph."
         ),
     )
-    judgments: list[ResultJudgmentInput] = Field(default_factory=list, max_length=100)
-    refs: list[ResearchRefInput] = Field(default_factory=list, max_length=100)
+    judgments: list[ResultJudgmentInput] = Field(default_factory=list)
+    refs: list[ResearchRefInput] = Field(default_factory=list)
 
     _clean_title = field_validator("title")(_clean_text)
     _clean_experiment = field_validator("experiment_node_id")(_clean_text)
@@ -536,7 +518,7 @@ class NodePatchRequest(BaseModel):
 
     expected_revision: int = Field(..., ge=1)
     expected_node_revision: int = Field(..., ge=1)
-    title: str = Field(..., min_length=1, max_length=300)
+    title: str = Field(..., min_length=1)
     state: str = Field("", max_length=40)
     body: dict[str, Any] = Field(default_factory=dict)
 
@@ -583,7 +565,7 @@ class ExperimentBlockedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(..., ge=1)
-    reason: str = Field(..., min_length=1, max_length=2_000)
+    reason: str = Field(..., min_length=1)
 
     _clean_reason = field_validator("reason")(_clean_text)
 
@@ -602,12 +584,87 @@ class GraphContextRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     focus_node_id: str = Field("", max_length=160)
-    query: str = Field("", max_length=4_000)
-    max_nodes: int = Field(24, ge=4, le=100)
-    max_chars: int = Field(12_000, ge=2_000, le=40_000)
 
     _clean_focus = field_validator("focus_node_id")(_clean_text)
-    _clean_query = field_validator("query")(_clean_text)
+
+
+Score01 = Annotated[float, Field(ge=0.0, le=1.0)]
+
+
+class ResearchExperimentEvaluationDraft(BaseModel):
+    """Flat current-revision evaluation for all candidate Experiments."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    experiment_ids: list[str] = Field(
+        ...,
+        description=(
+            "Exact existing or provisional Experiment IDs evaluated in this "
+            "planning revision, in the same order as both score arrays."
+        ),
+    )
+    innovation_scores: list[Score01] = Field(
+        ...,
+        description=(
+            "Current-revision innovation scores in experiment_ids order. These "
+            "are planning comparisons, not probabilities or scientific evidence."
+        ),
+    )
+    conservative_scores: list[Score01] = Field(
+        ...,
+        description=(
+            "Current-revision conservative scores in experiment_ids order. These "
+            "are planning comparisons, not probabilities or scientific evidence."
+        ),
+    )
+    innovation_recommendation: str = Field(
+        "",
+        description=(
+            "Exact Experiment ID selected by the innovation policy; leave empty "
+            "when no candidate is worth selecting or candidates are indistinguishable."
+        ),
+    )
+    conservative_recommendation: str = Field(
+        "",
+        description=(
+            "Exact Experiment ID selected by the conservative policy; leave empty "
+            "when no candidate is worth selecting or candidates are indistinguishable."
+        ),
+    )
+    evaluation_memo: str = Field(
+        "",
+        description=(
+            "Concise scientific rationale for the two current-revision comparisons."
+        ),
+    )
+
+    _clean_experiment_ids = field_validator("experiment_ids")(_clean_string_list)
+    _clean_innovation_recommendation = field_validator(
+        "innovation_recommendation"
+    )(_clean_text)
+    _clean_conservative_recommendation = field_validator(
+        "conservative_recommendation"
+    )(_clean_text)
+    _clean_evaluation_memo = field_validator("evaluation_memo")(_clean_text)
+
+    @model_validator(mode="after")
+    def _validate_parallel_scores(self) -> "ResearchExperimentEvaluationDraft":
+        count = len(self.experiment_ids)
+        if len(self.innovation_scores) != count or len(self.conservative_scores) != count:
+            raise ValueError(
+                "experiment_ids, innovation_scores, and conservative_scores must "
+                "have identical lengths."
+            )
+        known = set(self.experiment_ids)
+        for label, selected in (
+            ("innovation", self.innovation_recommendation),
+            ("conservative", self.conservative_recommendation),
+        ):
+            if selected and selected not in known:
+                raise ValueError(
+                    f"The {label} recommendation must be one of experiment_ids."
+                )
+        return self
 
 
 class GraphPlanningRequest(BaseModel):
@@ -650,6 +707,7 @@ __all__ = [
     "RefCreateRequest",
     "RefKind",
     "ResearchExperimentDraft",
+    "ResearchExperimentEvaluationDraft",
     "ResearchExperimentProposal",
     "ResearchGraphPlanningDraft",
     "ResearchGraphPlanningProposal",

@@ -61,7 +61,7 @@ New graph requires only a research question. Title, completion criterion, orches
 The graph has three scientific node types:
 
 - A Hypothesis shows its concise claim, relative importance, and a relationship summary derived from all related Results; this is not an evidence grade.
-- An Experiment proposal shows its objective, plan, decision rule, execution lane, expected decision value, coarse compute cost, and preparation or execution state.
+- An Experiment proposal shows its objective, plan, decision rule, execution lane, coarse compute cost, and preparation or execution state. A temporary planning candidate may also show its current innovation and conservative evaluation; those values are not part of the durable Experiment.
 - A Result shows a concise observation or outcome. Literature findings, collaborator results, and historical observations can be recorded without a graph Experiment. Labeled relationships connect a Result to the Hypotheses that it supports, opposes, or does not distinguish.
 
 The canvas supports pan, zoom, fit, a minimap, keyboard access, focus neighborhood, and density limits of 5, 25, or 100 nodes. Node cards keep the complete title and accessible name. Selecting a node opens the full scientific fields and sources in the inspector, so truncation never hides the only copy of the content.
@@ -70,20 +70,26 @@ The canvas supports pan, zoom, fit, a minimap, keyboard access, focus neighborho
 
 Creating a graph through the Research Specialist attaches it to the current
 thread automatically. A launched Experiment or Literature Review child receives
-the same bounded graph focus but can only write back the Result or a concrete
-blocker for its bound Experiment. The child thread is attached as a source
-automatically. If the child finishes without a Result, the launch is shown as
-blocked rather than completed.
+the same partial graph focus and bound read-only query surface. It can only write
+back the Result or a concrete blocker for its bound Experiment. Before an
+automatic Result writeback, the shared evidence judge identifies the Hypothesis
+relationships that the Result actually addresses; it may return none. The child
+thread is attached as a source automatically. If the child finishes without a
+Result, the launch is shown as blocked rather than completed.
 
 Running an Experiment atomically claims one launch, then creates an ordinary child thread bound to the graph and focus node. Repeated clicks on the same active launch are deduplicated. A completed Experiment can start an explicit replicate. A running, stopped, or deleted source thread does not block the graph. When remote submission status is uncertain, recovery checks the existing thread, run, and receipt before any new submission.
 
-Research planning first lets `hypothesis_proposer` read the current evidence and, when useful, search the web, controlled browser, and local literature corpus. It returns an ordinary-language scientific memo and may publish sourced temporary Hypothesis and Experiment branches through its bound staging action. Branch count follows the scientifically distinct alternatives supported by the current evidence rather than a fixed Hypothesis/Experiment count or ratio; expansion stops when another branch would only repeat an existing explanation. A temporary Experiment may remain a draft with only an objective and becomes runnable only after it has a usable plan and decision rule. The complete runnable frontier is considered together, but the recommendation is a scientific reason rather than a stored numeric score. Candidate branches appear as translucent nodes until materialized. The planning run is internal orchestration, so it does not clutter the ordinary thread list; its useful progress and recommendation appear on the graph. In Manual mode, selecting a temporary node atomically adds only its required route. Unselected branches are replaced by the next planning pass rather than entering the durable scientific graph.
+Research planning first gives `hypothesis_proposer` a partial focus snippet and read-only SQL access to the complete bound graph. The proposer may also search the web and local corpus and read or acquire selected sources. For a Result-focused turn, it compares the Result with existing predictions and Results before proposing a distinct new Hypothesis. It may conclude that no new Hypothesis or route is needed. Staging publishes sourced temporary Hypothesis and Experiment branches but does not materialize or launch them. Branch count follows the scientifically distinct alternatives supported by the current evidence. A temporary Experiment may remain a draft with only an objective and becomes runnable only after it has a usable plan and decision rule.
 
-Automatic orchestration plans after every graph change and then runs at most one real Experiment. This is an execution-concurrency limit, not a limit on parallel Hypotheses. If planning recommends a temporary route, only that route is materialized; if it recommends an existing ready Experiment, that node is advanced directly. Once recorded Results satisfy the completion criterion, the graph becomes Completed and automatic advancement stops. Switching back to Manual prevents later automatic launches but does not cancel the current thread or remote job.
+The evaluator compares every candidate Experiment in the current revision, including the complete runnable frontier, and assigns an innovation score and a conservative score. These values and their two recommendations exist only in the current preview. Candidate branches appear as translucent nodes, and the inspector shows both scores and recommendation choices. The planning run does not clutter the ordinary thread list. In Manual mode, selecting a temporary node atomically adds only its required route. Unselected branches are replaced by the next planning pass rather than entering the durable scientific graph.
+
+Automatic orchestration plans after every graph change and then runs at most one real Experiment. This is an execution-concurrency limit, not a limit on parallel Hypotheses. It uses the current revision's conservative recommendation. A recommended temporary Experiment is materialized in a separate transition; an existing ready Experiment can launch directly. No-change, a missing or invalid evaluation, an empty recommendation, or a concurrent graph edit leaves the graph waiting instead of falling back to the first runnable Experiment. Once recorded Results satisfy the completion criterion, the graph becomes Completed and automatic advancement stops. Switching back to Manual prevents later automatic launches but does not cancel the current thread or remote job.
 
 Completed is a stop marker, not a lock: adding or changing scientific content reopens the graph, while attaching another source alone does not. Archived graphs are read-only until explicitly restored. This keeps historical graphs inspectable without silently accepting edits.
 
 Graph nodes contain short scientific statements only. Papers, detailed notes, structures, logs, reports, artifacts, and receipts remain in their existing stores and connect through Sources. A moved or deleted source appears as "Source unavailable"; its reference is not silently removed. Graph actions do not grant protected execution. Computation still follows specialist ownership, managed execution, and the ordinary approval cards.
+
+After a Writing thread explicitly attaches the graph, each turn receives the same partial focus context and the Writing coordinator can query the complete bound graph read-only. It locates section-relevant Results, opposing or inconclusive judgments, and their Sources before opening the original note, artifact, run, thread message, DOI, or URL. A Result summary is navigation, not a substitute for the source, and Writing cannot edit the graph. Unattached Writing threads behave as before, and Writing never guesses among several graphs by title.
 
 Updates from other threads arrive through the durable graph event stream. If the graph changes before you submit an edit, the server rejects the overwrite and shows a readable conflict message. Refresh, review the new content, and submit again.
 
@@ -134,7 +140,9 @@ The current UI has no historical run selector. Overview may summarize the curren
 
 ## The inspector supports side-by-side review
 
-Clicking an artifact or file opens it in tabs on the right while Chat remains visible. This is useful for comparing a structure, report, table, or log while asking a follow-up. The Todo tab is a read-only canonical projection of the current turn's latest plans; message pagination and refresh do not change its completion state. It is not a project-management form the user must maintain.
+Clicking an artifact or file opens it in tabs on the right while Chat remains visible. This is useful for comparing a structure, report, table, or log while asking a follow-up. The Todo tab is a read-only canonical projection of the current turn's latest plans. During a run it follows `write_todos` updates; when the assistant message completes, the server push replaces it with the terminal projection and removes unfinished child-agent scratch plans. Message pagination and refresh preserve that state. It is not a project-management form the user must maintain.
+
+Completed specialist-task cards use the returned scientific Markdown directly: the card shows its content title, central conclusion, and a short section outline. Open details shows the expanded activity outline and its technical reference.
 
 ```text
 I am reviewing notes/slab_audit.md. Reinspect the third termination with its structure,

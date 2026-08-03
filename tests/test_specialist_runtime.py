@@ -7,7 +7,7 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import openai
@@ -312,6 +312,7 @@ def test_search_surface_follows_each_role_provider(
 
 def test_litreview_graph_result_tools_require_a_bound_experiment(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "project_space"
     service = ResearchGraphService(workspace=workspace, workspace_id="proj")
@@ -360,6 +361,42 @@ def test_litreview_graph_result_tools_require_a_bound_experiment(
         | _BOUND_RESEARCH_EXECUTION_TOOL_ALLOWLIST
     )
 
+    monkeypatch.setattr(
+        runtime_mod,
+        "build_chat_model",
+        lambda cfg: {"model": cfg.model},
+    )
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_create_deep_agent",
+        staticmethod(lambda: lambda **kwargs: _FakeDeepAgent(kwargs=kwargs)),
+    )
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_subagent",
+        staticmethod(lambda: _FakeSubAgent),
+    )
+    fake_runtime = {
+        "checkpointer": object(),
+        "store": object(),
+        "backend": object(),
+    }
+    direct_agent = built.runner._build_litreview_agent(
+        runtime=fake_runtime,
+        thread_id=direct.thread_id,
+    )
+    bound_agent = built.runner._build_litreview_agent(
+        runtime=fake_runtime,
+        thread_id=bound.thread_id,
+    )
+    assert [item.kwargs["name"] for item in direct_agent.kwargs["subagents"]] == [
+        "general-purpose"
+    ]
+    assert [item.kwargs["name"] for item in bound_agent.kwargs["subagents"]] == [
+        "general-purpose",
+        "evidence_judge",
+    ]
+
 
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
     workspace = tmp_path / "project_space"
@@ -393,7 +430,11 @@ def test_specialist_runner_propagates_optional_interrupt_on(tmp_path: Path, monk
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_compiled_subagent", staticmethod(lambda: _FakeCompiledSubAgent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_memory_middleware", staticmethod(lambda: _FakeMemoryMiddleware))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_entry_subagents", lambda self, entrypoint, runtime: [])
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_entry_subagents",
+        lambda self, entrypoint, runtime, thread_id="": [],
+    )
 
     built = build_specialist_runner(
         workspace=workspace,
@@ -585,10 +626,10 @@ def test_litreview_describes_evidence_by_attributes_not_source_tiers() -> None:
     assert "T3" not in attributes
 
 
-def test_litreview_lats_selection_score_remains_distinct_from_evidence_attributes() -> None:
+def test_litreview_selection_uses_states_and_reasons_without_scores() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     pipeline_root = repo_root / "skills/litreview_agent/nature-literature-pipeline"
-    scoring = (pipeline_root / "references/scoring-system.md").read_text(
+    selection = (pipeline_root / "references/selection-policy.md").read_text(
         encoding="utf-8"
     )
     template = (pipeline_root / "templates/literature-push-template.md").read_text(
@@ -599,23 +640,45 @@ def test_litreview_lats_selection_score_remains_distinct_from_evidence_attribute
         / "skills/litreview_agent/nature-academic-search/references/evidence-attributes.md"
     ).read_text(encoding="utf-8")
 
-    canonical_weights = (
-        ("Topic fit", "Topic Match", 35),
-        ("Novelty / contribution", "Novelty / Contribution", 20),
-        ("Method quality", "Method Quality", 15),
-        ("Source / author signal", "Source / Author Signal", 10),
-        ("Practical value", "Applied/Engineering Value", 10),
-        ("Archive value", "Archival Value", 10),
+    assert "`selected`" in selection
+    assert "`deferred`" in selection
+    assert "`excluded`" in selection
+    assert "one concise reason" in selection
+    assert "component values" in selection
+    assert "selected, deferred, or excluded" in template
+    assert "status has a reason" in template
+    assert not (pipeline_root / "references/scoring-system.md").exists()
+    assert "LATS" not in selection
+    assert "score" not in template.casefold()
+    assert "LATS" not in attributes
+    assert "descriptive attributes, not ordered labels" in attributes
+    assert "not a reliability grade" in attributes
+
+
+def test_active_literature_skills_do_not_restore_retired_grade_contracts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    roots = [
+        repo_root / "skills/litreview_agent/nature-literature-pipeline",
+        repo_root / "skills/research_specialist/nature-literature-pipeline",
+        repo_root / "skills/litreview_agent/nature-citation",
+        repo_root / "skills/research_specialist/nature-citation",
+        repo_root / "skills/writing_specialist/nature-citation",
+    ]
+    retired_terms = (
+        "support_grade",
+        "support-grade",
+        "support grades",
+        "classify hits into three tiers",
+        "按相关性分级",
     )
-    for template_label, scoring_label, weight in canonical_weights:
-        assert f"| {template_label} | {weight} |" in template
-        assert f"| {scoring_label} | {weight} |" in scoring
-    assert "LATS candidate-selection score" in scoring
-    assert "component vector with the total" in scoring
-    assert "mark the score `provisional`" in scoring
-    assert "candidate-selection or LATS utility score" in attributes
-    assert "scientific truth" in attributes
-    assert "must not replace these claim-level evidence attributes" in attributes
+
+    for root in roots:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".md", ".py", ".yaml"}:
+                continue
+            text = path.read_text(encoding="utf-8").casefold()
+            for retired in retired_terms:
+                assert retired.casefold() not in text, (path, retired)
 
 
 def test_writing_task_scale_numbers_live_in_skills_not_system_prompts() -> None:
@@ -1359,7 +1422,11 @@ def test_run_impl_retries_invalid_final_report_and_recovers(
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_load_create_deep_agent", staticmethod(lambda: _fake_create_deep_agent))
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_entry_subagents", lambda self, entrypoint, runtime: [])
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_entry_subagents",
+        lambda self, entrypoint, runtime, thread_id="": [],
+    )
     monkeypatch.setattr(runtime_mod.asyncio, "sleep", _fake_sleep)
 
     built = build_specialist_runner(
@@ -1421,7 +1488,11 @@ def test_run_impl_does_not_restart_episode_after_model_error(
     )
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_open_agent_runtime", _fake_open_agent_runtime)
     monkeypatch.setattr(runtime_mod.SpecialistRunner, "_new_usage_callback", staticmethod(lambda: _FakeUsageCallback()))
-    monkeypatch.setattr(runtime_mod.SpecialistRunner, "_entry_subagents", lambda self, entrypoint, runtime: [])
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_entry_subagents",
+        lambda self, entrypoint, runtime, thread_id="": [],
+    )
 
     built = build_specialist_runner(
         workspace=workspace,
@@ -1445,7 +1516,7 @@ def test_run_impl_does_not_restart_episode_after_model_error(
     assert failed_agent.calls == 1
 
 
-def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> None:
+def test_research_reasoning_boundary_preserves_read_tools_and_hides_mutations() -> None:
     class _Request:
         def __init__(self, tools: list[Any]) -> None:
             self.tools = tools
@@ -1454,16 +1525,22 @@ def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> 
             return _Request(list(kwargs.get("tools", self.tools)))
 
     tools = [
-        SimpleNamespace(name="inspect_research_graph"),
+        SimpleNamespace(name="query_research_graph_sql"),
         SimpleNamespace(name="query_literature_corpus"),
         SimpleNamespace(name="stage_research_plan"),
         {"type": "web_search"},
         SimpleNamespace(name="write_todos"),
         SimpleNamespace(name="read_file"),
+        SimpleNamespace(name="read_document"),
+        SimpleNamespace(name="ls"),
+        SimpleNamespace(name="glob"),
+        SimpleNamespace(name="grep"),
+        SimpleNamespace(name="write_file"),
+        SimpleNamespace(name="edit_file"),
         SimpleNamespace(name="execute"),
         SimpleNamespace(name="apply_patch"),
     ]
-    boundary = runtime_mod._HypothesisProposerToolBoundaryMiddleware()
+    boundary = runtime_mod._ResearchReasoningToolBoundaryMiddleware()
 
     async def _handler(request: _Request) -> _Request:
         return request
@@ -1472,10 +1549,16 @@ def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> 
     visible_names = {runtime_mod._agent_tool_name(tool) for tool in bounded.tools}
 
     assert visible_names == {
-        "inspect_research_graph",
+        "query_research_graph_sql",
         "query_literature_corpus",
         "stage_research_plan",
         "web_search",
+        "write_todos",
+        "read_file",
+        "read_document",
+        "ls",
+        "glob",
+        "grep",
     }
 
     blocked_handler_called = False
@@ -1502,6 +1585,156 @@ def test_hypothesis_proposer_boundary_hides_injected_general_purpose_tools() -> 
     assert isinstance(blocked, ToolMessage)
     assert blocked.status == "error"
     assert blocked.tool_call_id == "call-execute"
+
+
+@pytest.mark.parametrize(
+    ("role", "skill_name", "extra_names"),
+    [
+        (
+            "hypothesis_proposer",
+            "research-graph-query",
+            {"stage_research_plan"},
+        ),
+        ("evidence_judge", "research-evidence-reconciliation", set()),
+    ],
+)
+def test_research_reasoning_final_model_surface_reads_only_scoped_skill(
+    tmp_path: Path,
+    role: str,
+    skill_name: str,
+    extra_names: set[str],
+) -> None:
+    from deepagents.backends import LocalShellBackend
+
+    class _CapturingModel(FakeMessagesListChatModel):
+        bound_tool_names: ClassVar[list[list[str]]] = []
+        observed_messages: ClassVar[list[list[Any]]] = []
+
+        def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+            _ = (tool_choice, kwargs)
+            self.bound_tool_names.append(
+                [runtime_mod._agent_tool_name(tool) for tool in tools]
+            )
+            return self
+
+        def _generate(self, messages, *args, **kwargs):
+            self.observed_messages.append(list(messages))
+            return super()._generate(messages, *args, **kwargs)
+
+    _CapturingModel.bound_tool_names = []
+    _CapturingModel.observed_messages = []
+    workspace = tmp_path / "project_space"
+    files_root = workspace / "files"
+    files_root.mkdir(parents=True)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+    )
+    built.runner._stage_deepagent_assets(files_root, thread_id="thread-1")
+    reasoning_root = built.runner._skill_roots_for_group("research_reasoning")[0]
+    skill_path = f"{reasoning_root}/{skill_name}/SKILL.md"
+
+    child_model = _CapturingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "read_file",
+                        "args": {"file_path": skill_path},
+                        "id": "call-read-skill",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="Scoped skill applied."),
+        ]
+    )
+    parent_model = _CapturingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "task",
+                        "args": {
+                            "description": "Open the scoped skill and report readiness.",
+                            "subagent_type": role,
+                        },
+                        "id": "call-task",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            AIMessage(content="Parent received the scoped result."),
+        ]
+    )
+    SubAgent = built.runner._load_subagent()
+    subagent = SubAgent(
+        name=role,
+        description="Exercise the final research reasoning surface.",
+        system_prompt="Read the applicable skill before acting.",
+        tools=built.runner._research_reasoning_tools(
+            role=role,
+            thread_id="thread-1",
+            extra_names=extra_names,
+        ),
+        middleware=built.runner._research_reasoning_middleware(),
+        skills=[reasoning_root],
+        model=child_model,
+    )
+    agent = built.runner._load_create_deep_agent()(
+        model=parent_model,
+        tools=[],
+        subagents=[subagent],
+        backend=LocalShellBackend(root_dir=files_root, virtual_mode=True),
+    )
+
+    result = asyncio.run(
+        agent.ainvoke(
+            {"messages": [{"role": "user", "content": "Delegate the check."}]}
+        )
+    )
+
+    assert result["messages"][-1].content == "Parent received the scoped result."
+    child_surfaces = [
+        set(names)
+        for names in _CapturingModel.bound_tool_names
+        if "query_research_graph_sql" in names
+    ]
+    assert child_surfaces
+    for surface in child_surfaces:
+        assert {
+            "ls",
+            "glob",
+            "grep",
+            "read_file",
+            "read_document",
+            "query_research_graph_sql",
+            "query_literature_corpus",
+            "acquire_literature_source",
+            "web_search",
+        } <= surface
+        assert {
+            "write_file",
+            "edit_file",
+            "execute",
+            "apply_patch",
+        }.isdisjoint(surface)
+        assert extra_names <= surface
+        if role == "evidence_judge":
+            assert "stage_research_plan" not in surface
+    read_results = [
+        str(message.content)
+        for batch in _CapturingModel.observed_messages
+        for message in batch
+        if getattr(message, "name", None) == "read_file"
+    ]
+    assert any(f"# {skill_name}" in content for content in read_results)
 
 
 def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp_path: Path) -> None:
@@ -1608,6 +1841,7 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
                 "general-purpose",
                 "hypothesis_proposer",
                 "evidence_judge",
+                "experiment_evaluator",
                 "experiment_specialist",
                 "writing_specialist",
                 "peer_review_specialist",
@@ -1616,7 +1850,14 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
         ),
         (
             "experiment",
-            ["general-purpose", "materials_worker", "ml_worker", "dynamics_worker", "orca_xtb_worker"],
+            [
+                "general-purpose",
+                "evidence_judge",
+                "materials_worker",
+                "ml_worker",
+                "dynamics_worker",
+                "orca_xtb_worker",
+            ],
         ),
         ("literature_review", ["general-purpose"]),
         ("writing", ["general-purpose", "writing_worker_agent", "writing_polisher_agent"]),
@@ -1638,6 +1879,23 @@ def test_specialist_lanes_start_with_staged_skills(
         "---\nname: workspace-demo\ndescription: Workspace override used for runtime staging tests.\n---\n# workspace-demo\n",
         encoding="utf-8",
     )
+    bound_thread_id = ""
+    bound_graph_id = ""
+    if entrypoint == "research":
+        graph_service = ResearchGraphService(workspace=workspace, workspace_id="proj")
+        graph = graph_service.create_graph(
+            GraphCreateRequest(question="Which evidence should Writing use?")
+        )
+        bound_graph_id = graph["graph"]["graph_id"]
+        bound_thread = graph_service.thread_store.create_thread(
+            title="Bound Research",
+            entrypoint="research",
+        )
+        graph_service.thread_store.update_thread(
+            bound_thread.thread_id,
+            active_research_graph_id=bound_graph_id,
+        )
+        bound_thread_id = bound_thread.thread_id
 
     created_agents: list[dict] = []
 
@@ -1682,6 +1940,7 @@ def test_specialist_lanes_start_with_staged_skills(
             "Run the lane smoke test.",
             entrypoint=entrypoint,
             proposal_review=False,
+            thread_id=bound_thread_id,
         )
     )
 
@@ -1699,7 +1958,7 @@ def test_specialist_lanes_start_with_staged_skills(
     }[entrypoint]
     assert agent_kwargs["model"] == {"model": f"{expected_entry_model_role}-model"}
     expected_entry_groups = {
-        "research": ("research_specialist",),
+        "research": ("research_specialist", "research_reasoning"),
         "experiment": ("writing_quality",),
         "literature_review": ("litreview_agent", "writing_quality"),
         "writing": ("writing_specialist", "writing_quality"),
@@ -1726,9 +1985,13 @@ def test_specialist_lanes_start_with_staged_skills(
             assert all(getattr(tool, "name", None) != "bash" for tool in subagent.kwargs["tools"])
         if "middleware" in subagent.kwargs:
             middleware_names = {type(item).__name__ for item in (subagent.kwargs.get("middleware") or [])}
-            if subagent.kwargs["name"] == "hypothesis_proposer":
+            if subagent.kwargs["name"] in {
+                "hypothesis_proposer",
+                "evidence_judge",
+                "experiment_evaluator",
+            }:
                 assert {
-                    "_HypothesisProposerToolBoundaryMiddleware",
+                    "_ResearchReasoningToolBoundaryMiddleware",
                     "catmaster_nonfatal_tool_errors",
                 } <= middleware_names
             else:
@@ -1799,6 +2062,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "litreview_agent" in agent_kwargs["system_prompt"]
         assert "hypothesis_proposer" in agent_kwargs["system_prompt"]
         assert "evidence_judge" in agent_kwargs["system_prompt"]
+        assert "experiment_evaluator" in agent_kwargs["system_prompt"]
         assert "do not invent graph hypotheses" in agent_kwargs["system_prompt"]
         assert (
             "record only the hypothesis effects that the evidence actually addresses"
@@ -1824,24 +2088,42 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["peer_review_specialist"]
         proposer = subagents_by_name["hypothesis_proposer"]
         judge = subagents_by_name["evidence_judge"]
+        evaluator = subagents_by_name["experiment_evaluator"]
         assert {tool.name for tool in proposer["tools"]} == {
-            "inspect_research_graph",
+            "acquire_literature_source",
             "query_literature_corpus",
+            "query_research_graph_sql",
             "stage_research_plan",
             "web_search",
         }
+        assert {tool.name for tool in judge["tools"]} == {
+            "acquire_literature_source",
+            "query_literature_corpus",
+            "query_research_graph_sql",
+            "web_search",
+        }
+        assert {tool.name for tool in evaluator["tools"]} == {
+            "acquire_literature_source",
+            "evaluate_research_experiments",
+            "query_literature_corpus",
+            "query_research_graph_sql",
+            "web_search",
+        }
         assert {
-            "_HypothesisProposerToolBoundaryMiddleware",
+            "_ResearchReasoningToolBoundaryMiddleware",
             "catmaster_nonfatal_tool_errors",
         } <= {
             type(item).__name__ for item in proposer["middleware"]
         }
-        assert judge["tools"] == []
+        for reasoning in (proposer, judge, evaluator):
+            _assert_native_skill_groups(reasoning, "research_reasoning")
         assert proposer["model"] == {"model": "hypothesis_proposer-model"}
         assert judge["model"] == {"model": "evidence_judge-model"}
+        assert evaluator["model"] == {"model": "hypothesis_proposer-model"}
         assert "evidence attributes, not a global strength grade" in judge["system_prompt"]
         assert "response_format" not in proposer
         assert "response_format" not in judge
+        assert "response_format" not in evaluator
         assert "does not execute scientific experiments" in proposer["description"]
         assert "does not propose branches or schedule work" in judge["description"]
 
@@ -1860,6 +2142,7 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_memory(experiment_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in experiment_agent_kwargs["subagents"]] == [
             "general-purpose",
+            "evidence_judge",
             "materials_worker",
             "ml_worker",
             "dynamics_worker",
@@ -1872,6 +2155,18 @@ def test_specialist_lanes_start_with_staged_skills(
         writing_agent_kwargs = writing_agents[0]
         assert writing_agent_kwargs["model"] == {"model": "write_director-model"}
         assert {tool.name for tool in writing_agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        graph_query = next(
+            tool
+            for tool in writing_agent_kwargs["tools"]
+            if tool.name == "query_research_graph_sql"
+        )
+        query_result = json.loads(
+            graph_query.invoke(
+                {"sql": "SELECT graph_id FROM research_graphs"}
+            )
+        )
+        assert query_result["graph_id"] == bound_graph_id
+        assert query_result["rows"] == [{"graph_id": bound_graph_id}]
         _assert_native_skill_groups(writing_agent_kwargs, "writing_specialist", "writing_quality")
         _assert_native_memory(writing_agent_kwargs)
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
@@ -2131,6 +2426,7 @@ def test_specialist_lanes_start_with_staged_skills(
     staged_materials = snapshot_root / "skills" / "materials_worker"
     staged_writing = snapshot_root / "skills" / "writing_specialist"
     staged_researcher = snapshot_root / "skills" / "research_specialist"
+    staged_reasoning = snapshot_root / "skills" / "research_reasoning"
     staged_literature = snapshot_root / "skills" / "litreview_agent"
     staged_writing_quality = snapshot_root / "skills" / "writing_quality"
     staged_quantum_chemistry = snapshot_root / "skills" / "orca_xtb_worker"
@@ -2139,6 +2435,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_materials.is_dir()
     assert staged_writing.is_dir()
     assert staged_researcher.is_dir()
+    assert staged_reasoning.is_dir()
     assert staged_literature.is_dir()
     assert staged_writing_quality.is_dir()
     assert staged_quantum_chemistry.is_dir()
@@ -2164,6 +2461,10 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_quantum_chemistry) == _skill_names(repo_root / "skills" / "orca_xtb_worker")
     assert _skill_names(staged_execution) == _skill_names(repo_root / "skills" / "execution")
     assert _skill_names(staged_researcher) == _skill_names(repo_root / "skills" / "research_specialist")
+    assert _skill_names(staged_reasoning) == {
+        "research-evidence-reconciliation",
+        "research-graph-query",
+    }
     assert _skill_names(staged_literature) == _skill_names(repo_root / "skills" / "litreview_agent")
     assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
     assert _skill_names(staged_writing_quality) == {"humanizer"}

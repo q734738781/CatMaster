@@ -29,18 +29,20 @@ Research 特别适合以下工作：
 
 Hypothesis 不会因为一条结果变成不可修改的 "supported" 或 "rejected" 终态。界面根据所有 `supports`、`opposes` 和 `inconclusive` 入边显示 Result 关系概览，而不是给证据打等级。一个 Experiment 可以有多个 Result，所以复现实验会增加一条观察，不会覆盖已有结果。
 
-图与 note 的职责不同。论文精读、长分析、结构、图像、日志、报告和远程 receipt 继续放在 Files、artifact、run 或 note 中。Graph 节点只保存短科学命题，并用受控引用连接这些来源。Research thread 绑定 graph 后，每一轮都会收到有节点数和字符数上限的相关子图，不会把整个 workspace 或全部 graph 原样塞进 prompt。多个 active graph 同时存在时必须显式选择。
+图与 note 的职责不同。论文精读、长分析、结构、图像、日志、报告和远程 receipt 继续放在 Files、artifact、run 或 note 中。Graph 节点保存科学命题，并用受控引用连接这些来源。planning turn 先收到明确标注为 partial 的 focus snippet，其中包含 focus 邻域和完整 runnable frontier。绑定的只读 `query_research_graph_sql` 让当前 graph 的全部节点、关系、引用和引用实际指向的 owner 记录继续可达，不需要把全图复制进 prompt。多个 active graph 同时存在时必须显式选择。
 
-每个 graph 都有完成条件；创建时可以自己填写，也可以留空使用可见默认值，之后仍可编辑或重新打开。用户可以自己创建 seed hypotheses、实验 proposal，以及来自本项目、合作组或文献的观察/结果；创建科学输入时可以同时附 DOI、URL、note、artifact、run、thread 或 message 来源。也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 会读取相关图证据，并可直接检索网络和本地文献 corpus，再提出带 DOI/URL 来源的临时分支。它给 Research 返回普通科学语言的 memo，只有确有可展示方案时才使用绑定的 staging action。规划输入只包含科学 claim、objective、来源和以科学表述引用的关系；宿主从 planning thread 取得 graph/revision，并生成内部临时 ID。`evidence_judge` 也返回简短科学判断，由 Research 只记录该 Result 真正涉及的 Hypothesis 影响。Result 用普通科学语言保留与 claim 有关的属性，例如观察与解释的区别、科学模态、适用条件和 provenance，不接受统一强度等级；`supports`、`opposes`、`inconclusive` edge 描述它与某一 Hypothesis 的关系，而不是 Result 本身的强弱。Planner 会把临时分支与完整 runnable Experiment frontier 一起比较，在证据足以区分下一步时用文字说明推荐，不保存数值路线分数。未选中的分支不写入永久图。WebUI 用半透明节点显示临时分支，manual 模式由用户点击实体化，auto 模式也只实体化获选路线。每次 graph 变化（包括新增 Result）后，auto 会先规划，再最多运行一个真实 Experiment。完成条件满足后停止自动推进。
+每个 graph 都有完成条件；创建时可以自己填写，也可以留空使用可见默认值，之后仍可编辑或重新打开。用户可以自己创建 seed hypotheses、实验 proposal，以及来自本项目、合作组或文献的观察/结果；创建科学输入时可以同时附 DOI、URL、note、artifact、run、thread 或 message 来源。也可以从 Result 节点启动一个绑定的 Research planning thread。`hypothesis_proposer` 会先把该 Result 与已有预测和旧 Result 比较，再判断现有 Hypothesis 是否已经足够，或是否需要一个真正不同、可证伪的新 Hypothesis。它可以查询完整绑定图、检索网络与本地 corpus，并读取或获取已选来源。共享的 `evidence_judge` 独立判断证据真正涉及哪些 Result-to-Hypothesis 关系；空 judgments 是有效结果。自动 Experiment 和 Literature Review 路径会在原子写回 Result 前完成这一步。
+
+Result 用普通科学语言保留观察、派生分析、解释、科学模态、适用条件和 provenance，不接受统一强度等级。`supports`、`opposes`、`inconclusive` edge 描述它与某一 Hypothesis 的关系，不表示 Result 本身强弱。planning 的 staging 只保存临时分支，不会实体化。独立 evaluator 为当前 graph revision 的每个候选 Experiment 给出创新分和保守分；永久 Experiment 不保存这些分数，任何 graph mutation 都会让旧分数失效。manual 模式同时显示两种推荐。auto 模式采用明确的保守推荐；推荐或评价缺失、无效、陈旧或明确为空时保持等待。每轮仍最多运行一个真实 Experiment，完成条件满足后停止自动推进。
 
 Research Graph 不改变执行边界。文献任务仍由 Literature Review 完成，DFT 或实验任务仍经过 Experiment、相应 worker、受管执行和必要的人工审批。一次性问答和简单线性任务可以不创建 graph。
 
 <details>
 <summary>Research 当前可调用的角色、tools 与 skills</summary>
 
-Research 把科学计划形成交给 `hypothesis_proposer`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。Proposer 有网络和本地文献检索，但没有科学实验执行工具；judge 没有搜索、提案或执行工具。
+Research 把科学计划形成交给 `hypothesis_proposer`，把候选评价交给 `experiment_evaluator`，把证据解释交给 `evidence_judge`，把实际执行交给 `experiment_specialist`、`writing_specialist`、`peer_review_specialist` 或 `litreview_agent`。它自己保留文件、任务计划和项目记忆等通用能力，不直接持有 VASP、slab 或远程提交工具。proposer、evaluator 和 judge 只加载窄的 `research_reasoning` skills 及只读图和来源能力，不持有 graph mutation、文件写入、shell、patch 或科学执行工具。
 
-Research 可以列出、创建、查看和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。普通 mutation 需要刚刚查看过的 graph ID 和当前 revision，不接受通用 metadata；内部 `stage_research_plan` 则从受信任的 planning-thread 绑定中取得二者，并把 proposer 的科学语义草案转换为内部事务表示，不要求 agent 传递协议字段。它只发布当前 planning turn 的临时路线，不会把所有搜索分支写成永久节点。持久数据位于 workspace 的 `metadata/workspace.sqlite`。Graph 只保存科学节点、关系和 refs；详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
+Research 可以列出、创建、查询和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。`query_research_graph_sql` 只接受只读 SQL；host 根据受信任 thread 绑定 workspace、graph、revision 和引用实际可达的 owner rows。普通 mutation 需要 graph ID 和当前 revision，并返回准确的 changed entity 与最新 revision。内部 planning actions 从 planning thread 取得绑定；`stage_research_plan` 只写 disposable preview，评价、实体化和 launch 是后续独立转换。持久数据位于 workspace 的 `metadata/workspace.sqlite`，详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
 
 它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
 

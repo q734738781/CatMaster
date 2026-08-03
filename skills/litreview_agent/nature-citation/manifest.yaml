@@ -23,7 +23,7 @@ references:
   on_demand:
     - condition: running nature_citation.py — full flag list, long-article batch strategy, quick-guide tables
       path: references/script-usage.md
-    - condition: translating a manuscript claim into search queries and support grades
+    - condition: translating a manuscript claim into search queries and claim-relation/access-depth records
       path: references/search-strategy.md
     - condition: the default Nature/CNS journal-family boundary and official source notes
       path: references/journal-scope.md

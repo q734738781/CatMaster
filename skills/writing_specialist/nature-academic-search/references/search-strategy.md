@@ -50,5 +50,7 @@ When user requests "recent" or "latest": sort by publication date descending.
 ### Citation-weighted
 When user cares about impact: sort by citation count descending (available via CrossRef or Semantic Scholar).
 
-### Combined scoring
-For systematic reviews: `score = relevance * 0.5 + recency * 0.3 + citations * 0.2`
+### Systematic-review ordering
+Keep relevance, publication date, citation count, and coverage as separate
+sortable columns. Apply the user's inclusion rules and report the chosen order;
+do not combine the columns into a fixed formula.

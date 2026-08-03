@@ -189,7 +189,7 @@ class Candidate:
     authors: list[str]
     abstract: str
     type: str
-    score: float
+    retrieval_score: float
     source_query: str
 
     @property
@@ -255,10 +255,10 @@ class Candidate:
             "authors": self.authors,
             "abstract": self.abstract,
             "type": self.type,
-            "score": self.score,
             "source_query": self.source_query,
             "citation_marker": self.citation_marker,
-            "support_grade": "metadata-only candidate",
+            "claim_relation": "unassessed",
+            "access_depth": "metadata",
             "screening_note": "Inspect abstract/publisher page before citing this paper as support.",
             "enw_record": build_enw_record(self),
             "ris_record": build_ris_record(self),
@@ -617,7 +617,7 @@ def candidate_from_crossref(item: dict[str, Any], source_query: str) -> Candidat
         authors=authors,
         abstract=clean_text(item.get("abstract", "")),
         type=item.get("type", ""),
-        score=float(item.get("score", 0.0) or 0.0),
+        retrieval_score=float(item.get("score", 0.0) or 0.0),
         source_query=source_query,
     )
 
@@ -1072,7 +1072,8 @@ def write_mapping_tsv(mapping: list[dict[str, Any]], path: Path) -> None:
         "search_query",
         "suggested_insert_text",
         "citation_marker",
-        "support_grade",
+        "claim_relation",
+        "access_depth",
         "title",
         "journal",
         "family",
@@ -1080,7 +1081,6 @@ def write_mapping_tsv(mapping: list[dict[str, Any]], path: Path) -> None:
         "doi",
         "doi_url",
         "authors",
-        "score",
         "screening_note",
     ]
     with path.open("w", newline="", encoding="utf-8") as fh:
@@ -1096,7 +1096,8 @@ def write_mapping_tsv(mapping: list[dict[str, Any]], path: Path) -> None:
                         "segment_text": segment.text,
                         "search_query": segment.search_query,
                         "suggested_insert_text": "",
-                        "support_grade": "no candidate",
+                        "claim_relation": "unassessed",
+                        "access_depth": "metadata",
                         "screening_note": "No in-scope candidate found in Crossref metadata search.",
                     }
                 )
@@ -1109,7 +1110,8 @@ def write_mapping_tsv(mapping: list[dict[str, Any]], path: Path) -> None:
                         "search_query": segment.search_query,
                         "suggested_insert_text": entry["suggested_insert_text"],
                         "citation_marker": candidate.citation_marker,
-                        "support_grade": "metadata-only candidate",
+                        "claim_relation": "unassessed",
+                        "access_depth": "metadata",
                         "title": candidate.title,
                         "journal": candidate.journal,
                         "family": candidate.family,
@@ -1117,7 +1119,6 @@ def write_mapping_tsv(mapping: list[dict[str, Any]], path: Path) -> None:
                         "doi": candidate.doi,
                         "doi_url": candidate.doi_url,
                         "authors": "; ".join(candidate.authors[:10]),
-                        "score": candidate.score,
                         "screening_note": "Inspect abstract/publisher page before citing this paper as support.",
                     }
                 )
@@ -1140,7 +1141,7 @@ def write_report(
         f"- Segments: {len(mapping)}",
         f"- Unique references exported: {reference_count}",
         "- Source: Crossref metadata search",
-        "- Support grade: all rows are `metadata-only candidate` until abstract/full text is checked.",
+        "- Access depth: metadata; claim relation: unassessed until abstract/full text is checked.",
         "",
         "## Segment-to-Reference Map",
         "",
@@ -1159,7 +1160,8 @@ def write_report(
                 [
                     f"- {candidate.citation_marker} {candidate.title}. *{candidate.journal}* ({candidate.year}). {candidate.doi_url}",
                     f"  - Family: {candidate.family or 'Unclassified'}",
-                    "  - Support grade: metadata-only candidate",
+                    "  - Access depth: metadata",
+                    "  - Claim relation: unassessed",
                 ]
             )
         lines.append("")
@@ -1237,7 +1239,7 @@ def write_html(
                         <span class="marker">{html.escape(candidate.citation_marker)}</span>
                       </div>
                       <div class="ref-topline">
-                        <span class="grade">metadata-only</span>
+                        <span class="attributes">metadata · unassessed</span>
                         <span>{idx} / {len(refs)}</span>
                       </div>
                       <h3>{html.escape(candidate.title)}</h3>
@@ -1464,7 +1466,7 @@ def write_html(
       color: var(--accent);
       font-weight: 800;
     }}
-    .grade {{
+    .attributes {{
       color: var(--accent-2);
       font-weight: 800;
     }}

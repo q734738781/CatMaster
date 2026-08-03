@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langgraph.types import Command
 
 from catmaster.tools.base import ensure_project_space_layout, system_root
 from catmaster.runtime.observability_store import OBSERVABILITY_DB_NAME, ObservabilityStore
@@ -18,6 +19,7 @@ from catmaster.webui.agent_loop import ThreadAgentLoopService
 from catmaster.webui import server
 from catmaster.webui.artifact_registry import ArtifactRegistry, infer_renderer
 from catmaster.webui.projections import project_event
+from catmaster.webui.projections.tools import project_tool_part
 from catmaster.webui.server import create_app
 from catmaster.webui.thread_events import ThreadEventBroker
 from catmaster.webui.thread_models import (
@@ -29,7 +31,7 @@ from catmaster.webui.thread_models import (
 )
 from catmaster.webui.thread_store import ThreadStore, new_id
 from catmaster.specialists.runtime import SpecialistUsageCallbackHandler
-from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text
+from catmaster.specialists.streaming_runner import CatMasterStreamTranslator, StreamingSpecialistRunner, _extract_sidecar_artifact_paths, _extract_workspace_paths_from_text, _json_safe
 
 
 def _register_artifact_process(
@@ -1892,6 +1894,121 @@ def test_message_part_pages_keep_ref_and_todos_use_full_current_turn(
         if cursor:
             assert page["full_content_ref"] == ref
     assert shown_counts == [20, 40, 60, 80, 85]
+
+
+def test_completed_message_pushes_only_closed_canonical_todo_plans(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    app = create_app(project_space_root=str(tmp_path), no_login=True)
+    client = TestClient(app)
+    thread_id = client.post(
+        "/api/workspaces/default/threads",
+        json={"title": "Terminal todo"},
+    ).json()["thread"]["thread_id"]
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    store.append_message(
+        ThreadMessage(
+            id="msg_user_terminal_todo",
+            thread_id=thread_id,
+            role="user",
+            status="completed",
+            parts=[MessagePart(id="part_user_terminal_todo", type="text", text="Run it.", status="completed")],
+        )
+    )
+    assistant = ThreadMessage(
+        id="msg_assistant_terminal_todo",
+        thread_id=thread_id,
+        role="assistant",
+        status="completed",
+        parts=[
+            MessagePart(
+                id="part_root_todo",
+                type="tool-call",
+                status="completed",
+                meta={
+                    "tool": "write_todos",
+                    "agent_name": "litreview_agent",
+                    "input": {"todos": [{"content": "Write synthesis", "status": "completed"}]},
+                },
+            ),
+            MessagePart(
+                id="part_child_todo",
+                type="tool-call",
+                status="completed",
+                meta={
+                    "tool": "write_todos",
+                    "agent_name": "general-purpose",
+                    "input": {
+                        "todos": [
+                            {"content": "Collect papers", "status": "completed"},
+                            {"content": "Return handoff", "status": "in_progress"},
+                        ]
+                    },
+                },
+            ),
+        ],
+    )
+    store.append_message(assistant)
+
+    message_page = client.get(f"/api/threads/{thread_id}/messages").json()
+    assert [part["id"] for part in message_page["todo_parts"]] == ["part_root_todo"]
+
+    event = ThreadEventBroker(workspace=workspace).emit(
+        thread_id,
+        "message.completed",
+        message_id=assistant.id,
+        status="completed",
+        data={"message": assistant.model_dump(mode="json")},
+    )
+    projected = project_event(event, workspace=workspace)
+    assert [part.id for part in projected.data.todo_parts] == ["part_root_todo"]
+
+
+def test_task_result_projects_subagent_markdown_instead_of_command_repr(
+    tmp_path: Path,
+) -> None:
+    content = """## Bounded evidence handoff
+
+### Judgment
+
+The matched evidence favors a coupled Pt-O-Ce mechanism over either isolated variable.
+
+### Evidence constraints
+
+The isotope and operando measurements were not performed in one synchronized experiment.
+"""
+    command = Command(
+        update={
+            "files": {},
+            "messages": [ToolMessage(content=content, tool_call_id="call_task_result")],
+        }
+    )
+    structured = _json_safe(command)
+    assert structured["type"] == "Command"
+    assert structured["update"]["messages"][0]["content"] == content
+
+    for output in (structured, str(command)):
+        projected = project_tool_part(
+            {
+                "id": "part_task_result",
+                "type": "tool-call",
+                "status": "completed",
+                "meta": {
+                    "tool": "task",
+                    "input": {"subagent_type": "general-purpose"},
+                    "output": output,
+                },
+            },
+            workspace=tmp_path,
+            thread_id="thread_task_result",
+            message_id="msg_task_result",
+        )
+        assert projected.title == "Research assistant · Bounded evidence handoff"
+        assert projected.summary.startswith("The matched evidence favors")
+        assert [item.label for item in projected.items] == ["Judgment", "Evidence constraints"]
+        assert "Command(update=" not in projected.summary
+        assert projected.fields == []
 
 
 def test_stream_translator_registers_only_existing_files_from_tool_artifacts(tmp_path: Path) -> None:

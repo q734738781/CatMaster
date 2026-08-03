@@ -328,7 +328,7 @@ def test_graph_plan_response_serializes_its_internal_thread(
     assert response.json()["thread"]["thread_id"] == "thread_rg_serialization"
 
 
-def test_graph_context_api_is_human_readable_and_bounded(tmp_path: Path) -> None:
+def test_graph_context_api_returns_an_explicit_partial_focus_snippet(tmp_path: Path) -> None:
     ensure_project_space_layout(tmp_path / "default", create=True)
     client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
     graph = client.post(
@@ -337,14 +337,15 @@ def test_graph_context_api_is_human_readable_and_bounded(tmp_path: Path) -> None
     ).json()
     response = client.post(
         f"/api/workspaces/default/research-graphs/{graph['graph']['graph_id']}/context",
-        json={"query": "Claim", "max_nodes": 4, "max_chars": 2_000},
+        json={"focus_node_id": graph["nodes"][0]["node_id"]},
     )
     assert response.status_code == 200
     payload = response.json()
     assert payload["markdown"].startswith("# Active Research Graph")
-    assert len(payload["markdown"]) <= 2_000
+    assert payload["presentation"]["partial"] is True
     assert payload["presentation"]["total_count"] == 1
     assert "Completion criterion:" in payload["markdown"]
+    assert "query_research_graph_sql" in payload["markdown"]
     assert "body_json" not in response.text
 
 
@@ -381,7 +382,7 @@ def test_identical_graph_ids_are_isolated_between_authenticated_users(
     assert bob_view.json()["graph"]["question"] == "Bob private question?"
 
 
-def test_bound_research_and_execution_turns_get_readable_bounded_graph_context(
+def test_bound_research_execution_and_writing_turns_get_graph_context(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "default"
@@ -418,20 +419,23 @@ def test_bound_research_and_execution_turns_get_readable_bounded_graph_context(
     assert injected.endswith("# Current user request\nWhat should we test next?")
     assert not injected.lstrip().startswith("{")
 
-    for entrypoint in ("experiment", "literature_review"):
-        execution_injected = loop._research_graph_turn_content(
+    for entrypoint in ("experiment", "literature_review", "writing"):
+        lane_injected = loop._research_graph_turn_content(
             thread=thread,
-            prompt="Execute the bound proposal and record its outcome.",
-            turn_content="Execute the bound proposal and record its outcome.",
+            prompt="Use the bound scientific context for this task.",
+            turn_content="Use the bound scientific context for this task.",
             entrypoint=entrypoint,
         )
-        assert isinstance(execution_injected, str)
-        assert execution_injected.startswith("# Active Research Graph")
-        assert graph["graph"]["graph_id"] in execution_injected
-        assert graph["nodes"][0]["node_id"] in execution_injected
+        assert isinstance(lane_injected, str)
+        assert lane_injected.startswith("# Active Research Graph")
+        assert graph["graph"]["graph_id"] in lane_injected
+        assert graph["nodes"][0]["node_id"] in lane_injected
 
     unchanged = loop._research_graph_turn_content(
-        thread=thread,
+        thread=SimpleNamespace(
+            active_research_graph_id="",
+            research_focus_node_id="",
+        ),
         prompt="Write this up.",
         turn_content="Write this up.",
         entrypoint="writing",
@@ -439,7 +443,7 @@ def test_bound_research_and_execution_turns_get_readable_bounded_graph_context(
     assert unchanged == "Write this up."
 
 
-def test_internal_planning_turn_sees_the_complete_concise_hypothesis_set(
+def test_internal_planning_turn_uses_the_same_partial_focus_contract(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "default"
@@ -483,4 +487,6 @@ def test_internal_planning_turn_sees_the_complete_concise_hypothesis_set(
     assert isinstance(ordinary, str)
     assert isinstance(planning, str)
     assert "Mechanism 29 controls the response." not in ordinary
-    assert "Mechanism 29 controls the response." in planning
+    assert "Mechanism 29 controls the response." not in planning
+    assert "explicitly partial" in planning
+    assert "query_research_graph_sql" in planning

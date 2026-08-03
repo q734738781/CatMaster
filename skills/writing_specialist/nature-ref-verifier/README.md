@@ -16,7 +16,7 @@ description: >-
 1. **解析输入** — 接受整篇论文的参考文献列表、单条引用、BibTeX 文件或 Zotero item key
 2. **多源并行查询** — 根据可用工具，同时查 Crossref / IEEE Xplore / 网络搜索 / CNKI / Zotero
 3. **字段级对比** — 逐字段比对，按严重程度分为 🔴 必须修正 / 🟡 建议核对 / 🟢 仅供参考
-4. **置信度评估** — 输出 ✅ Verified / ⚠️ Check suggested / ❌ Needs fix / ❓ Unverifiable
+4. **核验状态** — 输出 `verified` / `check_suggested` / `needs_fix` / `unverifiable`
 5. **输出报告** — Markdown 摘要 / BibTeX patch / Zotero 更新指令
 
 ## 设计背景

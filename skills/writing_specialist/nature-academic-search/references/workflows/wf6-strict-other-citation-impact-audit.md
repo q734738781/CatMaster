@@ -14,7 +14,7 @@ discuss the target paper.
 **Uses:**
 - [Search Strategy](../search-strategy.md) — construct title/DOI/cited-by queries.
 - [Dedup Engine](../dedup-engine.md) — deduplicate citing records across sources.
-- [Source Tiers](../source-tiers.md) — report source coverage and confidence limits.
+- [Source Routing](../source-routing.md) — report source coverage and access limits.
 
 ## Definitions
 
@@ -209,7 +209,7 @@ High-profile independent citers
 - Citation context:
 - How they used the target paper:
 - Stance:
-- Confidence:
+- Profile identity status: confirmed / probable / unresolved
 
 All citing-paper classifications
 | Citing paper | Year | Citer(s) flagged | Strict-status label | Citation context available | Citation function | Notes |

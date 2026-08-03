@@ -5,6 +5,7 @@ import { CatMasterAttachmentAdapter } from "./catmasterAttachmentAdapter.js";
 import { catMessagesToAssistant, requestFromAssistantAppend, upsertById } from "./messageAdapters.js";
 import { applyThreadEvent } from "./threadEventReducer.js";
 import { makeApiError } from "./presentation.js";
+import { canonicalTodoPartsFromEvent } from "./todoPanel.js";
 
 export async function apiFetch(url, options = {}) {
   const response = await fetch(url, {
@@ -129,6 +130,10 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
         const payload = JSON.parse(event.data || "{}");
         setEvents((prev) => [...prev.slice(-299), payload]);
         setMessages((prev) => applyThreadEvent(prev, payload));
+        const canonicalTodoParts = canonicalTodoPartsFromEvent(payload);
+        if (canonicalTodoParts !== null) {
+          setTodoParts(canonicalTodoParts);
+        }
         const todoPart = payload.event === "activity.updated" && payload.data?.part?.type === "progress"
           ? payload.data.part
           : null;

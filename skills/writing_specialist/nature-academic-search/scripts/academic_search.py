@@ -11,7 +11,7 @@ self-contained file hitting a public HTTP API with no third-party dependencies.
 
 Source: OpenAlex (https://openalex.org) — free, no API key. OpenAlex indexes
 CrossRef, PubMed and arXiv-deposited works, so one endpoint covers journals,
-preprints and most of the T1/T2/T3 sources for *discovery*. Pair it with
+preprints and broad cross-source coverage for *discovery*. Pair it with
 `format-converter.py` to download/convert the chosen DOIs/PMIDs into
 .ris/.bib/.enw citation files — together they make the search→export workflow
 runnable without MCP.
@@ -297,8 +297,14 @@ def search(query: str | None = None, limit: int = 10, year_from: int | None = No
         }
         results.sort(key=sort_keys[sort], reverse=True)
 
-    # We may have over-fetched a candidate pool; return only the requested number.
-    return results[:limit]
+    # We may have over-fetched a candidate pool. Keep provider relevance as an
+    # internal retrieval signal rather than exposing it as a paper attribute.
+    visible_results = []
+    for result in results[:limit]:
+        visible = dict(result)
+        visible.pop("relevance_score", None)
+        visible_results.append(visible)
+    return visible_results
 
 
 def main():

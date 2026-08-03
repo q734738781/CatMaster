@@ -12,7 +12,7 @@
 ### 1.2 从Zotero提取
 - `zotero_search_items` 搜主题关键词，`qmode=everything`
 - 去重（与vault内容交叉核对）
-- 按相关性分级（A=直接相关/B=部分相关/C=背景）
+- 为每条文献标记 `selected`、`deferred` 或 `excluded`，并记录它对当前综述框架的具体作用或排除理由
 
 ### 1.3 汇总评估
 - 生成文献数量估计，判断是否需要补搜

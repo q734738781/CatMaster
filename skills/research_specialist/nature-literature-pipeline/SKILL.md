@@ -1,113 +1,48 @@
 ---
 name: nature-literature-pipeline
-description: |
-  Complete automated literature discovery pipeline: multi-source search → six-dimension scoring → fine reading → formatted delivery → archival.
-  Combines a configurable engine with daily cron-driven application layer. Works with Feishu, Telegram, or any messaging platform.
-version: 1.0.0
-author: 十五 (JL Lab)
+description: Multi-source literature discovery, reasoned selection, selective reading, digest delivery, and optional archival without paper-quality scoring.
+version: 1.1.0
 license: MIT
-metadata:
-  hermes:
-    tags: [research, literature, pipeline, cron, automation, discovery]
-    related_skills: [nature-academic-search, nature-citation, arxiv, zotero]
 ---
 
 # Nature Literature Pipeline
 
-A complete, production-tested automated literature pipeline. Not just "search for papers" — it's a structured engine that scores, classifies, reads, delivers, and archives research papers daily.
+Use this workflow for recurring or one-off literature discovery that needs a
+traceable candidate pool, selective source reading, and a compact delivery.
 
-## What It Does
+## Workflow
 
-```
-Cron (daily trigger, e.g. 08:30)
-  │
-  ├─ ① SEARCH (30 candidates)
-  │   arXiv / OpenAlex / Crossref / Semantic Scholar (auto-degradation)
-  │
-  ├─ ② COARSE FILTER (30 → 5)
-  │   Six-dimension scoring: topic match × 35 + methodology × 20
-  │   + journal quality × 15 + network relevance × 10
-  │   + applied value × 10 + archival value × 10
-  │
-  ├─ ③ FINE READ (top 5)
-  │   Abstract-level or full-text. Source level tagged:
-  │   Full-text / Abstract only / Metadata only
-  │
-  ├─ ④ DELIVER
-  │   Formatted digest to Feishu/Telegram/etc.
-  │   🏅 rank | title | journal | ⭐ score | 💡 one-liner
-  │   🔬 methods | 📊 key results | 🧭 commentary
-  │
-  └─ ⑤ ARCHIVE
-      DOI/arXiv de-dup → classify → write notes → update index
-```
+1. Search the configured scholarly sources and record the query and source.
+2. Deduplicate by DOI, arXiv ID, OpenAlex ID, then normalized title.
+3. Assign each candidate one status: `selected`, `deferred`, or `excluded`.
+4. Give a short task-specific reason grounded in topic coverage, method or
+   dataset relevance, access depth, duplication, date need, and the user's
+   stated scope. Do not calculate a total or component paper score.
+5. Read only selected sources deeply enough to support the intended digest.
+6. Deliver the digest with stable identifiers and access depth. Archive notes
+   only when requested or configured.
 
-## Quick Start
+`selected` means read or report now. `deferred` means potentially useful but not
+needed for this pass, with the missing condition stated. `excluded` means out of
+scope, duplicate, inaccessible for a full-text-dependent claim, or otherwise
+unsuitable for this task. Venue, citation count, and author identity are search
+or user-preference signals, never evidence quality.
 
-After installing, tell your agent:
+## Safeguards
 
-```
-My research area is [X], keywords: [Y], deliver to [feishu group name], archive to [path]
-```
-
-The agent will configure keywords, delivery target, and archive path automatically.
-
-Then set up a daily cron job:
-
-```
-Set up a daily literature push at 08:30 Beijing time, 30 candidates, top 5 delivered
-```
-
-## Architecture
-
-The skill is organized in two layers:
-
-| Layer | Purpose | Files |
-|-------|---------|-------|
-| **Engine** | Scoring, classification, note templates, gap analysis | `references/scoring-system.md`, `references/gap-analysis.md`, `references/note-template.md` |
-| **Application** | Daily cron pipeline, delivery formatting, archival workflow | `references/push-format.md`, `references/cron-setup.md`, `references/review-compilation-workflow.md` |
-
-## Configuration
-
-All domain-specific content is configurable:
-
-- **Keywords** — your research keywords (English + Chinese)
-- **Scoring weights** — adjust the six dimensions for your field
-- **Classification rules** — define your own tier system (A-E or custom)
-- **Delivery target** — Feishu group, Telegram channel, email, etc.
-- **Archive path** — local vault/wiki directory
-
-A config template is provided in `templates/literature-push-template.md`.
-
-## Built-in Safeguards
-
-- **Score validation**: Each dimension capped, total recalculated — no 11/10 allowed
-- **Triple de-duplication**: DOI / arXiv ID / OpenAlex ID
-- **Graceful degradation**: Semantic Scholar down → auto-switch to OpenAlex + Crossref + arXiv
-- **Read-only archive**: Daily pipeline writes to `raw/` literature directory only; never modifies wiki/knowledge base without user approval
-
-## Related Skills
-
-- `nature-academic-search` — ad-hoc literature search (complementary; this skill adds structured daily automation)
-- `nature-citation` — CNS citation export (for importing pipeline discoveries into manuscripts)
-- `zotero` — library management (for long-term organization of pipeline outputs)
-- `arxiv` — arXiv API (used as a search source)
+- Preserve every candidate's status and reason so selection is auditable.
+- Record access depth separately as metadata, abstract, full text, or
+  supplementary/source data.
+- Do not infer methods, novelty, or findings from metadata.
+- Use exact DOI/arXiv/OpenAlex identifiers for deduplication and stable links.
+- If fewer papers are worth selecting, deliver fewer.
+- Do not modify a curated wiki or knowledge base without authorization.
 
 ## References
 
-| Reference | Purpose |
-|-----------|---------|
-| `references/scoring-system.md` | Six-dimension scoring rubric with weights, caps, and evaluation logic |
-| `references/gap-analysis.md` | Methodology for identifying research gaps through systematic literature survey |
-| `references/note-template.md` | Standardized literature note format with YAML frontmatter |
-| `references/push-format.md` | Daily digest message template with field guidelines and example |
-| `references/cron-setup.md` | Cron job creation, verification, and manual fallback procedures |
-| `references/review-compilation-workflow.md` | End-to-end workflow for concentrated literature review writing |
-
-## Pitfalls
-
-1. **Keyword drift**: Review keywords monthly — research directions evolve
-2. **Score inflation**: Subagents may inflate scores; always validate arithmetic
-3. **Duplicate creep**: Classic papers will reappear; maintain a dedup index
-4. **Wiki safety**: Pipeline writes to `raw/` only; wiki integration is manual
-5. **Cron locality**: Hermes cron is local, not cloud — machine must be running
+- `references/selection-policy.md`
+- `references/push-format.md`
+- `references/note-template.md`
+- `references/gap-analysis.md`
+- `references/cron-setup.md`
+- `references/review-compilation-workflow.md`

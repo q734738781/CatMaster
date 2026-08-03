@@ -51,7 +51,7 @@ Apply the loaded fragments in this priority order:
 
 Build the Terminology Ledger as you translate (`../_shared/core/terminology-ledger.md`); it becomes the `paper.md` recurring-term table and the `source_map.json` glossary.
 
-If constraints prevent full processing, still create a draft reader and label missing pages, figures, or low-confidence crops in `translation_notes.md`. Do not switch to summary mode.
+If constraints prevent full processing, still create a draft reader and label missing pages, figures, or crops with low `extraction_confidence` in `translation_notes.md`. Do not switch to summary mode.
 
 ### 5. Reach for references only when needed
 

@@ -259,15 +259,16 @@ _ORCA_XTB_WORKER_TOOL_ALLOWLIST: set[str] = {
 }
 _WRITING_TOOL_ALLOWLIST = {
     "generate_nanobanana_figure",
+    "query_research_graph_sql",
     "review_pdf_manuscript",
 }
 _RESEARCH_TOOL_ALLOWLIST: set[str] = {
     "add_research_experiment",
     "add_research_hypothesis",
     "create_research_graph",
-    "inspect_research_graph",
     "list_research_graphs",
     "mark_research_experiment_failed",
+    "query_research_graph_sql",
     "record_research_result",
     "set_research_graph_completion",
     "set_research_result_judgment",
@@ -303,8 +304,10 @@ _DEEPAGENT_BUILTIN_TOOL_NAMES = {
     "grep",
     "execute",
 }
-_HYPOTHESIS_PROPOSER_FORBIDDEN_TOOL_NAMES = {
-    *_DEEPAGENT_BUILTIN_TOOL_NAMES,
+_RESEARCH_REASONING_FORBIDDEN_TOOL_NAMES = {
+    "write_file",
+    "edit_file",
+    "execute",
     "apply_patch",
 }
 _THREAD_HITL_INTERRUPT_ON = {
@@ -339,6 +342,7 @@ _SKILL_GROUPS = (
     "ml_worker",
     "orca_xtb_worker",
     "research_specialist",
+    "research_reasoning",
     "litreview_agent",
     "execution",
     "writing_specialist",
@@ -360,15 +364,15 @@ def _agent_tool_name(tool: Any) -> str:
     ).strip()
 
 
-class _HypothesisProposerToolBoundaryMiddleware(AgentMiddleware):
-    """Keep the hypothesis proposer on graph inspection and evidence search."""
+class _ResearchReasoningToolBoundaryMiddleware(AgentMiddleware):
+    """Keep scientific reasoning delegates read-only without hiding inspection."""
 
     @staticmethod
     def _bounded_request(request: Any) -> Any:
         tools = [
             tool
             for tool in request.tools
-            if _agent_tool_name(tool) not in _HYPOTHESIS_PROPOSER_FORBIDDEN_TOOL_NAMES
+            if _agent_tool_name(tool) not in _RESEARCH_REASONING_FORBIDDEN_TOOL_NAMES
         ]
         return request.override(tools=tools)
 
@@ -388,7 +392,7 @@ class _HypothesisProposerToolBoundaryMiddleware(AgentMiddleware):
         return ToolMessage(
             content=(
                 "This role can inspect the Research Graph and search evidence, "
-                "but cannot use general-purpose filesystem or execution tools."
+                "but cannot write files, execute commands, or apply patches."
             ),
             tool_call_id=str(tool_call.get("id") or ""),
             name=str(tool_call.get("name") or ""),
@@ -398,7 +402,7 @@ class _HypothesisProposerToolBoundaryMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
         if (
             str(request.tool_call.get("name") or "")
-            in _HYPOTHESIS_PROPOSER_FORBIDDEN_TOOL_NAMES
+            in _RESEARCH_REASONING_FORBIDDEN_TOOL_NAMES
         ):
             return self._blocked_tool_message(request)
         return handler(request)
@@ -410,7 +414,7 @@ class _HypothesisProposerToolBoundaryMiddleware(AgentMiddleware):
     ) -> Any:
         if (
             str(request.tool_call.get("name") or "")
-            in _HYPOTHESIS_PROPOSER_FORBIDDEN_TOOL_NAMES
+            in _RESEARCH_REASONING_FORBIDDEN_TOOL_NAMES
         ):
             return self._blocked_tool_message(request)
         return await handler(request)
@@ -1134,7 +1138,11 @@ class SpecialistRunner:
                 thread_id=tool_thread_id or thread_id,
             )
         else:
-            subagents = self._entry_subagents(entrypoint, runtime=runtime)
+            subagents = self._entry_subagents(
+                entrypoint,
+                runtime=runtime,
+                thread_id=tool_thread_id or thread_id,
+            )
         kwargs["subagents"] = self._subagents_with_general_purpose(
             subagents=subagents,
             skills=entry_skills,
@@ -1146,11 +1154,15 @@ class SpecialistRunner:
         entrypoint: SpecialistEntrypoint,
         *,
         runtime: dict[str, Any],
+        thread_id: str = "",
     ) -> list[Any]:
         if entrypoint == "research":
             return self._research_subagents(runtime=runtime)
         if entrypoint == "experiment":
-            return self._experiment_subagents(runtime=runtime)
+            return self._experiment_subagents(
+                runtime=runtime,
+                thread_id=thread_id,
+            )
         if entrypoint == "writing":
             return self._writing_subagents(runtime=runtime)
         if entrypoint == "peer_review":
@@ -1206,6 +1218,7 @@ class SpecialistRunner:
                 description="Turn existing evidence into reports, outlines, sections, or manuscript-ready outputs.",
                 entrypoint="writing",
                 runtime=runtime,
+                tool_thread_id=thread_id,
             ),
             self._compiled_specialist_subagent(
                 name="peer_review_specialist",
@@ -1223,30 +1236,7 @@ class SpecialistRunner:
         thread_id: str = "",
     ) -> list[Any]:
         SubAgent = self._load_subagent()
-        proposer_tools = [
-            *self._named_tools(
-                {
-                    "inspect_research_graph",
-                    "query_literature_corpus",
-                    "stage_research_plan",
-                },
-                audience="hypothesis_proposer",
-                thread_id=thread_id,
-                entrypoint="research",
-            ),
-        ]
-        proposer_tool_names = {
-            _agent_tool_name(tool)
-            for tool in proposer_tools
-        }
-        for tool in self._search_tools_for_role(
-            "hypothesis_proposer",
-            audience="hypothesis_proposer",
-        ):
-            name = _agent_tool_name(tool)
-            if name and name not in proposer_tool_names:
-                proposer_tools.append(tool)
-                proposer_tool_names.add(name)
+        reasoning_skills = self._skill_roots_for_group("research_reasoning")
         return [
             SubAgent(
                 name="hypothesis_proposer",
@@ -1257,27 +1247,101 @@ class SpecialistRunner:
                     "judge completed results."
                 ),
                 system_prompt=self._hypothesis_proposer_prompt(),
-                tools=proposer_tools,
-                middleware=[
-                    *self._build_default_middleware(),
-                    _HypothesisProposerToolBoundaryMiddleware(),
-                ],
+                tools=self._research_reasoning_tools(
+                    role="hypothesis_proposer",
+                    thread_id=thread_id,
+                    extra_names={"stage_research_plan"},
+                ),
+                middleware=self._research_reasoning_middleware(),
+                skills=reasoning_skills,
                 model=self._build_deepagent_chat_model("hypothesis_proposer"),
             ),
-            SubAgent(
-                name="evidence_judge",
-                description=(
-                    "Independently judge one completed verification against its target "
-                    "hypotheses and decision rule. It does not propose branches or schedule work."
-                ),
-                system_prompt=self._evidence_judge_prompt(),
-                tools=[],
-                model=self._build_deepagent_chat_model("evidence_judge"),
-            ),
+            self._evidence_judge_subagent(thread_id=thread_id),
+            self._experiment_evaluator_subagent(thread_id=thread_id),
         ]
 
-    def _experiment_subagents(self, *, runtime: dict[str, Any]) -> list[Any]:
+    def _research_reasoning_tools(
+        self,
+        *,
+        role: str,
+        thread_id: str,
+        extra_names: set[str] | None = None,
+    ) -> list[Any]:
+        names = {
+            "acquire_literature_source",
+            "query_literature_corpus",
+            "query_research_graph_sql",
+            *(extra_names or set()),
+        }
+        tools = self._named_tools(
+            names,
+            audience=role,
+            thread_id=thread_id,
+            entrypoint="research",
+        )
+        existing = {_agent_tool_name(tool) for tool in tools}
+        for tool in self._search_tools_for_role(role, audience=role):
+            name = _agent_tool_name(tool)
+            if name and name not in existing:
+                tools.append(tool)
+                existing.add(name)
+        return tools
+
+    def _research_reasoning_middleware(self) -> list[Any]:
         return [
+            DocumentAccessMiddleware(
+                files_root=workspace_root(self.run_context.workspace)
+            ),
+            *self._build_default_middleware(),
+            _ResearchReasoningToolBoundaryMiddleware(),
+        ]
+
+    def _evidence_judge_subagent(self, *, thread_id: str = "") -> Any:
+        SubAgent = self._load_subagent()
+        return SubAgent(
+            name="evidence_judge",
+            description=(
+                "Independently judge one completed verification against its target "
+                "hypotheses and decision rule. It does not propose branches or schedule work."
+            ),
+            system_prompt=self._evidence_judge_prompt(),
+            tools=self._research_reasoning_tools(
+                role="evidence_judge",
+                thread_id=thread_id,
+            ),
+            middleware=self._research_reasoning_middleware(),
+            skills=self._skill_roots_for_group("research_reasoning"),
+            model=self._build_deepagent_chat_model("evidence_judge"),
+        )
+
+    def _experiment_evaluator_subagent(self, *, thread_id: str = "") -> Any:
+        SubAgent = self._load_subagent()
+        return SubAgent(
+            name="experiment_evaluator",
+            description=(
+                "Compare every current planning candidate Experiment under "
+                "innovation and conservative policies, then publish the flat "
+                "current-revision evaluation."
+            ),
+            system_prompt=self._experiment_evaluator_prompt(),
+            tools=self._research_reasoning_tools(
+                role="hypothesis_proposer",
+                thread_id=thread_id,
+                extra_names={"evaluate_research_experiments"},
+            ),
+            middleware=self._research_reasoning_middleware(),
+            skills=self._skill_roots_for_group("research_reasoning"),
+            model=self._build_deepagent_chat_model("hypothesis_proposer"),
+        )
+
+    def _experiment_subagents(
+        self,
+        *,
+        runtime: dict[str, Any],
+        thread_id: str = "",
+    ) -> list[Any]:
+        return [
+            self._evidence_judge_subagent(thread_id=thread_id),
             self._compiled_worker_subagent(
                 name="materials_worker",
                 description="Handle bounded materials modeling and managed MLFF inference workflows such as single points, relaxations, and pathways, and return concise results with artifact paths.",
@@ -1407,12 +1471,17 @@ class SpecialistRunner:
         description: str,
         entrypoint: SpecialistEntrypoint,
         runtime: dict[str, Any],
+        tool_thread_id: str = "",
     ) -> Any:
         CompiledSubAgent = self._load_compiled_subagent()
         return CompiledSubAgent(
             name=name,
             description=description,
-            runnable=self._build_nested_specialist_agent(entrypoint=entrypoint, runtime=runtime),
+            runnable=self._build_nested_specialist_agent(
+                entrypoint=entrypoint,
+                runtime=runtime,
+                tool_thread_id=tool_thread_id,
+            ),
         )
 
     def _compiled_worker_subagent(
@@ -1447,12 +1516,16 @@ class SpecialistRunner:
         *,
         entrypoint: SpecialistEntrypoint,
         runtime: dict[str, Any],
+        tool_thread_id: str = "",
     ) -> Any:
         create_deep_agent = self._load_create_deep_agent()
         entry_skills = self._entry_skill_roots(entrypoint)
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]),
-            "tools": self._specialist_tools(entrypoint),
+            "tools": self._specialist_tools(
+                entrypoint,
+                thread_id=tool_thread_id,
+            ),
             "system_prompt": self._system_prompt(entrypoint),
             "middleware": self._catmaster_agent_middleware(
                 runtime=runtime,
@@ -1530,6 +1603,11 @@ class SpecialistRunner:
             model_role="literature_deep_research",
             audience="litreview_agent",
         )
+        bound_reasoning = (
+            [self._evidence_judge_subagent(thread_id=thread_id)]
+            if self._thread_binds_research_experiment(thread_id)
+            else []
+        )
         kwargs: dict[str, Any] = {
             "model": self._build_deepagent_chat_model("literature_deep_research"),
             "tools": tools,
@@ -1545,7 +1623,7 @@ class SpecialistRunner:
             "memory": self._memory_sources(),
             "skills": litreview_skills,
             "subagents": self._subagents_with_general_purpose(
-                subagents=[],
+                subagents=bound_reasoning,
                 skills=litreview_skills,
             ),
         }
@@ -2033,7 +2111,10 @@ class SpecialistRunner:
 
     def _entry_skill_roots(self, entrypoint: SpecialistEntrypoint) -> list[str]:
         if entrypoint == "research":
-            return self._skill_roots_for_group("research_specialist")
+            return self._skill_roots_for_groups(
+                "research_specialist",
+                "research_reasoning",
+            )
         if entrypoint == "experiment":
             return self._skill_roots_for_group("writing_quality")
         if entrypoint == "literature_review":
@@ -2196,7 +2277,7 @@ class SpecialistRunner:
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
-                "You may delegate only to `hypothesis_proposer`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
+                "You may delegate only to `hypothesis_proposer`, `experiment_evaluator`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
                 "For a bound Research Graph, delegate model-generated hypothesis formation and evidence-driven revisions to `hypothesis_proposer`; do not invent graph hypotheses or decision rules in the coordinator. The proposer reads graph and literature evidence, may publish a temporary technology-tree preview through its bound planning tool, and returns a concise scientific memo in ordinary language. Preserve a user's explicit hypothesis or observation directly rather than asking the proposer to rewrite it.\n"
                 "After a graph experiment succeeds, delegate its scientific result to `evidence_judge` with the relevant hypotheses and decision rule. Read its scientific assessment, then record only the hypothesis effects that the evidence actually addresses; do not require a judgment for every graph branch.\n"
                 "Delegate literature-review work that needs source discovery, evidence synthesis, selective source reading, or citation finalization to `litreview_agent`.\n"
@@ -2595,9 +2676,9 @@ class SpecialistRunner:
             "them through the bound planning write action, then return the scientific "
             "reasoning in ordinary language. The action already targets the correct graph "
             "and revision; do not relay that protocol context through the memo. "
-            "A recommendation needs a scientific "
-            "reason, not a numeric utility. Importance, decision value, and compute cost "
-            "are optional coarse bands; leave them empty when unknown. A temporary "
+            "A recommendation needs a scientific reason. Hypothesis importance and "
+            "Experiment compute cost are optional coarse user/execution constraints; "
+            "leave them empty when unknown. A temporary "
             "experiment may remain a draft with only an objective. In automatic mode, "
             "recommend an experiment for execution only when its selected route has a "
             "usable plan and decision rule. "
@@ -2605,6 +2686,25 @@ class SpecialistRunner:
             "in place of evidence_judge, write files, or discuss scheduler metadata. If an "
             "optional search or indexing step fails, retain and report the evidence already "
             "obtained instead of discarding the whole planning pass."
+        )
+
+    @staticmethod
+    def _experiment_evaluator_prompt() -> str:
+        return (
+            "You are experiment_evaluator. Inspect the current bound planning preview "
+            "and canonical graph, then evaluate every current candidate Experiment once. "
+            "Innovation score asks whether potential breakthrough or information gain "
+            "justifies risk; low feasibility or low success chance cannot itself increase "
+            "that score. Conservative score asks whether the Experiment can advance the "
+            "current question with interpretable results, acceptable cost, and high practical "
+            "assurance; a small payoff cannot itself increase that score. Use numbers from "
+            "0 to 1 only as within-revision planning comparisons, never as probabilities, "
+            "evidence grades, or durable facts. Publish both score arrays and zero or one "
+            "explicit recommendation for each policy through the bound evaluation action. "
+            "Leave a recommendation empty when no candidate is worth selecting or candidates "
+            "cannot be distinguished. Put the scientific rationale in the evaluation memo. "
+            "Do not propose branches, mutate graph nodes, run experiments, write files, or "
+            "discuss scheduler internals."
         )
 
     @staticmethod

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
+import json
 import mimetypes
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -29,7 +33,6 @@ MAX_PDF_PAGE_STREAM_BYTES = 32 * 1024 * 1024
 MAX_OFFICE_ARCHIVE_MEMBERS = 10_000
 MAX_OFFICE_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_OFFICE_MEMBER_BYTES = 128 * 1024 * 1024
-MAX_XLSX_ROWS_PER_READ = 20_000
 MAX_XLSX_COLUMNS_PER_READ = 256
 
 
@@ -52,6 +55,13 @@ class ReadDocumentInput(BaseModel):
             "Leave empty for DOCX and XLSX."
         ),
     )
+    cursor: str = Field(
+        default="",
+        description=(
+            "For DOCX or XLSX only, the opaque continuation cursor returned by "
+            "the preceding read. Leave empty for the first unit and for PDF/PPTX."
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +75,13 @@ class PagedTextExtraction(BoundedTextExtraction):
     total_units: int
     start_unit: int
     end_unit: int
+
+
+@dataclass(frozen=True, slots=True)
+class CursorTextExtraction(BoundedTextExtraction):
+    next_cursor: str
+    start_unit_path: str
+    end_unit_path: str
 
 
 class DocumentReadError(ValueError):
@@ -206,17 +223,126 @@ def extract_pdf_text(
     )
 
 
-def _docx_table_text(table: Any) -> Iterator[str]:
-    for row in table.rows:
+def _docx_table_text(table: Any) -> Iterator[tuple[int, str]]:
+    for row_index, row in enumerate(table.rows, start=1):
         cells = [" ".join(str(cell.text or "").splitlines()).strip() for cell in row.cells]
         line = "\t".join(cells).rstrip()
         if line.strip():
-            yield line
+            yield row_index, line
 
 
-def extract_docx_text(path: Path, *, max_chars: int = MAX_DOCUMENT_TEXT_CHARS) -> BoundedTextExtraction:
-    """Extract paragraphs and tables from a DOCX in body order."""
+def _document_cursor(
+    *,
+    virtual_path: str,
+    kind: str,
+    state: dict[str, int],
+) -> str:
+    payload = {
+        "path_hash": hashlib.sha256(virtual_path.encode("utf-8")).hexdigest(),
+        "kind": kind,
+        "state": {key: int(value) for key, value in state.items()},
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _document_cursor_state(
+    *,
+    cursor: str,
+    virtual_path: str,
+    kind: str,
+    defaults: dict[str, int],
+) -> dict[str, int]:
+    value = str(cursor or "").strip()
+    if not value:
+        return dict(defaults)
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        if payload.get("kind") != kind:
+            raise ValueError
+        if payload.get("path_hash") != hashlib.sha256(
+            virtual_path.encode("utf-8")
+        ).hexdigest():
+            raise ValueError
+        raw_state = payload.get("state")
+        if not isinstance(raw_state, dict):
+            raise ValueError
+        state = {key: int(raw_state[key]) for key in defaults}
+        if any(value < 0 for value in state.values()):
+            raise ValueError
+        return state
+    except (
+        binascii.Error,
+        KeyError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise DocumentReadError(
+            "Document continuation cursor is invalid for this file and format."
+        ) from exc
+
+
+def _collect_cursor_units(
+    units: Iterator[tuple[dict[str, int], str, str]],
+    *,
+    virtual_path: str,
+    kind: str,
+    start_char: int,
+    max_chars: int,
+) -> CursorTextExtraction:
+    collector = _TextCollector(max(1, int(max_chars)))
+    first_path = ""
+    last_path = ""
+    next_cursor = ""
+    first = True
+    for state, unit_path, unit_text in units:
+        char_offset = start_char if first else 0
+        first = False
+        if char_offset > len(unit_text):
+            raise DocumentReadError("Document continuation cursor is outside its unit.")
+        remaining_text = unit_text[char_offset:]
+        if not first_path:
+            first_path = (
+                f"{unit_path}@{char_offset}" if char_offset else unit_path
+            )
+        last_path = unit_path
+        available = max(0, collector.limit - collector.length)
+        if len(remaining_text) > available:
+            if available:
+                collector.add(remaining_text[:available])
+            collector.truncated = True
+            next_cursor = _document_cursor(
+                virtual_path=virtual_path,
+                kind=kind,
+                state={**state, "char": char_offset + available},
+            )
+            break
+        collector.add(remaining_text)
+    return CursorTextExtraction(
+        # Do not strip page-boundary whitespace: the opaque cursor advances by
+        # exact character count, so trimming here would make that content
+        # permanently unreachable when pages are concatenated.
+        text=collector.render(),
+        truncated=bool(next_cursor),
+        next_cursor=next_cursor,
+        start_unit_path=first_path,
+        end_unit_path=last_path,
+    )
+
+
+def extract_docx_text(
+    path: Path,
+    *,
+    cursor: str = "",
+    virtual_path: str = "",
+    max_chars: int = MAX_DOCUMENT_TEXT_CHARS,
+) -> CursorTextExtraction:
+    """Extract a continuable page of DOCX paragraphs and table rows."""
     source = _inspect_document_file(path)
+    cursor_path = virtual_path or str(source)
     _validate_office_archive(source)
     try:
         from docx import Document
@@ -226,28 +352,60 @@ def extract_docx_text(path: Path, *, max_chars: int = MAX_DOCUMENT_TEXT_CHARS) -
     except Exception as exc:
         raise DocumentReadError(f"Could not open DOCX: {exc}") from exc
 
-    collector = _TextCollector(max_chars)
-    table_index = 0
-    for block in document.iter_inner_content():
-        if isinstance(block, Table):
-            table_index += 1
-            if not collector.add(f"--- Table {table_index} ---", separator="\n\n"):
-                break
-            for line in _docx_table_text(block):
-                if not collector.add(line, separator="\n"):
-                    break
-            if collector.truncated:
-                break
-            continue
-        text = str(getattr(block, "text", "") or "").strip()
-        if text and not collector.add(text, separator="\n\n"):
-            break
-    return BoundedTextExtraction(collector.render(), collector.truncated)
+    state = _document_cursor_state(
+        cursor=cursor,
+        virtual_path=cursor_path,
+        kind="docx",
+        defaults={"unit": 0, "char": 0},
+    )
+
+    def units() -> Iterator[tuple[dict[str, int], str, str]]:
+        unit_index = 0
+        paragraph_index = 0
+        table_index = 0
+        for block in document.iter_inner_content():
+            if isinstance(block, Table):
+                table_index += 1
+                for row_index, line in _docx_table_text(block):
+                    if unit_index >= state["unit"]:
+                        yield (
+                            {"unit": unit_index},
+                            f"table:{table_index}/row:{row_index}",
+                            f"--- Table {table_index}, row {row_index} ---\n{line}\n\n",
+                        )
+                    unit_index += 1
+                continue
+            paragraph_index += 1
+            text = str(getattr(block, "text", "") or "").strip()
+            if not text:
+                continue
+            if unit_index >= state["unit"]:
+                yield (
+                    {"unit": unit_index},
+                    f"paragraph:{paragraph_index}",
+                    f"--- Paragraph {paragraph_index} ---\n{text}\n\n",
+                )
+            unit_index += 1
+
+    return _collect_cursor_units(
+        units(),
+        virtual_path=cursor_path,
+        kind="docx",
+        start_char=state["char"],
+        max_chars=max_chars,
+    )
 
 
-def extract_xlsx_text(path: Path, *, max_chars: int = MAX_DOCUMENT_TEXT_CHARS) -> BoundedTextExtraction:
-    """Extract bounded worksheet values from an XLSX without loading the workbook eagerly."""
+def extract_xlsx_text(
+    path: Path,
+    *,
+    cursor: str = "",
+    virtual_path: str = "",
+    max_chars: int = MAX_DOCUMENT_TEXT_CHARS,
+) -> CursorTextExtraction:
+    """Extract a continuable page of XLSX row/column units."""
     source = _inspect_document_file(path)
+    cursor_path = virtual_path or str(source)
     _validate_office_archive(source)
     try:
         from openpyxl import load_workbook
@@ -256,42 +414,69 @@ def extract_xlsx_text(path: Path, *, max_chars: int = MAX_DOCUMENT_TEXT_CHARS) -
     except Exception as exc:
         raise DocumentReadError(f"Could not open XLSX: {exc}") from exc
 
-    collector = _TextCollector(max_chars)
-    rows_seen = 0
-    try:
+    state = _document_cursor_state(
+        cursor=cursor,
+        virtual_path=cursor_path,
+        kind="xlsx",
+        defaults={"unit": 0, "char": 0},
+    )
+
+    def units() -> Iterator[tuple[dict[str, int], str, str]]:
+        unit_index = 0
         for sheet_name in workbook.sheetnames:
             worksheet = workbook[sheet_name]
-            max_row = min(int(worksheet.max_row or 1), MAX_XLSX_ROWS_PER_READ - rows_seen)
-            max_column = min(int(worksheet.max_column or 1), MAX_XLSX_COLUMNS_PER_READ)
-            wrote_header = False
-            if max_row <= 0:
-                collector.truncated = True
-                break
-            for row in worksheet.iter_rows(
-                min_row=1,
-                max_row=max_row,
-                min_col=1,
-                max_col=max_column,
-                values_only=True,
+            max_column = int(worksheet.max_column or 1)
+            for row_index, row in enumerate(
+                worksheet.iter_rows(
+                    min_row=1,
+                    max_row=int(worksheet.max_row or 1),
+                    min_col=1,
+                    max_col=max_column,
+                    values_only=True,
+                ),
+                start=1,
             ):
-                rows_seen += 1
-                row_text = "\t".join(str(cell) if cell is not None else "" for cell in row).rstrip()
-                if not row_text.strip():
-                    continue
-                if not wrote_header:
-                    if not collector.add(f"--- Sheet: {sheet_name} ---", separator="\n\n"):
-                        break
-                    wrote_header = True
-                if not collector.add(row_text, separator="\n"):
-                    break
-            if collector.truncated:
-                break
-            if int(worksheet.max_row or 1) > max_row or int(worksheet.max_column or 1) > max_column:
-                collector.truncated = True
-                break
+                for start_column in range(
+                    1,
+                    max_column + 1,
+                    MAX_XLSX_COLUMNS_PER_READ,
+                ):
+                    end_column = min(
+                        max_column,
+                        start_column + MAX_XLSX_COLUMNS_PER_READ - 1,
+                    )
+                    values = row[start_column - 1 : end_column]
+                    row_text = "\t".join(
+                        str(cell) if cell is not None else "" for cell in values
+                    ).rstrip()
+                    if not row_text.strip():
+                        continue
+                    if unit_index >= state["unit"]:
+                        yield (
+                            {"unit": unit_index},
+                            (
+                                f"sheet:{sheet_name}/row:{row_index}/"
+                                f"columns:{start_column}-{end_column}"
+                            ),
+                            (
+                                f"--- Sheet: {sheet_name} ---\n"
+                                f"Unit: sheet:{sheet_name}/row:{row_index}/"
+                                f"columns:{start_column}-{end_column}\n"
+                                f"{row_text}\n\n"
+                            ),
+                        )
+                    unit_index += 1
+
+    try:
+        return _collect_cursor_units(
+            units(),
+            virtual_path=cursor_path,
+            kind="xlsx",
+            start_char=state["char"],
+            max_chars=max_chars,
+        )
     finally:
         workbook.close()
-    return BoundedTextExtraction(collector.render(), collector.truncated)
 
 
 def _iter_pptx_shape_text(shape: Any) -> Iterator[str]:
@@ -415,11 +600,21 @@ def _paged_document_result(
     return result
 
 
-def read_document(files_root: Path, *, file_path: str, pages: str = "") -> str:
+def read_document(
+    files_root: Path,
+    *,
+    file_path: str,
+    pages: str = "",
+    cursor: str = "",
+) -> str:
     """Return bounded PDF or Office text directly to the caller."""
     try:
         source, virtual_path, suffix = _resolve_virtual_document(files_root, file_path)
         if suffix == ".pdf":
+            if str(cursor or "").strip():
+                raise DocumentReadError(
+                    "cursor applies only to DOCX and XLSX; use pages for PDF."
+                )
             return _paged_document_result(
                 label="PDF",
                 virtual_path=virtual_path,
@@ -427,6 +622,10 @@ def read_document(files_root: Path, *, file_path: str, pages: str = "") -> str:
                 unit_label="page",
             )
         if suffix == ".pptx":
+            if str(cursor or "").strip():
+                raise DocumentReadError(
+                    "cursor applies only to DOCX and XLSX; use pages for PPTX."
+                )
             return _paged_document_result(
                 label="PPTX",
                 virtual_path=virtual_path,
@@ -435,7 +634,19 @@ def read_document(files_root: Path, *, file_path: str, pages: str = "") -> str:
             )
         if str(pages or "").strip():
             raise DocumentReadError("pages applies only to PDF pages and PPTX slides; leave it empty for DOCX or XLSX.")
-        extraction = extract_docx_text(source) if suffix == ".docx" else extract_xlsx_text(source)
+        extraction = (
+            extract_docx_text(
+                source,
+                cursor=cursor,
+                virtual_path=virtual_path,
+            )
+            if suffix == ".docx"
+            else extract_xlsx_text(
+                source,
+                cursor=cursor,
+                virtual_path=virtual_path,
+            )
+        )
     except DocumentReadError as exc:
         return f"Error reading document: {exc}"
     except Exception as exc:
@@ -444,9 +655,16 @@ def read_document(files_root: Path, *, file_path: str, pages: str = "") -> str:
     label = suffix[1:].upper()
     if not extraction.text:
         return f"{label} `{virtual_path}` has no extractable text."
-    result = f"{label} source: `{virtual_path}`\n\n{extraction.text}"
-    if extraction.truncated:
-        result += f"\n\n(Document text truncated at {MAX_DOCUMENT_TEXT_CHARS} characters.)"
+    result = (
+        f"{label} source: `{virtual_path}`\n"
+        f"Units shown: {extraction.start_unit_path or 'none'} -> "
+        f"{extraction.end_unit_path or 'none'}\n\n{extraction.text}"
+    )
+    if extraction.next_cursor:
+        result += (
+            "\n\nThis is a partial document page. Continue with "
+            f"cursor='{extraction.next_cursor}'."
+        )
     return result
 
 
@@ -587,11 +805,30 @@ class DocumentAccessMiddleware(AgentMiddleware):
     def __init__(self, *, files_root: Path) -> None:
         self.files_root = Path(files_root).expanduser().resolve()
 
-        def _read_document(file_path: str, pages: str = "") -> str:
-            return read_document(self.files_root, file_path=file_path, pages=pages)
+        def _read_document(
+            file_path: str,
+            pages: str = "",
+            cursor: str = "",
+        ) -> str:
+            return read_document(
+                self.files_root,
+                file_path=file_path,
+                pages=pages,
+                cursor=cursor,
+            )
 
-        async def _aread_document(file_path: str, pages: str = "") -> str:
-            return await asyncio.to_thread(read_document, self.files_root, file_path=file_path, pages=pages)
+        async def _aread_document(
+            file_path: str,
+            pages: str = "",
+            cursor: str = "",
+        ) -> str:
+            return await asyncio.to_thread(
+                read_document,
+                self.files_root,
+                file_path=file_path,
+                pages=pages,
+                cursor=cursor,
+            )
 
         self.tools = [
             StructuredTool.from_function(
@@ -600,9 +837,9 @@ class DocumentAccessMiddleware(AgentMiddleware):
                 name="read_document",
                 description=(
                     "Read bounded text directly from a workspace PDF, DOCX, XLSX, or PPTX. The result contains "
-                    "parsed text and tables, never document bytes or a path to re-read. Use pages for PDF pages "
-                    "or PPTX slides; leave pages empty for DOCX/XLSX. For visual-only PDF content, render selected "
-                    "pages to images."
+                    "parsed text and tables, never document bytes. Use pages for PDF pages or PPTX slides. "
+                    "For DOCX/XLSX, leave pages empty and pass the returned cursor to continue through unit paths. "
+                    "For visual-only PDF content, render selected pages to images."
                 ),
                 args_schema=ReadDocumentInput,
                 infer_schema=False,

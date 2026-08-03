@@ -61,12 +61,49 @@ references describe the current system.
   scientific modality, epistemic stage, access depth, claim relationship,
   condition fit, and independence/provenance. The active skill no longer ranks
   retrieval APIs or whole papers with source or evidence strength tiers.
-- LATS literature triage retains a six-component 0-100 selection score for
-  reading and archival priority. Its rubric is now consistent across the
-  pipeline and push template, preserves component rationales and access depth,
-  and explicitly does not represent evidence strength or claim confidence.
+- Literature pipeline triage now records `selected`, `deferred`, or `excluded`
+  with reasons instead of assigning a six-component paper score. Citation
+  support uses separate claim-relationship and access-depth attributes,
+  reference checking reports `verification_status`, and reader source maps use
+  `extraction_confidence` only for OCR and layout extraction quality.
 
 ### Research Graph
+
+- Writing threads attached to a Research Graph now receive its partial focus
+  context and can query the complete bound graph through the existing read-only
+  SQL surface. The Writing coordinator uses Result relationships and refs as a
+  navigation index before opening original evidence; writing workers receive a
+  bounded author packet and no graph mutation tools. Research-delegated Writing
+  inherits the parent thread's trusted graph binding.
+- Research planning now starts from a partial focus snippet and exposes the
+  complete bound graph through one read-only SQLite query tool whose visible
+  input is only `sql`. The logical views preserve graph JSON and typed
+  relationships while restricting artifact and message rows to references from
+  the bound graph. Standard SQL pagination, recursive CTEs, window functions,
+  and JSON1 remain available without host-side row truncation.
+- Planning staging is now a pure preview. A separate evaluator assigns temporary
+  innovation and conservative scores to every candidate Experiment for the
+  current graph revision. Manual mode shows both recommendations; automatic
+  mode uses the conservative recommendation and waits on missing, invalid,
+  stale, or empty evaluation instead of selecting the first runnable node. The
+  preview carries one proposer target and one normalized evaluation row set
+  rather than duplicating route and score fields across provisional nodes.
+- Automatic Experiment and Literature Review Result writeback now uses the
+  shared evidence judge before the atomic graph mutation. Only relationships
+  the Result actually addresses are recorded, and an empty judgment set is
+  valid. A Result-focused planning turn may reuse existing Hypotheses or create
+  a distinct new Hypothesis and its discriminating Experiment.
+- Research Graph scientific text and semantic collections no longer have
+  capacity-based schema limits. Corpus locators and DOCX/XLSX document reading
+  now provide continuation cursors, and graph mutations return the exact changed
+  entity and revision instead of an automatically truncated context projection.
+  Corpus pages expose only query context, source locators, total count, and the
+  next cursor; planning drafts leave blocking reasons to the dedicated failure
+  transition rather than carrying them as candidate-science fields.
+- Existing workspaces remove the retired Experiment `expected_value` field
+  during schema migration and invalidate disposable planning previews so that
+  the new revision is evaluated again rather than translating an old route
+  recommendation.
 
 - Research Graph Results and `evidence_judge` now preserve observation,
   derived analysis, interpretation, modality, conditions, and provenance as
@@ -95,6 +132,13 @@ references describe the current system.
   canonical message, including final Markdown and completed reasoning state.
   Long message-part pages retain their continuation reference, and the Todo
   inspector reads a full current-turn projection instead of the visible page.
+- The completed-message push now replaces the live Todo inspector with its
+  terminal canonical projection. Unfinished child-agent scratch plans no
+  longer remain active after the turn has ended, even when the agent did not
+  make a final `write_todos` call.
+- Completed specialist-task cards now present the returned scientific Markdown
+  as a content title, central conclusion, and short section outline. The
+  LangGraph `Command` wrapper is retained only in the detailed record.
 - The ordinary Files projection now hides DeepAgents large-result offloads and
   known transient literature extracts while preserving them in workspace
   storage for diagnostics.

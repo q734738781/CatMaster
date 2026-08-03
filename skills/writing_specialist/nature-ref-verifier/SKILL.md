@@ -81,16 +81,16 @@ description: >-
 | 期刊名缩写 vs 全称 | "IEEE Trans. AES" vs "IEEE Transactions on Aerospace and Electronic Systems" |
 | 标点/连接词差异 | "and" vs "&" 等 |
 
-### Step 4: 置信度评估
+### Step 4: 核验状态
 
-每条文献最终给出一个综合置信度：
+每条文献最终给出一个 `verification_status`。状态总结字段核验结果，不表示科学证据置信度：
 
-| 等级 | 含义 |
+| verification_status | 含义 |
 |------|------|
-| ✅ **Verified** | 多源一致，无需修改 |
-| ⚠️ **Check suggested** | 存在 🟡 级差异，需人工判断 |
-| ❌ **Needs fix** | 存在 🔴 级差异，必须更正 |
-| ❓ **Unverifiable** | 所有来源均无法查到（如内部报告、老旧学位论文）|
+| ✅ `verified` | 多源一致，无需修改 |
+| ⚠️ `check_suggested` | 存在 🟡 级差异，需人工判断 |
+| ❌ `needs_fix` | 存在 🔴 级差异，必须更正 |
+| ❓ `unverifiable` | 所有来源均无法查到（如内部报告、老旧学位论文）|
 
 ### Step 5: 输出报告
 
@@ -152,7 +152,8 @@ description: >-
                      │
                      ▼
             ┌────────────────┐
-            │  置信度评估     │
+            │ verification   │
+            │    status      │
             │ ✅ ⚠️ ❌ ❓    │
             └────────────────┘
 ```

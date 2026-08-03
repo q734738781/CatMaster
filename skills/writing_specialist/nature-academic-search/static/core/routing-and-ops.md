@@ -2,18 +2,20 @@
 
 ## Source routing
 
-See [Source Tiers & Reliability](../../references/source-tiers.md) for the complete reliability classification and fallback routing rules. The T1→T2→T3 fallback chain is the standard execution order across all workflows.
+See [Source Routing](../../references/source-routing.md) for capability-based
+routing. Choose by query coverage, structured fields, access depth, remaining
+quota or entitlement, and observed current availability.
 
 Quick guide:
 
-| User need | Primary (T1) | Secondary (T2) | Last Resort (T3) |
-|-----------|-------------|-----------------|-------------------|
-| Medical / clinical | PubMed | Semantic Scholar | Google Scholar |
-| Cross-disciplinary | CrossRef | Semantic Scholar | Scopus |
-| Preprints / CS / physics | arXiv | bioRxiv / medRxiv | — |
-| Exhaustive review | PubMed + CrossRef + arXiv | Semantic Scholar + bioRxiv/medRxiv | WoS / Scopus |
-| Citation count sensitive | Semantic Scholar | CrossRef | — |
-| Chinese literature | — | — | CNKI / 万方 (manual) |
+| User need | Fitting sources | Selection reason |
+|-----------|-----------------|------------------|
+| Medical / clinical | PubMed plus another covered index when needed | MeSH/PMID and domain coverage |
+| Cross-disciplinary metadata | CrossRef, OpenAlex, Semantic Scholar | DOI/field coverage and availability |
+| Preprints / CS / physics | arXiv and relevant repositories | Version identity and accessible text |
+| Exhaustive review | Complementary domain and citation indexes | Coverage breadth and deduplication |
+| Citation graph | Scopus, WoS, OpenAlex, Semantic Scholar as available | Edge coverage, date, quota, entitlement |
+| Chinese literature | CNKI / 万方 when authorized | Language and regional coverage |
 
 ## Environment setup
 
@@ -59,7 +61,7 @@ python scripts/academic_search.py "graph neural network potentials" --limit 10 -
 python scripts/format-converter.py --doi 10.1103/physrevlett.120.143001 --format ris
 ```
 
-Be polite to the OpenAlex pool: pass `--mailto` or set `OPENALEX_MAILTO` / `CROSSREF_MAILTO`. Each script reports per-source failures (HTTP 429, timeout, network) on stderr and exits non-zero, so a caller treats each source independently and continues with another tool. This fallback covers the same T1→T2→T3 sources for *discovery* via OpenAlex; the MCP path remains preferred when available (per-source tool selection, Semantic Scholar / Scopus providers).
+Be polite to the OpenAlex pool: pass `--mailto` or set `OPENALEX_MAILTO` / `CROSSREF_MAILTO`. Each script reports per-source failures (HTTP 429, timeout, network) on stderr and exits non-zero, so a caller treats each source independently and continues with another fitting tool. The MCP path remains preferred when its per-source coverage and structured fields fit the task.
 
 ### MCP server runtime
 

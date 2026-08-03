@@ -11,14 +11,16 @@ import pytest
 
 from catmaster.research.knowledge_graph.context import (
     ResearchGraphContextBuilder,
-    ranked_frontier_ids,
+    runnable_frontier_ids,
 )
 from catmaster.research.knowledge_graph.planning import build_planning_preview
+from catmaster.research.knowledge_graph.query import ResearchGraphSQLQuery
 from catmaster.research.knowledge_graph.models import (
     ExperimentCreateRequest,
     GraphCreateRequest,
     GraphPatchRequest,
     HypothesisCreateRequest,
+    ResearchExperimentEvaluationDraft,
     ResearchGraphPlanningProposal,
     ResultCreateRequest,
     ResultJudgmentSetRequest,
@@ -30,6 +32,7 @@ from catmaster.research.knowledge_graph.store import (
 )
 from catmaster.storage import connect_workspace_db, workspace_database_path
 from catmaster.runtime.tool_runtime import toolcall_context
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
 from catmaster.tools.base import (
     ensure_project_space_layout,
     system_root,
@@ -139,6 +142,79 @@ def test_one_sentence_inputs_create_useful_drafts_and_ready_requires_details(
         ),
     )
     assert result["node"]["title"].startswith("The collaborator observed")
+
+
+def test_store_migrates_retired_expected_value_and_stales_old_preview(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = ResearchGraphService(workspace=workspace)
+    graph = _seed_graph(service)
+    experiment = _ready_experiment(
+        service,
+        graph,
+        graph["nodes"][0]["node_id"],
+    )
+    graph_id = graph["graph"]["graph_id"]
+    experiment_id = experiment["node"]["node_id"]
+    planning, claimed = service.store.claim_planning(
+        graph_id,
+        expected_revision=experiment["graph"]["revision"],
+    )
+    assert claimed is True
+    old_body = dict(experiment["node"]["body"])
+    old_body["expected_value"] = "high"
+    with connect_workspace_db(workspace) as connection:
+        connection.execute(
+            """
+            UPDATE research_nodes SET body_json = ?
+            WHERE graph_id = ? AND node_id = ?
+            """,
+            (json.dumps(old_body), graph_id, experiment_id),
+        )
+        connection.execute(
+            """
+            UPDATE research_planning
+            SET preview_json = ?
+            WHERE planning_id = ?
+            """,
+            (
+                json.dumps(
+                    {
+                        "proposal": {
+                            "hypotheses": [],
+                            "experiments": [{"expected_value": "high"}],
+                        }
+                    }
+                ),
+                planning["planning_id"],
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE schema_migrations SET version = 4
+            WHERE component = 'research_knowledge_graph'
+            """
+        )
+
+    migrated = ResearchGraphStore(workspace)
+    snapshot = migrated.get_snapshot(graph_id)
+    migrated_experiment = next(
+        node for node in snapshot["nodes"] if node["node_id"] == experiment_id
+    )
+    assert "expected_value" not in migrated_experiment["body"]
+    assert snapshot["graph"]["revision"] == experiment["graph"]["revision"] + 1
+    migrated_planning = migrated.get_planning(graph_id, planning["planning_id"])
+    assert migrated_planning["status"] == "stale"
+    assert migrated_planning["preview"] == {}
+    with connect_workspace_db(workspace) as connection:
+        version = connection.execute(
+            """
+            SELECT version FROM schema_migrations
+            WHERE component = 'research_knowledge_graph'
+            """
+        ).fetchone()["version"]
+    assert version == 5
 
 
 def test_workspace_graph_preserves_full_scientific_cycle_and_competing_evidence(
@@ -282,7 +358,7 @@ def test_sourced_external_observation_does_not_require_a_graph_experiment(
     assert "reversible interface band" in context["markdown"]
 
 
-def test_frontier_keeps_all_branches_but_auto_runs_one_ranked_experiment(
+def test_frontier_keeps_all_branches_but_auto_does_not_invent_a_selection(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -321,7 +397,6 @@ def test_frontier_keeps_all_branches_but_auto_runs_one_ranked_experiment(
         *,
         hypothesis_id: str,
         title: str,
-        expected_value: str,
         estimated_compute_cost: str,
     ) -> dict:
         return service.add_experiment(
@@ -334,7 +409,6 @@ def test_frontier_keeps_all_branches_but_auto_runs_one_ranked_experiment(
                 decision_rule="The observed outcome distinguishes the branch.",
                 state="ready",
                 tests_hypothesis_ids=[hypothesis_id],
-                expected_value=expected_value,
                 estimated_compute_cost=estimated_compute_cost,
             ),
         )
@@ -343,38 +417,36 @@ def test_frontier_keeps_all_branches_but_auto_runs_one_ranked_experiment(
         graph,
         hypothesis_id=low_hypothesis["node_id"],
         title="Low hypothesis, high value",
-        expected_value="high",
         estimated_compute_cost="none",
     )
     high_expensive = add_ready(
         low_branch,
         hypothesis_id=high_hypothesis["node_id"],
         title="High hypothesis, high value, high compute",
-        expected_value="high",
         estimated_compute_cost="high",
     )
     high_cheap = add_ready(
         high_expensive,
         hypothesis_id=high_hypothesis["node_id"],
         title="High hypothesis, high value, low compute",
-        expected_value="high",
         estimated_compute_cost="low",
     )
     high_lower_value = add_ready(
         high_cheap,
         hypothesis_id=high_hypothesis["node_id"],
         title="High hypothesis, lower value",
-        expected_value="low",
         estimated_compute_cost="none",
     )
 
     frontier = [item["node_id"] for item in high_lower_value["graph"]["frontier"]]
-    assert frontier == [
-        high_cheap["node"]["node_id"],
-        high_expensive["node"]["node_id"],
-        high_lower_value["node"]["node_id"],
-        low_branch["node"]["node_id"],
-    ]
+    assert frontier == sorted(
+        [
+            high_cheap["node"]["node_id"],
+            high_expensive["node"]["node_id"],
+            high_lower_value["node"]["node_id"],
+            low_branch["node"]["node_id"],
+        ]
+    )
 
     asyncio.run(service.tick())
     snapshot = service.store.get_snapshot(graph_id)
@@ -401,9 +473,8 @@ def test_frontier_keeps_all_branches_but_auto_runs_one_ranked_experiment(
         for launch in snapshot["launches"]
         if launch["status"] in {"claimed", "submitting", "running", "unknown"}
     ]
-    assert len(active) == 1
-    assert active[0]["experiment_node_id"] == high_cheap["node"]["node_id"]
-    assert submissions == [planning_thread.thread_id, active[0]["thread_id"]]
+    assert active == []
+    assert submissions == [planning_thread.thread_id]
 
 
 def test_planning_write_boundary_keeps_parallel_branches_without_route_scores() -> None:
@@ -443,8 +514,6 @@ def test_planning_write_boundary_keeps_parallel_branches_without_route_scores() 
                 {"proposal_id": "hyp_a", "claim": "Mechanism A is active."},
                 {"proposal_id": "hyp_b", "claim": "Mechanism B is active."},
             ],
-            "recommended_target_id": "hyp_b",
-            "recommendation_reason": "Current evidence leaves B as the sharper branch.",
         }
     )
     assert [item.proposal_id for item in proposal.hypotheses] == [
@@ -462,7 +531,7 @@ def test_planning_write_boundary_keeps_parallel_branches_without_route_scores() 
         )
 
 
-def test_planning_host_guard_is_total_and_not_a_branch_ratio(
+def test_planning_staging_has_no_hidden_64_node_cap(
     tmp_path: Path,
 ) -> None:
     class _Loop:
@@ -491,13 +560,14 @@ def test_planning_host_guard_is_total_and_not_a_branch_ratio(
             ]
         }
     )
-    with pytest.raises(ValueError, match="host safety limit"):
-        service.stage_planning_proposal(
-            graph["graph"]["graph_id"],
-            expected_revision=graph["graph"]["revision"],
-            planning_thread_id=planned["thread"].thread_id,
-            proposal=proposal,
-        )
+    staged = service.stage_planning_proposal(
+        graph["graph"]["graph_id"],
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planned["thread"].thread_id,
+        proposal=proposal,
+    )
+    assert staged["staged"] == {"hypotheses": 65, "experiments": 0}
+    assert len(service.store.get_snapshot(graph["graph"]["graph_id"])["nodes"]) == 1
 
 
 def test_materialized_planning_experiment_can_remain_a_draft(
@@ -594,7 +664,7 @@ def test_auto_planning_leaves_an_incomplete_recommendation_provisional(
     )
     assert "materialized" not in staged
     assert service.store.get_snapshot(graph_id)["nodes"] == []
-    preview_nodes = staged["planning_preview"]["nodes"]
+    preview_nodes = service.presentation(graph_id)["planning_preview"]["nodes"]
     assert len(preview_nodes) == 1
     assert preview_nodes[0]["provisional"] is True
 
@@ -627,7 +697,6 @@ def test_planning_preview_preserves_the_scientific_recommendation_without_rescor
                     "plan_summary": "Compare matched samples.",
                     "decision_rule": "The sign of the response distinguishes the branch.",
                     "tests_hypothesis_ids": [durable_hypothesis_id],
-                    "expected_value": "low",
                     "estimated_compute_cost": "high",
                 }
             ],
@@ -637,7 +706,7 @@ def test_planning_preview_preserves_the_scientific_recommendation_without_rescor
     )
     snapshot = service.store.get_snapshot(graph["graph"]["graph_id"])
     automatic = build_planning_preview(snapshot, proposal)
-    assert automatic["recommended_target_id"] == "exp_concrete"
+    assert automatic["proposer_recommended_target_id"] == "exp_concrete"
 
     assert "available discriminating check" in automatic["summary"]
 
@@ -673,7 +742,6 @@ def test_planning_preview_projects_recommendation_without_persisting_scores(
                     "plan_summary": "Run the same bounded measurement in two environments.",
                     "decision_rule": "A reproducible interaction distinguishes the branch.",
                     "tests_hypothesis_ids": ["hyp_context"],
-                    "expected_value": "high",
                     "estimated_compute_cost": "low",
                 },
                 {
@@ -683,7 +751,6 @@ def test_planning_preview_projects_recommendation_without_persisting_scores(
                     "plan_summary": "Repeat without stratification.",
                     "decision_rule": "Record whether the original response repeats.",
                     "tests_hypothesis_ids": [hypothesis_id],
-                    "expected_value": "medium",
                     "estimated_compute_cost": "low",
                 },
             ],
@@ -698,8 +765,16 @@ def test_planning_preview_projects_recommendation_without_persisting_scores(
         proposal,
     )
 
-    assert preview["recommended_target_id"] == "exp_context"
-    assert preview["route_ids"] == ["hyp_context", "exp_context"]
+    assert preview["proposer_recommended_target_id"] == "exp_context"
+    assert {
+        "proposer_recommended_proposal_id",
+        "proposer_recommended_existing_node_id",
+        "route_ids",
+    }.isdisjoint(preview)
+    assert all(
+        "proposer_recommended" not in node and "planning_reason" not in node
+        for node in preview["nodes"]
+    )
     encoded = json.dumps(preview)
     assert "llm_value" not in encoded
     assert "visits" not in encoded
@@ -756,8 +831,7 @@ def test_planning_does_not_invent_a_recommendation_from_branch_shape(
         proposal,
     )
 
-    assert preview["recommended_target_id"] == ""
-    assert preview["route_ids"] == []
+    assert preview["proposer_recommended_target_id"] == ""
     assert "visits" not in json.dumps(preview)
 
 
@@ -794,7 +868,7 @@ def test_new_result_can_change_the_explained_route_without_saved_scores(
             }
         ),
     )
-    assert before["recommended_target_id"] == first_id
+    assert before["proposer_recommended_target_id"] == first_id
 
     result = service.record_result(
         graph_id,
@@ -819,7 +893,7 @@ def test_new_result_can_change_the_explained_route_without_saved_scores(
         focus_node_id=result["node"]["node_id"],
     )
 
-    assert after["recommended_target_id"] == second_id
+    assert after["proposer_recommended_target_id"] == second_id
     assert "restructuring makes this probe decisive" in after["summary"]
     durable = json.dumps(service.store.get_snapshot(graph_id))
     assert "llm_value" not in durable
@@ -874,7 +948,6 @@ def test_manual_planning_preview_stays_temporary_until_selected_route_is_materia
                     "plan_summary": "Compare matched treated and control samples.",
                     "decision_rule": "Marker-response coupling supports the alternative.",
                     "tests_hypothesis_ids": ["hyp_literature_branch"],
-                    "expected_value": "high",
                     "estimated_compute_cost": "low",
                     "refs": [
                         {
@@ -898,12 +971,13 @@ def test_manual_planning_preview_stays_temporary_until_selected_route_is_materia
     )
 
     assert len(service.store.get_snapshot(graph_id)["nodes"]) == 1
-    assert staged["planning_preview"]["recommended_proposal_id"] == "exp_marker"
+    preview = service.presentation(graph_id)["planning_preview"]
+    assert preview["proposer_recommended_target_id"] == "exp_marker"
     assert all(
         node["provisional"] is True
-        for node in staged["planning_preview"]["nodes"]
+        for node in preview["nodes"]
     )
-    assert "llm_value" not in json.dumps(staged["planning_preview"])
+    assert "llm_value" not in json.dumps(preview)
 
     materialized = service.materialize_planning_proposal(
         graph_id,
@@ -927,6 +1001,81 @@ def test_manual_planning_preview_stays_temporary_until_selected_route_is_materia
             "tests",
             materialized["node_ids"]["hyp_literature_branch"],
             materialized["node_ids"]["exp_marker"],
+        )
+    }
+
+
+def test_result_driven_suggests_edge_appears_only_after_route_materialization(
+    tmp_path: Path,
+) -> None:
+    class _Loop:
+        async def submit(self, **_kwargs):
+            return {}
+
+    service = ResearchGraphService(
+        workspace=_workspace(tmp_path),
+        agent_loop_factory=lambda _workspace, _workspace_id: _Loop(),
+    )
+    graph = _seed_graph(service)
+    graph_id = graph["graph"]["graph_id"]
+    result = service.record_result(
+        graph_id,
+        ResultCreateRequest(
+            expected_revision=graph["graph"]["revision"],
+            summary="The observed response requires a distinct explanation.",
+        ),
+    )
+    planned = asyncio.run(
+        service.plan_next_step(
+            graph_id,
+            expected_revision=result["graph"]["revision"],
+            focus_node_id=result["node"]["node_id"],
+        )
+    )
+    staged = service.stage_planning_proposal(
+        graph_id,
+        expected_revision=result["graph"]["revision"],
+        planning_thread_id=planned["thread"].thread_id,
+        proposal=ResearchGraphPlanningProposal.model_validate(
+            {
+                "hypotheses": [
+                    {
+                        "proposal_id": "hyp_followup",
+                        "claim": "A distinct reversible state controls the response.",
+                    }
+                ],
+                "experiments": [
+                    {
+                        "proposal_id": "exp_followup",
+                        "objective": "Distinguish the reversible state.",
+                        "plan_summary": "Measure the state under matched cycling.",
+                        "decision_rule": "Reversibility distinguishes the explanation.",
+                        "tests_hypothesis_ids": ["hyp_followup"],
+                    }
+                ],
+                "recommended_target_id": "exp_followup",
+                "recommendation_reason": "It directly tests the new explanation.",
+            }
+        ),
+    )
+    preview = service.presentation(graph_id)["planning_preview"]
+    assert all(edge["relation"] != "suggests" for edge in preview["edges"])
+    assert all(edge["relation"] != "suggests" for edge in service.store.get_snapshot(graph_id)["edges"])
+
+    materialized = service.materialize_planning_proposal(
+        graph_id,
+        staged["planning_id"],
+        expected_revision=result["graph"]["revision"],
+        proposal_id="exp_followup",
+    )
+    assert {
+        (edge["source_node_id"], edge["relation"], edge["target_node_id"])
+        for edge in service.store.get_snapshot(graph_id)["edges"]
+    } >= {
+        (
+            result["node"]["node_id"],
+            "suggests",
+            materialized["node_ids"]["hyp_followup"],
         )
     }
 
@@ -1019,7 +1168,6 @@ def test_auto_planning_materializes_only_selected_branch_then_launches_one_exper
                     "plan_summary": "Run the bounded mechanism-specific measurement.",
                     "decision_rule": "The observable distinguishes A from its alternative.",
                     "tests_hypothesis_ids": [hypothesis_id],
-                    "expected_value": "high",
                     "estimated_compute_cost": "low",
                 },
                 {
@@ -1029,7 +1177,6 @@ def test_auto_planning_materializes_only_selected_branch_then_launches_one_exper
                     "plan_summary": "Repeat the original measurement.",
                     "decision_rule": "Record the repeated value.",
                     "tests_hypothesis_ids": [hypothesis_id],
-                    "expected_value": "low",
                     "estimated_compute_cost": "high",
                 },
             ],
@@ -1045,14 +1192,308 @@ def test_auto_planning_materializes_only_selected_branch_then_launches_one_exper
         planning_thread_id=planning_thread.thread_id,
         proposal=proposal,
     )
-    assert staged["materialized"]["proposal_id"] == "exp_discriminating"
-    assert len(
-        [
-            node
-            for node in service.store.get_snapshot(graph_id)["nodes"]
-            if node["kind"] == "experiment"
-        ]
-    ) == 1
+    assert "materialized" not in staged
+    assert not [
+        node
+        for node in service.store.get_snapshot(graph_id)["nodes"]
+        if node["kind"] == "experiment"
+    ]
+    service.stage_planning_evaluation(
+        graph_id,
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        evaluation=ResearchExperimentEvaluationDraft(
+            experiment_ids=["exp_discriminating", "exp_low_value"],
+            innovation_scores=[0.91, 0.18],
+            conservative_scores=[0.83, 0.35],
+            innovation_recommendation="exp_discriminating",
+            conservative_recommendation="exp_discriminating",
+            evaluation_memo="The discriminating measurement wins under both policies.",
+        ),
+    )
+
+    service.reconcile_finished_child(
+        child_thread_id=planning_thread.thread_id,
+        terminal_status="idle",
+    )
+    asyncio.run(service.tick())
+    materialized = service.store.get_planning(
+        graph_id,
+        staged["planning_id"],
+    )["preview"]
+    next_experiment_id = materialized["materialized_next_experiment_id"]
+    assert next_experiment_id
+    assert materialized["materialized_revision"] == (
+        service.store.get_graph(graph_id)["revision"]
+    )
+    assert "evaluation" not in materialized
+    assert "proposal" not in materialized
+    asyncio.run(service.tick())
+    active = [
+        launch
+        for launch in service.store.get_snapshot(graph_id)["launches"]
+        if launch["status"] in {"claimed", "submitting", "running", "unknown"}
+    ]
+    assert len(active) == 1
+    assert active[0]["experiment_node_id"] == next_experiment_id
+    assert submissions == [planning_thread.thread_id, active[0]["thread_id"]]
+
+
+def test_auto_scheduler_never_substitutes_a_materialized_dependency(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    submissions: list[str] = []
+
+    class _Loop:
+        async def submit(self, *, thread_id, payload):
+            submissions.append(thread_id)
+            return {}
+
+    service = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+        agent_loop_factory=lambda _workspace, _workspace_id: _Loop(),
+    )
+    graph = service.create_graph(
+        GraphCreateRequest(
+            question="Which step in the route should run?",
+            orchestration_mode="auto",
+            initial_hypotheses=[{"claim": "The route has a measurable intermediate."}],
+        )
+    )
+    graph_id = graph["graph"]["graph_id"]
+    hypothesis_id = graph["nodes"][0]["node_id"]
+    asyncio.run(service.tick())
+    planning_thread = next(
+        thread
+        for thread in service.thread_store.list_threads()
+        if thread.title.startswith("Plan next step:")
+    )
+    proposal = ResearchGraphPlanningProposal.model_validate(
+        {
+            "experiments": [
+                {
+                    "proposal_id": "exp_prerequisite",
+                    "objective": "Prepare and verify the intermediate.",
+                    "plan_summary": "Measure the intermediate under matched conditions.",
+                    "decision_rule": "A resolved intermediate permits the downstream test.",
+                    "tests_hypothesis_ids": [hypothesis_id],
+                },
+                {
+                    "proposal_id": "exp_selected_downstream",
+                    "objective": "Run the downstream discriminating test.",
+                    "plan_summary": "Measure the downstream response after preparation.",
+                    "decision_rule": "The response distinguishes the candidate mechanism.",
+                    "tests_hypothesis_ids": [hypothesis_id],
+                    "depends_on_experiment_ids": ["exp_prerequisite"],
+                },
+            ],
+            "recommended_target_id": "exp_selected_downstream",
+            "recommendation_reason": "The downstream test is the evaluator's target.",
+        }
+    )
+    staged = service.stage_planning_proposal(
+        graph_id,
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        proposal=proposal,
+    )
+    service.stage_planning_evaluation(
+        graph_id,
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        evaluation=ResearchExperimentEvaluationDraft(
+            experiment_ids=["exp_prerequisite", "exp_selected_downstream"],
+            innovation_scores=[0.4, 0.9],
+            conservative_scores=[0.5, 0.8],
+            innovation_recommendation="exp_selected_downstream",
+            conservative_recommendation="exp_selected_downstream",
+        ),
+    )
+    service.reconcile_finished_child(
+        child_thread_id=planning_thread.thread_id,
+        terminal_status="idle",
+    )
+
+    asyncio.run(service.tick())
+    receipt = service.store.get_planning(
+        graph_id,
+        staged["planning_id"],
+    )["preview"]
+    mapping = receipt["materialized_node_ids"]
+    assert receipt["materialized_next_experiment_id"] == ""
+    assert service._frontier_ids(service.store.get_snapshot(graph_id)) == [
+        mapping["exp_prerequisite"]
+    ]
+
+    asyncio.run(service.tick())
+    assert service.store.get_snapshot(graph_id)["launches"] == []
+    assert len(submissions) == 2
+    assert submissions[0] == planning_thread.thread_id
+    assert submissions[1] != planning_thread.thread_id
+
+
+def test_materialized_scheduler_receipt_is_stale_after_another_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    submissions: list[str] = []
+
+    class _Loop:
+        async def submit(self, *, thread_id, payload):
+            submissions.append(thread_id)
+            return {}
+
+    service = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+        agent_loop_factory=lambda _workspace, _workspace_id: _Loop(),
+    )
+    graph = service.create_graph(
+        GraphCreateRequest(
+            question="Can a materialized route survive an unrelated mutation?",
+            orchestration_mode="auto",
+            initial_hypotheses=[{"claim": "The selected route is revision-bound."}],
+        )
+    )
+    graph_id = graph["graph"]["graph_id"]
+    asyncio.run(service.tick())
+    planning_thread = next(
+        thread
+        for thread in service.thread_store.list_threads()
+        if thread.title.startswith("Plan next step:")
+    )
+    service.stage_planning_proposal(
+        graph_id,
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        proposal=ResearchGraphPlanningProposal.model_validate(
+            {
+                "experiments": [
+                    {
+                        "proposal_id": "exp_revision_bound",
+                        "objective": "Run one revision-bound check.",
+                        "plan_summary": "Measure the selected observable.",
+                        "decision_rule": "The observable resolves the branch.",
+                        "tests_hypothesis_ids": [graph["nodes"][0]["node_id"]],
+                    }
+                ],
+                "recommended_target_id": "exp_revision_bound",
+                "recommendation_reason": "It is the explicit current-revision route.",
+            }
+        ),
+    )
+    service.stage_planning_evaluation(
+        graph_id,
+        expected_revision=graph["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        evaluation=ResearchExperimentEvaluationDraft(
+            experiment_ids=["exp_revision_bound"],
+            innovation_scores=[0.8],
+            conservative_scores=[0.8],
+            innovation_recommendation="exp_revision_bound",
+            conservative_recommendation="exp_revision_bound",
+        ),
+    )
+    service.reconcile_finished_child(
+        child_thread_id=planning_thread.thread_id,
+        terminal_status="idle",
+    )
+    asyncio.run(service.tick())
+    materialized_revision = service.store.get_graph(graph_id)["revision"]
+    service.add_hypothesis(
+        graph_id,
+        HypothesisCreateRequest(
+            expected_revision=materialized_revision,
+            claim="A concurrent observation changes the route comparison.",
+        ),
+    )
+
+    asyncio.run(service.tick())
+    assert service.store.get_snapshot(graph_id)["launches"] == []
+    assert len(submissions) == 2
+    assert submissions[0] == planning_thread.thread_id
+    assert submissions[1] != planning_thread.thread_id
+
+
+def test_auto_scheduler_uses_the_conservative_evaluator_choice(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    submissions: list[str] = []
+
+    class _Loop:
+        async def submit(self, *, thread_id, payload):
+            submissions.append(thread_id)
+            return {}
+
+    service = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+        agent_loop_factory=lambda _workspace, _workspace_id: _Loop(),
+    )
+    graph = service.create_graph(
+        GraphCreateRequest(
+            question="Which ready experiment should run?",
+            orchestration_mode="auto",
+            initial_hypotheses=[{"claim": "The alternatives can be distinguished."}],
+        )
+    )
+    hypothesis_id = graph["nodes"][0]["node_id"]
+    innovative = _ready_experiment(
+        service,
+        graph,
+        hypothesis_id,
+        title="Risky high-information experiment",
+    )
+    conservative = _ready_experiment(
+        service,
+        innovative,
+        hypothesis_id,
+        title="Reliable discriminating experiment",
+    )
+    graph_id = graph["graph"]["graph_id"]
+    asyncio.run(service.tick())
+    planning_thread = next(
+        thread
+        for thread in service.thread_store.list_threads()
+        if thread.title.startswith("Plan next step:")
+    )
+    service.stage_planning_proposal(
+        graph_id,
+        expected_revision=conservative["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        proposal=ResearchGraphPlanningProposal(
+            recommended_target_id=innovative["node"]["node_id"],
+            recommendation_reason="The proposer prefers its potential information gain.",
+        ),
+    )
+    candidate_ids = [
+        innovative["node"]["node_id"],
+        conservative["node"]["node_id"],
+    ]
+    service.stage_planning_evaluation(
+        graph_id,
+        expected_revision=conservative["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        evaluation=ResearchExperimentEvaluationDraft(
+            experiment_ids=candidate_ids,
+            innovation_scores=[0.94, 0.62],
+            conservative_scores=[0.31, 0.88],
+            innovation_recommendation=innovative["node"]["node_id"],
+            conservative_recommendation=conservative["node"]["node_id"],
+            evaluation_memo="The policies select different ready experiments.",
+        ),
+    )
+    preview = service.presentation(graph_id)["planning_preview"]
+    assert preview["innovation_recommendation"] == innovative["node"]["node_id"]
+    assert preview["conservative_recommendation"] == conservative["node"]["node_id"]
+    assert len(preview["experiment_evaluations"]) == 2
+    assert all(
+        "innovation_score" not in node and "conservative_score" not in node
+        for node in preview["nodes"]
+    )
 
     service.reconcile_finished_child(
         child_thread_id=planning_thread.thread_id,
@@ -1065,10 +1506,84 @@ def test_auto_planning_materializes_only_selected_branch_then_launches_one_exper
         if launch["status"] in {"claimed", "submitting", "running", "unknown"}
     ]
     assert len(active) == 1
-    assert active[0]["experiment_node_id"] == staged["materialized"][
-        "next_experiment_node_id"
-    ]
-    assert submissions == [planning_thread.thread_id, active[0]["thread_id"]]
+    assert active[0]["experiment_node_id"] == conservative["node"]["node_id"]
+
+
+def test_planning_scores_become_invisible_and_cannot_launch_after_revision_change(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    submissions: list[str] = []
+
+    class _Loop:
+        async def submit(self, *, thread_id, payload):
+            submissions.append(thread_id)
+            return {}
+
+    service = ResearchGraphService(
+        workspace=workspace,
+        workspace_id="default",
+        agent_loop_factory=lambda _workspace, _workspace_id: _Loop(),
+    )
+    graph = service.create_graph(
+        GraphCreateRequest(
+            question="Can a stale evaluation ever authorize execution?",
+            orchestration_mode="auto",
+            initial_hypotheses=[{"claim": "The evaluation must match the graph revision."}],
+        )
+    )
+    ready = _ready_experiment(
+        service,
+        graph,
+        graph["nodes"][0]["node_id"],
+    )
+    graph_id = graph["graph"]["graph_id"]
+    asyncio.run(service.tick())
+    planning_thread = next(
+        thread
+        for thread in service.thread_store.list_threads()
+        if thread.title.startswith("Plan next step:")
+    )
+    service.stage_planning_proposal(
+        graph_id,
+        expected_revision=ready["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        proposal=ResearchGraphPlanningProposal(
+            recommended_target_id=ready["node"]["node_id"],
+            recommendation_reason="It is currently runnable.",
+        ),
+    )
+    service.stage_planning_evaluation(
+        graph_id,
+        expected_revision=ready["graph"]["revision"],
+        planning_thread_id=planning_thread.thread_id,
+        evaluation=ResearchExperimentEvaluationDraft(
+            experiment_ids=[ready["node"]["node_id"]],
+            innovation_scores=[0.7],
+            conservative_scores=[0.8],
+            innovation_recommendation=ready["node"]["node_id"],
+            conservative_recommendation=ready["node"]["node_id"],
+        ),
+    )
+    changed = service.add_hypothesis(
+        graph_id,
+        HypothesisCreateRequest(
+            expected_revision=ready["graph"]["revision"],
+            claim="A new observation changes the candidate comparison.",
+        ),
+    )
+    assert changed["graph"]["revision"] > ready["graph"]["revision"]
+    assert "planning_preview" not in service.presentation(graph_id)
+
+    service.reconcile_finished_child(
+        child_thread_id=planning_thread.thread_id,
+        terminal_status="idle",
+    )
+    asyncio.run(service.tick())
+    assert service.store.get_snapshot(graph_id)["launches"] == []
+    assert len(submissions) == 2
+    assert submissions[0] == planning_thread.thread_id
+    assert submissions[1] != planning_thread.thread_id
 
 
 def test_new_result_schedules_a_fresh_auto_route_evaluation(
@@ -1673,12 +2188,15 @@ def test_agent_and_web_presentations_exclude_runtime_and_audit_fields(
     assert not (forbidden - {"updated_at"}) & keys(catalog)
     assert all("created_at" not in graph for graph in catalog)
     assert all("updated_at" in graph for graph in catalog)
-    assert not any(field in built_context["markdown"] for field in forbidden)
+    assert not any(
+        field in built_context["markdown"]
+        for field in forbidden - {"planning", "launches"}
+    )
     assert web_view["graph"]["revision"] >= 1
     assert all("revision" in node for node in web_view["nodes"])
 
 
-def test_bounded_graphrag_uses_fts_notes_keeps_evidence_and_reports_omissions(
+def test_partial_focus_snippet_defers_unrelated_nodes_to_bound_sql(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -1709,23 +2227,30 @@ def test_bounded_graphrag_uses_fts_notes_keeps_evidence_and_reports_omissions(
     )
     context = ResearchGraphContextBuilder(workspace=workspace).build(
         graph_id,
-        query="zirconium fingerprint",
-        max_nodes=12,
-        max_chars=4_000,
+        focus_node_id=graph["nodes"][0]["node_id"],
     )
-    assert target["node_id"] in {
+    assert target["node_id"] not in {
         node["node_id"] for node in context["presentation"]["nodes"]
     }
-    assert context["presentation"]["shown_count"] <= 12
-    assert context["presentation"]["omitted_count"] >= 99
-    assert len(context["markdown"]) <= 4_000
+    assert context["presentation"]["partial"] is True
+    assert "omitted_count" not in context["presentation"]
     assert "Question:" in context["markdown"]
-    assert "Focus path" in context["markdown"]
-    assert "omitted" in context["markdown"]
+    assert "explicitly partial" in context["markdown"]
+    assert "Rare zirconium fingerprint" not in context["markdown"]
     assert not context["markdown"].lstrip().startswith("{")
+    queried = ResearchGraphSQLQuery(workspace).execute(
+        graph_id=graph_id,
+        sql=(
+            "SELECT node_id, title FROM research_nodes "
+            "WHERE node_id = '" + target["node_id"] + "'"
+        ),
+    )
+    assert queried["rows"] == [
+        {"node_id": target["node_id"], "title": target["title"]}
+    ]
 
 
-def test_graphrag_query_and_conflicting_evidence_precede_large_frontier(
+def test_focus_snippet_keeps_conflicting_evidence_and_complete_frontier(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
@@ -1807,9 +2332,7 @@ def test_graphrag_query_and_conflicting_evidence_precede_large_frontier(
 
     context = service.context_builder.build(
         graph_id,
-        query="rare zirconium fingerprint",
-        max_nodes=4,
-        max_chars=4_000,
+        focus_node_id=target_hypothesis_id,
     )
     selected_ids = [
         node["node_id"] for node in context["presentation"]["nodes"]
@@ -1819,18 +2342,11 @@ def test_graphrag_query_and_conflicting_evidence_precede_large_frontier(
     assert opposing["node"]["node_id"] in selected_ids
     assert len(context["presentation"]["frontier_node_ids"]) == 16
     assert context["presentation"]["shown_count"] == len(selected_ids)
-    assert context["presentation"]["omitted_count"] == (
-        context["presentation"]["total_count"] - len(selected_ids)
-    )
     assert all(node_id in context["markdown"] for node_id in selected_ids)
-    assert sum(
-        line.startswith("- [")
-        for line in context["markdown"].splitlines()
-    ) == len(selected_ids)
-    assert len(context["markdown"]) <= 4_000
+    assert "Complete runnable frontier" in context["markdown"]
 
 
-def test_focus_source_survives_a_tight_context_budget_without_empty_sections(
+def test_focus_source_handle_is_preserved_without_loading_source_body(
     tmp_path: Path,
 ) -> None:
     service = ResearchGraphService(workspace=_workspace(tmp_path))
@@ -1859,16 +2375,12 @@ def test_focus_source_survives_a_tight_context_budget_without_empty_sections(
     context = service.context_builder.build(
         graph_id,
         focus_node_id=focused["node"]["node_id"],
-        max_nodes=4,
-        max_chars=2_000,
     )
     markdown = context["markdown"]
-    assert len(markdown) <= 2_000
     assert "## Focus sources" in markdown
     assert source in markdown
     assert markdown.count(source) == 1
-    assert "## Sources\n\n" not in markdown
-    assert "## Typed relations\n\n" not in markdown
+    assert "explicitly partial" in markdown
 
 
 def test_default_planning_focus_follows_the_latest_scientific_change(
@@ -2346,7 +2858,8 @@ def test_service_launch_child_writeback_completes_result_with_sources(
     assert len(submissions) == 1
     assert submissions[0][0] == child.thread_id
     assert submissions[0][1] == "experiment"
-    assert "record a concise Result" in submissions[0][2]
+    assert "collect a concise Result" in submissions[0][2]
+    assert "shared evidence judge" in submissions[0][2]
     assert launched["launch"]["status"] == "completed"
     assert len(writeback_content) == 1
     assert "Recorded the bound experiment result" in writeback_content[0]
@@ -2374,7 +2887,63 @@ def test_service_launch_child_writeback_completes_result_with_sources(
     ] == "completed"
 
 
-def test_unspecified_priority_bands_do_not_silently_rank_as_medium() -> None:
+def test_bound_result_writeback_does_not_retry_a_concurrent_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    service = ResearchGraphService(workspace=workspace, workspace_id="default")
+    graph = _seed_graph(service)
+    experiment = _ready_experiment(
+        service,
+        graph,
+        graph["nodes"][0]["node_id"],
+    )
+    graph_id = graph["graph"]["graph_id"]
+    thread = service.thread_store.create_thread(
+        title="Concurrent bound writeback",
+        entrypoint="experiment",
+    )
+    service.thread_store.update_thread(
+        thread.thread_id,
+        active_research_graph_id=graph_id,
+        research_focus_node_id=experiment["node"]["node_id"],
+    )
+
+    original_record_result = ResearchGraphService.record_result
+    mutation_count = 0
+
+    def race_record_result(self, target_graph_id, request):
+        nonlocal mutation_count
+        mutation_count += 1
+        current = self.store.get_graph(target_graph_id)
+        self.add_hypothesis(
+            target_graph_id,
+            HypothesisCreateRequest(
+                expected_revision=current["revision"],
+                claim="A concurrent observation changes the live graph.",
+            ),
+        )
+        return original_record_result(self, target_graph_id, request)
+
+    monkeypatch.setattr(ResearchGraphService, "record_result", race_record_result)
+    with workspace_scope(workspace), toolcall_context(
+        "tool_concurrent_result",
+        context={
+            "thread_id": thread.thread_id,
+            "entrypoint": "experiment",
+        },
+    ), pytest.raises(CatMasterToolExecutionError, match="changed in another thread"):
+        record_bound_research_result(
+            {"summary": "This judgment was made against the previous revision."}
+        )
+
+    assert mutation_count == 1
+    snapshot = service.store.get_snapshot(graph_id)
+    assert not any(node["kind"] == "result" for node in snapshot["nodes"])
+
+
+def test_runnable_frontier_ignores_priority_and_cost_fields() -> None:
     nodes = [
         {
             "node_id": "hyp_unknown",
@@ -2392,14 +2961,13 @@ def test_unspecified_priority_bands_do_not_silently_rank_as_medium() -> None:
             "node_id": "exp_unknown",
             "kind": "experiment",
             "state": "ready",
-            "body": {"expected_value": "", "estimated_compute_cost": ""},
+            "body": {"estimated_compute_cost": ""},
         },
         {
             "node_id": "exp_low",
             "kind": "experiment",
             "state": "ready",
             "body": {
-                "expected_value": "low",
                 "estimated_compute_cost": "high",
             },
         },
@@ -2417,7 +2985,7 @@ def test_unspecified_priority_bands_do_not_silently_rank_as_medium() -> None:
         },
     ]
 
-    assert ranked_frontier_ids(nodes, edges) == ["exp_low", "exp_unknown"]
+    assert runnable_frontier_ids(nodes, edges) == ["exp_low", "exp_unknown"]
 
 
 def test_user_can_launch_a_planner_from_an_explicit_result_focus(
@@ -2524,7 +3092,6 @@ def test_context_is_explicitly_graph_scoped_and_node_bodies_are_strict(
     )
     context = service.context_builder.build(
         first["graph"]["graph_id"],
-        query="beta",
     )
     assert "Question alpha?" in context["markdown"]
     assert "Beta-only" not in context["markdown"]

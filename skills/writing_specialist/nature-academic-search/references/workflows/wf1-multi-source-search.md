@@ -9,7 +9,7 @@
 ## Procedure
 
 1. **Analyze topic** — identify domain, consult [source routing](../search-strategy.md#source-selection).
-2. **Select sources by tier** — follow [Source Tiers](../source-tiers.md). Always try T1 first; escalate to T2 only if T1 insufficient; use T3 as last resort with explicit user warning.
+2. **Select sources by capability** — follow [Source Routing](../source-routing.md). Match domain coverage, structured fields, required access depth, remaining quota, and current availability; use several complementary sources when coverage requires it.
 3. **Search in parallel** — call all relevant MCP search tools simultaneously:
    - Biomedical → `pubmed_search_articles`
    - Cross-disciplinary → `search_crossref`

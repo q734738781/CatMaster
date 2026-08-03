@@ -49,16 +49,16 @@ State the detected scope and date limits in one short line before searching.
 
 ### 3. Run the workflow
 
-Follow the seven steps in `core/workflow.md`: segment, parse, search, evaluate support conservatively, export one reference-manager file, generate review artifacts when useful, and report with the HTML browser path first. Prefer `scripts/nature_citation.py` for the search/export when internet access is available; open `references/script-usage.md` for its full flag list and the long-article batch strategy.
+Follow the seven steps in `core/workflow.md`: segment, parse, search, assess claim relationships and access depth conservatively, export one reference-manager file, generate review artifacts when useful, and report with the HTML browser path first. Prefer `scripts/nature_citation.py` for the search/export when internet access is available; open `references/script-usage.md` for its full flag list and the long-article batch strategy.
 
-Never present a paper as support merely because its title is related, and never cite a metadata-only candidate without checking the abstract or publisher page. Do not invent missing bibliographic fields.
+Never present a paper as support merely because its title is related. Metadata access means `claim_relation: unassessed`; check the abstract or full source before assigning a scientific relation. Do not invent missing bibliographic fields.
 
 ### 4. Reach for references only when needed
 
 The files under `references/` are deep references, not defaults. Open them on demand per the `references.on_demand` table in the manifest:
 
 - running the script, full flags, long-article batching → `references/script-usage.md`.
-- turning a claim into search queries and support grades → `references/search-strategy.md`.
+- turning a claim into search queries and claim-relation/access-depth records → `references/search-strategy.md`.
 - the exact Nature/CNS journal-family boundary → `references/journal-scope.md`.
 - RIS / EndNote / Zotero RDF export details → `references/ris-endnote.md`.
 

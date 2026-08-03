@@ -9,7 +9,7 @@
 ## Procedure
 
 1. **Extract citations** from document using [Citation Parser](../citation-parser.md).
-   Prefer T1 sources for primary verification (CrossRef DOI lookup → PubMed PMID confirmation). Use T2 (Semantic Scholar) for cross-checking ambiguous or missing results. See [Source Tiers](../source-tiers.md) for full routing.
+   Prefer identifier-authoritative structured metadata for primary verification (for example CrossRef DOI lookup or PubMed PMID confirmation), then use another currently available source to cross-check ambiguous or missing fields. See [Source Routing](../source-routing.md).
 2. **Resolve each citation:**
    - DOI → `search_crossref` or `get_paper_by_doi`
    - PMID → `pubmed_fetch_articles`

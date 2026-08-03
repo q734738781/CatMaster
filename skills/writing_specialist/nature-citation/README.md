@@ -72,7 +72,7 @@ nature-citation/
 
 ## 参考文件
 
-- `search-strategy.md`：claim 拆解、支撑等级和常见检索失败模式。
+- `search-strategy.md`：claim 拆解、claim relation、access depth 和常见检索失败模式。
 - `journal-scope.md`：Nature / Science / Cell 家族边界与旗舰刊解释。
 - `ris-endnote.md`：`ENW`、`RIS`、Zotero `RDF` 导出说明。
 - `scripts/nature_citation.py`：本地 CLI，用于分段、Crossref 检索、导出和 HTML 审查页生成。
@@ -88,7 +88,7 @@ nature-citation/
 ## 注意事项
 
 - 默认产物是单个文献管理文件；其他审查材料需显式开启。
-- `metadata-only candidate` 表示仍需人工查看摘要或全文后才能引用。
+- `access_depth: metadata` 必须配 `claim_relation: unassessed`，查看摘要或全文后才能判断引用关系。
 - HTML 审查页可将用户选中的记录导出为 `ENW`、`RIS` 或 Zotero `RDF`。
 - 长文本建议开启 `--with-artifacts`，因为 HTML 页面最方便人工筛选。
 - Batch mode 会在最终导出前持续写入 `.partial.enw`、`.partial.ris` 或 `.partial.rdf` 检查点。

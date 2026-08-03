@@ -55,6 +55,12 @@ export function todoGroupsFromParts(parts) {
     }));
 }
 
+export function canonicalTodoPartsFromEvent(payload) {
+  if (payload?.event !== "message.completed") return null;
+  const parts = payload?.data?.todo_parts;
+  return Array.isArray(parts) ? parts : [];
+}
+
 export function todoSummary(groups) {
   const rows = (Array.isArray(groups) ? groups : []).flatMap((group) => group.rows || []);
   return {

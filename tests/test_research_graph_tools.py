@@ -8,11 +8,12 @@ from catmaster.research.knowledge_graph.models import GraphCreateRequest
 from catmaster.research.knowledge_graph.service import ResearchGraphService
 from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.webui.thread_store import ThreadStore
+from catmaster.runtime.tool_runtime import toolcall_context
 from catmaster.tools.misc.research_graph import (
     add_research_experiment,
     create_research_graph,
-    inspect_research_graph,
     list_research_graphs,
+    query_research_graph_sql,
     record_research_result,
     set_research_result_judgment,
 )
@@ -22,13 +23,14 @@ from catmaster.tools.registry import ToolRegistry
 TOOL_NAMES = [
     "list_research_graphs",
     "create_research_graph",
-    "inspect_research_graph",
+    "query_research_graph_sql",
     "add_research_hypothesis",
     "add_research_experiment",
     "record_research_result",
     "set_research_result_judgment",
     "mark_research_experiment_failed",
     "stage_research_plan",
+    "evaluate_research_experiments",
     "set_research_graph_completion",
     "record_bound_research_result",
     "mark_bound_research_experiment_failed",
@@ -49,7 +51,12 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
     tmp_path: Path,
 ) -> None:
     ensure_project_space_layout(tmp_path, create=True)
-    with workspace_scope(tmp_path):
+    threads = ThreadStore(workspace=tmp_path, workspace_id="default")
+    thread = threads.create_thread(title="Research", entrypoint="research")
+    with workspace_scope(tmp_path), toolcall_context(
+        "tool_research_flow",
+        context={"thread_id": thread.thread_id, "entrypoint": "research"},
+    ):
         content, created = create_research_graph(
             {
                 "question": "Does catalyst A improve conversion?",
@@ -68,14 +75,17 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 ],
             }
         )
-        graph_id = created["data"]["graph"]["graph_id"]
-        assert "Active Research Graph" in content
-        assert "nodes" not in created["data"]
+        graph_id = created["data"]["graph_id"]
+        assert "Created Research Graph" in content
+        assert set(created["data"]) == {"graph_id", "revision", "changed"}
 
-        _content, inspected = inspect_research_graph(
-            {"graph_id": graph_id, "max_nodes": 24, "max_chars": 12_000}
+        _content, inspected = query_research_graph_sql(
+            {"sql": "SELECT graph_id, revision FROM research_graphs"}
         )
-        revision = inspected["data"]["graph"]["revision"]
+        revision = inspected["data"]["revision"]
+        assert inspected["data"]["rows"] == [
+            {"graph_id": graph_id, "revision": revision}
+        ]
         hypothesis_id = ResearchGraphStore(tmp_path).get_snapshot(graph_id)[
             "nodes"
         ][0]["node_id"]
@@ -94,8 +104,8 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 "title": "Conversion measurement",
             }
         )
-        revision = experiment["data"]["graph"]["revision"]
-        experiment_id = experiment["data"]["focus_node_id"]
+        revision = experiment["data"]["revision"]
+        experiment_id = experiment["data"]["changed"]["node"]["node_id"]
         content, result = record_research_result(
             {
                 "graph_id": graph_id,
@@ -112,10 +122,10 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 "title": "Conversion result",
             }
         )
-        assert "supporting result recorded" in content
-        assert result["data"]["omitted_count"] == 0
-        revision = result["data"]["graph"]["revision"]
-        result_id = result["data"]["focus_node_id"]
+        assert "Recorded result" in content
+        assert set(result["data"]) == {"graph_id", "revision", "changed"}
+        revision = result["data"]["revision"]
+        result_id = result["data"]["changed"]["node"]["node_id"]
         content, _judged = set_research_result_judgment(
             {
                 "graph_id": graph_id,
@@ -125,7 +135,7 @@ def test_research_graph_tools_run_real_flow_without_raw_graph_artifacts(
                 "relation": "opposes",
             }
         )
-        assert "opposing result recorded" in content
+        assert "Result judgment set to opposes" in content
         snapshot = ResearchGraphStore(tmp_path).get_snapshot(graph_id)
         assert {
             edge["relation"]
@@ -164,12 +174,7 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
         if tool["name"] == "add_research_experiment":
             assert "plan_summary" not in tool["parameters"].get("required", [])
             assert "decision_rule" not in tool["parameters"].get("required", [])
-            assert properties["expected_value"]["enum"] == [
-                "",
-                "low",
-                "medium",
-                "high",
-            ]
+            assert "expected_value" not in properties
             assert properties["estimated_compute_cost"]["enum"] == [
                 "",
                 "none",
@@ -196,6 +201,27 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
             assert "decision_rule" not in experiment_schema["required"]
             assert "tests_hypotheses" in experiment_schema["properties"]
             assert "depends_on_experiments" in experiment_schema["properties"]
+            assert "expected_value" not in experiment_schema["properties"]
+            assert "blocking_reason" not in experiment_schema["properties"]
+        if tool["name"] == "query_research_graph_sql":
+            assert set(properties) == {"sql"}
+            assert tool["parameters"]["required"] == ["sql"]
+            assert properties["sql"]["type"] == "string"
+        if tool["name"] == "evaluate_research_experiments":
+            assert {
+                "experiment_ids",
+                "innovation_scores",
+                "conservative_scores",
+                "innovation_recommendation",
+                "conservative_recommendation",
+                "evaluation_memo",
+            } == set(properties)
+            assert set(tool["parameters"]["required"]) == {
+                "experiment_ids",
+                "innovation_scores",
+                "conservative_scores",
+            }
+            assert "maxItems" not in properties["experiment_ids"]
         if tool["name"] == "record_research_result":
             assert properties["experiment_node_id"]["type"] == "string"
             assert properties["experiment_node_id"]["default"] == ""

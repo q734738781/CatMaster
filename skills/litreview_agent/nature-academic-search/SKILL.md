@@ -50,7 +50,7 @@ Use the returned local path for subsequent reading. Do not reopen the same remot
 
 ### 4. Retrieve and synthesize
 
-Read local sources directly while the set is manageable. Ingest them into the corpus only when compact repeated retrieval across several documents is useful; corpus indexing is not required before reading one source. Separate observation, derived analysis, author interpretation, and review-level synthesis. Compare claim-relevant attributes rather than collapsing them into an evidence score, and keep experimental conditions aligned before comparing quantitative values. This does not prohibit a LATS candidate-selection score for triage or reading order: preserve its component utility scores and label its purpose explicitly, but never reuse the total as evidence strength or claim confidence.
+Read local sources directly while the set is manageable. Ingest them into the corpus only when compact repeated retrieval across several documents is useful; corpus indexing is not required before reading one source. Separate observation, derived analysis, author interpretation, and review-level synthesis. Compare claim-relevant attributes rather than collapsing them into an evidence score, and keep experimental conditions aligned before comparing quantitative values. Select papers as `selected`, `deferred`, or `excluded` with task-specific reasons; do not calculate a composite paper value.
 
 Use `general-purpose` only to isolate a bounded discovery or local source-reading branch that would materially inflate the parent context. Return concise scientific findings and local evidence paths.
 

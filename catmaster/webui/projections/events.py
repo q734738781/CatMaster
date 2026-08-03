@@ -7,7 +7,7 @@ from catmaster.webui.thread_models import ThreadEventEnvelope
 
 from .common import redact_internal_text, safe_scalar_fields
 from .errors import project_error_part
-from .messages import project_message, project_part
+from .messages import project_current_todo_parts, project_message, project_part
 from .models import PublicEvent, PublicEventData, PublicField, PublicPart
 
 
@@ -50,6 +50,10 @@ def project_event(
         raw_message = data.get("message")
         if isinstance(raw_message, dict):
             projected.message = project_message(raw_message, workspace=workspace)
+            projected.todo_parts = project_current_todo_parts(
+                [raw_message],
+                workspace=workspace,
+            )
         public_name = "message.completed"
     elif name in {"message.failed", "error"}:
         public_name = "run.failed"

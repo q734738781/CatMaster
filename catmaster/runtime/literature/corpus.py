@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -10,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from catmaster.tools.base import resolve_scoped_path, system_root, workspace_root
 
@@ -35,11 +37,21 @@ class IngestLiteratureFilesInput(BaseModel):
 
 
 class QueryLiteratureCorpusInput(BaseModel):
-    """[literature/corpus] Retrieve compact claim-relevant spans from already ingested full text."""
+    """[literature/corpus] Locate claim-relevant spans in ingested full text with continuation."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=2, description="Focused claim, mechanism, material, or comparison to retrieve evidence for.")
-    top_k: int = Field(6, ge=1, le=12, description="Maximum number of evidence spans to return.")
-    max_chars_per_span: int = Field(900, ge=200, le=1600, description="Maximum characters retained for each evidence span.")
+    page_size: int = Field(
+        20,
+        ge=1,
+        le=100,
+        description="Number of locator hits in this page; use the returned cursor to continue.",
+    )
+    cursor: str = Field(
+        "",
+        description="Opaque continuation cursor from the preceding page; leave empty for the first page.",
+    )
 
 
 @dataclass(frozen=True)
@@ -293,8 +305,42 @@ def ingest_literature_files(payload: dict[str, Any]) -> tuple[str, dict[str, Any
 
 
 def _fts_query(text: str) -> str:
-    tokens = re.findall(r"[\w+.-]{2,}", str(text or ""), flags=re.UNICODE)[:16]
+    tokens = re.findall(r"[\w+.-]{2,}", str(text or ""), flags=re.UNICODE)
     return " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens)
+
+
+def _query_cursor(*, query: str, offset: int) -> str:
+    payload = {
+        "query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+        "offset": int(offset),
+    }
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_query_cursor(*, query: str, cursor: str) -> int:
+    value = str(cursor or "").strip()
+    if not value:
+        return 0
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        expected = hashlib.sha256(query.encode("utf-8")).hexdigest()
+        if payload.get("query_hash") != expected:
+            raise ValueError
+        offset = int(payload["offset"])
+        if offset < 0:
+            raise ValueError
+        return offset
+    except (
+        binascii.Error,
+        KeyError,
+        TypeError,
+        UnicodeDecodeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        raise ValueError("Corpus continuation cursor is invalid for this query.") from exc
 
 
 def query_literature_corpus(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -302,23 +348,28 @@ def query_literature_corpus(payload: dict[str, Any]) -> tuple[str, dict[str, Any
     match = _fts_query(params.query)
     if not match:
         raise ValueError("Corpus query must contain searchable terms.")
+    offset = _decode_query_cursor(query=params.query, cursor=params.cursor)
     with _connect() as connection:
+        total = int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM chunks WHERE chunks MATCH ?",
+                (match,),
+            ).fetchone()["count"]
+        )
         rows = connection.execute(
             """
             SELECT document_id, source_path, doi, page, section,
-                   snippet(chunks, 5, '[match]', '[/match]', ' ... ', 30) AS snippet,
-                   bm25(chunks) AS score
+                   snippet(chunks, 5, '[match]', '[/match]', ' ... ', 30) AS snippet
             FROM chunks
             WHERE chunks MATCH ?
-            ORDER BY score
-            LIMIT ?
+            ORDER BY bm25(chunks), source_path, page, section, rowid
+            LIMIT ? OFFSET ?
             """,
-            (match, params.top_k),
+            (match, params.page_size, offset),
         ).fetchall()
 
     evidence = []
     for row in rows:
-        snippet = _normalize_text(row["snippet"] or "")[: params.max_chars_per_span]
         evidence.append(
             {
                 "document_id": row["document_id"],
@@ -326,17 +377,33 @@ def query_literature_corpus(payload: dict[str, Any]) -> tuple[str, dict[str, Any
                 "doi": row["doi"] or "",
                 "page": int(row["page"] or 0),
                 "section": row["section"] or "",
-                "score": round(float(row["score"] or 0.0), 6),
-                "text": snippet,
+                "partial": True,
+                "snippet": _normalize_text(row["snippet"] or ""),
             }
         )
-    data = {"status": "ok", "query": params.query, "evidence": evidence, "count": len(evidence)}
+    next_offset = offset + len(evidence)
+    next_cursor = (
+        _query_cursor(query=params.query, offset=next_offset)
+        if next_offset < total
+        else ""
+    )
+    data = {
+        "query": params.query,
+        "partial": True,
+        "evidence": evidence,
+        "total_count": total,
+        "next_cursor": next_cursor,
+    }
     if evidence:
-        lines = [f"Corpus evidence for: {params.query}"]
+        lines = [f"Partial corpus locators for: {params.query}"]
         for index, item in enumerate(evidence, start=1):
             lines.append(
-                f"[{index}] {item['source_path']} p.{item['page']} ({item['document_id']})\n{item['text']}"
+                f"[{index}] {item['source_path']} p.{item['page']} "
+                f"§{item['section']} ({item['document_id']})\n"
+                f"Partial locator snippet: {item['snippet']}"
             )
+        if next_cursor:
+            lines.append(f"Continue with cursor: {next_cursor}")
         content = "\n\n".join(lines)
     else:
         content = f"No ingested full-text evidence matched: {params.query}"
