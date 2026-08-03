@@ -2353,9 +2353,18 @@ class StreamingSpecialistRunner:
         ingest = getattr(usage_handler, "ingest_ai_message", None)
         if not callable(ingest):
             return
-        agent_name = self._usage_agent_name(metadata or {}, usage_handler)
+        event_metadata = metadata or {}
+        agent_name = self._usage_agent_name(event_metadata, usage_handler)
+        model_label = str(
+            event_metadata.get("catmaster_model_label") or ""
+        ).strip()
         for message in translator._extract_messages_from_payload(payload):
-            ingest(message, call_id=call_id, agent_name=agent_name)
+            ingest(
+                message,
+                call_id=call_id,
+                agent_name=agent_name,
+                model_label=model_label,
+            )
 
     async def _consume_agent_stream(
         self,

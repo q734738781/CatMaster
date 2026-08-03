@@ -878,8 +878,10 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             callback_kwargs=kwargs,
         )
         agent_name = self._agent_name(ctx)
+        model_label = str(ctx.get("catmaster_model_label") or "").strip()
         self._llm_pending[str(run_id)] = {
             "model": model,
+            "model_label": model_label,
             "start_ts": time.time(),
             "agent_name": agent_name,
             "task_id": str(ctx.get("task_id") or ""),
@@ -895,6 +897,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
                 step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
                 payload={
                     "model": model,
+                    "model_label": model_label,
                     "agent_name": agent_name,
                     "callback_run_id": str(run_id),
                     "parent_callback_run_id": str(parent_run_id or ""),
@@ -909,6 +912,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
             payload={
                 "model": model,
+                "model_label": model_label,
                 "agent_name": agent_name,
                 "callback_run_id": str(run_id),
                 "parent_callback_run_id": str(parent_run_id or ""),
@@ -937,6 +941,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             payload={
                 "model": str(info.get("model") or ""),
+                "model_label": str(info.get("model_label") or ""),
                 "agent_name": str(info.get("agent_name") or ""),
                 "callback_run_id": str(run_id),
                 "parent_callback_run_id": str(parent_run_id or ""),
@@ -977,6 +982,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             payload={
                 "model": str(info.get("model") or ""),
+                "model_label": str(info.get("model_label") or ""),
                 "agent_name": str(info.get("agent_name") or ""),
                 "callback_run_id": str(run_id),
                 "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
@@ -993,6 +999,7 @@ class ObservabilityCallbackHandler(BaseCallbackHandler):
             step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             payload={
                 "model": str(info.get("model") or ""),
+                "model_label": str(info.get("model_label") or ""),
                 "agent_name": str(info.get("agent_name") or ""),
                 "callback_run_id": str(run_id),
                 "parent_callback_run_id": str(parent_run_id or info.get("parent_callback_run_id") or ""),
@@ -1591,8 +1598,10 @@ class UIEventHandler(BaseCallbackHandler):
             callback_kwargs=kwargs,
         )
         agent_name = self._agent_name(ctx)
+        model_label = str(ctx.get("catmaster_model_label") or "").strip()
         self._llm_pending[str(run_id)] = {
             "model": model,
+            "model_label": model_label,
             "start_ts": time.time(),
             "task_id": str(ctx.get("task_id") or ""),
             "step_id": ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
@@ -1607,6 +1616,7 @@ class UIEventHandler(BaseCallbackHandler):
             task_id=str(ctx.get("task_id") or "") or None,
             step_id=ctx.get("step_id") if isinstance(ctx.get("step_id"), int) else None,
             model=model,
+            model_label=model_label,
             phase="react",
             node=str(ctx.get("langgraph_node") or ctx.get("node") or ""),
             agent_name=agent_name,
@@ -1707,6 +1717,7 @@ class UIEventHandler(BaseCallbackHandler):
             task_id=str(info.get("task_id") or "") or None,
             step_id=info.get("step_id") if isinstance(info.get("step_id"), int) else None,
             model=str(info.get("model") or ""),
+            model_label=str(info.get("model_label") or ""),
             phase="react",
             node=str(info.get("node") or ""),
             usage=usage,

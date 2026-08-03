@@ -257,7 +257,10 @@ def test_llm_callbacks_fall_back_to_default_model_name(tmp_path) -> None:
             serialized={"kwargs": {}},
             messages=[[AIMessage(content="hello")]],
             run_id=llm_id,
-            metadata={"lc_agent_name": "materials_worker"},
+            metadata={
+                "lc_agent_name": "materials_worker",
+                "catmaster_model_label": "codex-oauth-main",
+            },
         )
         handler.on_llm_end(
             LLMResult(generations=[[ChatGeneration(message=AIMessage(content="done"))]], llm_output={}),
@@ -271,8 +274,20 @@ def test_llm_callbacks_fall_back_to_default_model_name(tmp_path) -> None:
         if event["name"] in {"LLM_CALL_START", "LLM_CALL_END", "LLM_RAW_REQUEST", "LLM_RAW_RESPONSE"}
     }
     assert event_models == {"gpt-5.5"}
+    event_labels = {
+        event["payload"].get("model_label")
+        for event in snapshot["events"]
+        if event["name"] in {"LLM_CALL_START", "LLM_CALL_END"}
+    }
+    assert event_labels == {"codex-oauth-main"}
     ui_models = {event.payload.get("model") for event in reporter.events if event.name in {"LLM_CALL_START", "LLM_CALL_END"}}
     assert ui_models == {"gpt-5.5"}
+    ui_labels = {
+        event.payload.get("model_label")
+        for event in reporter.events
+        if event.name in {"LLM_CALL_START", "LLM_CALL_END"}
+    }
+    assert ui_labels == {"codex-oauth-main"}
 
 
 def test_observability_callback_hides_injected_tool_runtime(tmp_path) -> None:

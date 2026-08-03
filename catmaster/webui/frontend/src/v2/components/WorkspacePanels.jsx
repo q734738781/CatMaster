@@ -571,6 +571,50 @@ function MonitorMetric({ icon: Icon, label, value, note }) {
   );
 }
 
+function ModelUsageDetails({ usage }) {
+  const rows = Array.isArray(usage?.by_model) ? usage.by_model : [];
+  return (
+    <details className="v2-model-usage-details">
+      <summary>
+        <span><BarChart3 size={15} />Token details by model</span>
+        <small>{rows.length ? `${formatCount(rows.length)} model label${rows.length === 1 ? "" : "s"}` : "No model detail yet"}</small>
+      </summary>
+      <div className="v2-model-usage-body">
+        {rows.length ? (
+          <div className="v2-table-wrap">
+            <table className="v2-table">
+              <thead>
+                <tr>
+                  <th scope="col">Model label</th>
+                  <th scope="col">Calls</th>
+                  <th scope="col">Uncached input</th>
+                  <th scope="col">Cached input</th>
+                  <th scope="col">Cache write</th>
+                  <th scope="col">Output</th>
+                  <th scope="col">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={`${row.model_label || "model"}-${index}`}>
+                    <th scope="row">{displayValue(row.model_label, "Unknown model")}</th>
+                    <td>{formatCount(row.calls)}</td>
+                    <td>{formatCount(row.input_uncached_tokens)}</td>
+                    <td>{formatCount(row.input_cached_tokens)}</td>
+                    <td>{formatCount(row.input_cache_write_tokens)}</td>
+                    <td>{formatCount(row.output_tokens)}</td>
+                    <td>{formatCount(row.total_tokens)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <div className="v2-empty compact">Per-model token details will appear after the first completed model call.</div>}
+      </div>
+    </details>
+  );
+}
+
 function EvolutionTextList({ items, empty = "None recorded." }) {
   const rows = selfEvolutionTextItems(items);
   return rows.length ? (
@@ -1420,6 +1464,7 @@ export function MonitorPanel({ ctx, workspaceName, thread, entrypoint }) {
         <MonitorMetric icon={Database} label="Cost" value={formatCost(overview.cost_usd)} note={`${formatCount(overview.input_tokens)} in · ${formatCount(overview.output_tokens)} out`} />
         <MonitorMetric icon={GitBranch} label="Operations" value={formatCount(overview.tool_calls)} note={`${formatCount(overview.tool_failures)} failed`} />
       </div>
+      <ModelUsageDetails usage={monitor?.usage} />
       <div className="v2-subtabs" role="tablist" aria-label="Monitor views">
         {[
           ["overview", "Overview"],

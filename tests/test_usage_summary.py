@@ -57,6 +57,39 @@ def test_usage_summary_from_langchain_metadata_aggregates_tokens_and_calls(tmp_p
     assert summary["by_role"][0]["output_tokens"] == 50
 
 
+def test_usage_summary_keeps_model_label_but_prices_provider_model(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    priced_models: list[str] = []
+
+    def _pricing(model_name: str):
+        priced_models.append(model_name)
+        return None, {}
+
+    monkeypatch.setattr(
+        "catmaster.runtime.usage_stats.resolve_model_pricing",
+        _pricing,
+    )
+    summary = summarize_usage_from_metadata(
+        {
+            "codex-oauth-luna-worker": {
+                "_catmaster_model_name": "gpt-5.6-luna",
+                "input_tokens": 80,
+                "output_tokens": 20,
+                "total_tokens": 100,
+                "input_token_details": {"cache_read": 50},
+            }
+        },
+        run_dir=tmp_path,
+        call_counts_by_model={"codex-oauth-luna-worker": 1},
+    )
+
+    assert summary["by_model"][0]["name"] == "codex-oauth-luna-worker"
+    assert summary["by_model"][0]["input_uncached_tokens"] == 30
+    assert priced_models == ["gpt-5.6-luna"]
+
+
 def test_write_usage_summary_from_metadata_appends_existing_totals(tmp_path) -> None:
     first = write_usage_summary_from_metadata(
         tmp_path,

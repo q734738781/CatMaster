@@ -101,6 +101,48 @@ class ThreadAgentLoopService:
         self.should_stop = should_stop
         self.on_turn_finished = on_turn_finished
 
+    def _ensure_default_research_graph_binding(
+        self,
+        *,
+        thread: Any,
+        prompt: str,
+        entrypoint: str,
+        inherited: dict[str, Any] | None,
+    ) -> Any:
+        """Attach the unambiguous workspace graph before freezing a Research turn."""
+
+        if (
+            inherited is not None
+            or entrypoint != "research"
+            or str(getattr(thread, "active_research_graph_id", "") or "").strip()
+        ):
+            return thread
+
+        question = str(prompt or "").strip()
+        if not question:
+            return thread
+
+        graph_store = ResearchGraphStore(self.workspace)
+        active_graphs = [
+            graph
+            for graph in graph_store.list_graphs(include_archived=False)
+            if not bool(graph.get("completed"))
+        ]
+        if len(active_graphs) > 1:
+            return thread
+
+        if active_graphs:
+            graph_id = str(active_graphs[0]["graph_id"])
+        else:
+            graph_id = str(
+                graph_store.create_graph(title="", question=question)["graph_id"]
+            )
+        return self.store.update_thread(
+            thread.thread_id,
+            active_research_graph_id=graph_id,
+            research_focus_node_id="",
+        )
+
     def _research_graph_turn_content(
         self,
         *,
@@ -931,6 +973,12 @@ class ThreadAgentLoopService:
         normalized_entrypoint = self.normalize_entrypoint(entrypoint)
         if resume_decisions is None and thread.entrypoint != normalized_entrypoint:
             thread = self.store.update_thread(thread_id, entrypoint=normalized_entrypoint)
+        thread = self._ensure_default_research_graph_binding(
+            thread=thread,
+            prompt=prompt,
+            entrypoint=normalized_entrypoint,
+            inherited=research_context,
+        )
         turn_research_context = self._research_turn_context(
             thread=thread,
             entrypoint=normalized_entrypoint,

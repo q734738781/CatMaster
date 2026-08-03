@@ -863,6 +863,7 @@ def test_web_reporter_runtime_usage_totals_include_cost_summary(monkeypatch) -> 
             category="llm",
             payload={
                 "model": "openai/gpt-5.4",
+                "model_label": "openrouter-main",
                 "agent_name": "materials_worker",
                 "usage": {
                     "input_tokens": 120,
@@ -896,6 +897,7 @@ def test_web_reporter_persists_ui_events_and_usage_summary(tmp_path: Path) -> No
             category="llm",
             payload={
                 "model": "openai/gpt-5.4",
+                "model_label": "openrouter-main",
                 "agent_name": "materials_worker",
                 "usage": {
                     "input_tokens": 120,
@@ -915,10 +917,15 @@ def test_web_reporter_persists_ui_events_and_usage_summary(tmp_path: Path) -> No
     assert usage["cost_usd"] == 0.42
     assert usage["cost_source"] == "exact"
     assert usage["calls"] == 1
+    assert usage["by_model"][0]["name"] == "openrouter-main"
+    assert usage["raw_usage_metadata"]["openrouter-main"][
+        "_catmaster_model_name"
+    ] == "openai/gpt-5.4"
 
     observability = ObservabilityStore(tmp_path).read_snapshot()
     assert observability["metrics"]["llm_calls"] == 1
     assert observability["events"][-1]["name"] == "LLM_CALL_END"
+    assert observability["events"][-1]["payload"]["model_label"] == "openrouter-main"
     event_page = WebSession().read_ui_events(tmp_path, limit=2)
     assert event_page["events"][-1]["seq"] == 1
     assert event_page["events"][-1]["name"] == "LLM_CALL_END"

@@ -52,12 +52,24 @@ def summarize_usage_from_observability(run_dir: Path | str | None) -> Dict[str, 
     for row in rows:
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-        model = str(row.get("model") or payload.get("model") or "unknown").strip() or "unknown"
+        provider_model = str(
+            row.get("model") or payload.get("model") or "unknown"
+        ).strip() or "unknown"
+        model = str(payload.get("model_label") or provider_model).strip() or provider_model
         role = str(row.get("agent_name") or payload.get("agent_name") or "").strip()
-        usage_metadata = _merge_usage_metadata(usage_metadata, {model: usage})
+        aggregate_usage = dict(usage)
+        if model != provider_model:
+            aggregate_usage["_catmaster_model_name"] = provider_model
+        usage_metadata = _merge_usage_metadata(
+            usage_metadata,
+            {model: aggregate_usage},
+        )
         call_counts_by_model[model] = call_counts_by_model.get(model, 0) + 1
         if role:
-            usage_by_role[role] = _merge_usage_metadata(usage_by_role.get(role), {model: usage})
+            usage_by_role[role] = _merge_usage_metadata(
+                usage_by_role.get(role),
+                {model: aggregate_usage},
+            )
             call_counts_by_role[role] = call_counts_by_role.get(role, 0) + 1
 
     summary = summarize_usage_from_metadata(
@@ -159,6 +171,9 @@ def summarize_usage_from_metadata(
     for model_name, usage in usage_payload.items():
         if not isinstance(usage, dict):
             continue
+        provider_model_name = str(
+            usage.get("_catmaster_model_name") or model_name
+        ).strip() or str(model_name)
         in_tok = _to_int(usage.get("input_tokens"))
         out_tok = _to_int(usage.get("output_tokens"))
         tot_tok = _to_int(usage.get("total_tokens"))
@@ -194,7 +209,7 @@ def summarize_usage_from_metadata(
             total_tokens += in_tok + out_tok
 
         call_summary = _call_cost_summary(
-            model_name=str(model_name),
+            model_name=provider_model_name,
             input_tokens=in_tok,
             input_cached_tokens=in_cached_tok,
             input_cache_write_tokens=cache_write_tok,
@@ -239,6 +254,9 @@ def summarize_usage_from_metadata(
         for model_name, usage in role_usage.items():
             if not isinstance(usage, dict):
                 continue
+            provider_model_name = str(
+                usage.get("_catmaster_model_name") or model_name
+            ).strip() or str(model_name)
             in_tok = _to_int(usage.get("input_tokens"))
             out_tok = _to_int(usage.get("output_tokens"))
             input_details = usage.get("input_token_details") if isinstance(usage.get("input_token_details"), dict) else {}
@@ -258,7 +276,7 @@ def summarize_usage_from_metadata(
             role_output += int(out_tok or 0)
             role_reasoning += int(reasoning_tok or 0)
             item_call_summary = _call_cost_summary(
-                model_name=str(model_name),
+                model_name=provider_model_name,
                 input_tokens=in_tok,
                 input_cached_tokens=in_cached_tok,
                 input_cache_write_tokens=cache_write_tok,

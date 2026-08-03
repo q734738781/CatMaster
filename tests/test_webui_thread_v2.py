@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langgraph.types import Command
 
+from catmaster.research.knowledge_graph.store import ResearchGraphStore
 from catmaster.tools.base import ensure_project_space_layout, system_root
 from catmaster.runtime.observability_store import OBSERVABILITY_DB_NAME, ObservabilityStore
 from catmaster.webui.agent_loop import ThreadAgentLoopService
@@ -1038,6 +1039,131 @@ def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) ->
     assert queued["queued"] is True
     assert store.get_thread(thread.thread_id).pending_steering[0]["text"] == "steer"
     assert store.get_thread(thread.thread_id).pending_steering[0]["model_config"] == ""
+
+
+def test_first_research_turn_binds_a_graph_before_freezing_runtime_context(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    first_thread = store.create_thread(entrypoint="research")
+    broker = ThreadEventBroker(workspace=workspace)
+    registry = ArtifactRegistry(workspace=workspace, workspace_id="default")
+    captured_contexts: list[dict[str, str]] = []
+    captured_contents: list[object] = []
+
+    class FakeRunner:
+        def __init__(self, **kwargs):
+            self.thread_store = kwargs["thread_store"]
+
+        async def arun_turn(self, **kwargs):
+            captured_contents.append(kwargs.get("content"))
+            self.thread_store.update_message(
+                kwargs["thread_id"],
+                kwargs["message_id"],
+                status="completed",
+            )
+            self.thread_store.update_thread(
+                kwargs["thread_id"],
+                status="idle",
+                active_message_id="",
+                active_run_id="",
+            )
+            return {"status": "done"}
+
+    def fake_build_runner(**kwargs):
+        captured_contexts.append(dict(kwargs["runtime_context"]))
+        return SimpleNamespace(
+            runner=object(),
+            run_context=SimpleNamespace(
+                run_id=f"run_{len(captured_contexts)}",
+                run_dir=tmp_path / f"run_{len(captured_contexts)}",
+            ),
+        )
+
+    service = ThreadAgentLoopService(
+        workspace=workspace,
+        workspace_id="default",
+        store=store,
+        broker=broker,
+        artifact_registry=registry,
+        thread_tasks={},  # type: ignore[arg-type]
+        thread_stop_flags=set(),
+        build_runner=fake_build_runner,
+        streaming_runner_cls=FakeRunner,
+        permission_mode_for_thread=lambda _thread, override="": override or "hitl",
+        interrupt_on_for_permission_mode=lambda _mode: {},
+        normalize_entrypoint=lambda value: value or "research",
+        should_stop=lambda _thread_id: False,
+    )
+
+    prompt = "Determine which ceramic ablation mechanism is consistent with the evidence."
+    first = awaitable_result(
+        service.submit(
+            thread_id=first_thread.thread_id,
+            payload=SimpleNamespace(
+                text=prompt,
+                attachments=[],
+                entrypoint="research",
+                llm_config="",
+                permission_mode="hitl",
+            ),
+        )
+    )
+
+    graphs = ResearchGraphStore(workspace).list_graphs(include_archived=False)
+    assert len(graphs) == 1
+    graph_id = graphs[0]["graph_id"]
+    assert graphs[0]["question"] == prompt
+    assert store.get_thread(first_thread.thread_id).active_research_graph_id == graph_id
+    assert captured_contexts[0] == {
+        "research_graph_id": graph_id,
+        "research_focus_node_id": "",
+        "research_launch_id": "",
+    }
+    assert first["assistant_message"].meta["research_graph_id"] == graph_id
+    assert "# Active Research Graph: partial focus snippet" in str(captured_contents[0])
+    assert prompt in str(captured_contents[0])
+
+    second_thread = store.create_thread(entrypoint="research")
+    awaitable_result(
+        service.submit(
+            thread_id=second_thread.thread_id,
+            payload=SimpleNamespace(
+                text="Continue this workspace research from another thread.",
+                attachments=[],
+                entrypoint="research",
+                llm_config="",
+                permission_mode="hitl",
+            ),
+        )
+    )
+    assert store.get_thread(second_thread.thread_id).active_research_graph_id == graph_id
+    assert len(ResearchGraphStore(workspace).list_graphs(include_archived=False)) == 1
+    assert captured_contexts[1]["research_graph_id"] == graph_id
+
+    graph_store = ResearchGraphStore(workspace)
+    graph_store.create_graph(title="Another route", question="Test another route")
+    ambiguous_thread = store.create_thread(entrypoint="research")
+    awaitable_result(
+        service.submit(
+            thread_id=ambiguous_thread.thread_id,
+            payload=SimpleNamespace(
+                text="Continue the relevant research.",
+                attachments=[],
+                entrypoint="research",
+                llm_config="",
+                permission_mode="hitl",
+            ),
+        )
+    )
+    assert store.get_thread(ambiguous_thread.thread_id).active_research_graph_id == ""
+    assert captured_contexts[2] == {
+        "research_graph_id": "",
+        "research_focus_node_id": "",
+        "research_launch_id": "",
+    }
+    assert len(graph_store.list_graphs(include_archived=False)) == 2
 
 
 def test_agent_loop_persists_submit_entrypoint_and_passes_it_to_runner(tmp_path: Path) -> None:

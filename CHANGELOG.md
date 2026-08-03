@@ -8,6 +8,9 @@ references describe the current system.
 
 ### WebUI
 
+- Monitor now provides an expandable per-model-label token table with
+  uncached input, cached input, cache-write, output, total-token, and call
+  counts while keeping raw provider usage metadata out of the public view.
 - Long assistant activity traces now consolidate the latest Todo state at the
   top and group reasoning, progress, and tool calls by subagent invocation.
   Activity appears between the Plan and final prose. Groups with many events or
@@ -90,6 +93,15 @@ references describe the current system.
 
 ### Research Graph
 
+- An unbound thread's first Research turn now binds the workspace's sole open
+  graph, or creates a manual graph from that request when none exists, before
+  the turn context is frozen. Multiple open graphs still require an explicit
+  choice, and direct Experiment, Literature Review, and Writing turns remain
+  opt-in.
+- Bound-graph SQL and scientific-node mutation tools are no longer shown on
+  unbound turns; unbound Research retains graph listing and creation. Temporary
+  plan staging and the Experiment evaluator are exposed only for a trusted
+  active internal planning turn at the current graph revision.
 - Research Graph execution binding is now turn-scoped in long-lived WebUI
   threads. Experiment and Literature Review can explicitly record a sourced
   linked or standalone Result only against the graph/focus snapshot captured at

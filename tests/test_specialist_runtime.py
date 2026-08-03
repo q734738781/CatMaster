@@ -518,6 +518,155 @@ def test_experiment_graph_tools_exist_only_on_a_bound_top_level_turn(
     assert nested_names == unbound_names
 
 
+def test_research_tools_and_reasoning_roles_follow_turn_planning_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project_space"
+    service = ResearchGraphService(workspace=workspace, workspace_id="proj")
+    created = service.create_graph(
+        GraphCreateRequest(question="Which mechanism controls selectivity?")
+    )
+    graph_id = created["graph"]["graph_id"]
+    revision = created["graph"]["revision"]
+    bound_thread = service.thread_store.create_thread(
+        title="Ordinary bound Research",
+        entrypoint="research",
+    )
+    service.thread_store.update_thread(
+        bound_thread.thread_id,
+        active_research_graph_id=graph_id,
+    )
+    planning, claimed = service.store.claim_planning(
+        graph_id,
+        expected_revision=revision,
+    )
+    assert claimed is True
+    planning_thread = service.thread_store.create_thread(
+        title="Internal planning",
+        entrypoint="research",
+    )
+    service.thread_store.update_thread(
+        planning_thread.thread_id,
+        active_research_graph_id=graph_id,
+    )
+    service.store.update_planning(
+        graph_id,
+        planning["planning_id"],
+        start_revision=revision,
+        status="attached",
+        thread_id=planning_thread.thread_id,
+    )
+
+    unbound = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+        runtime_context={
+            "research_graph_id": "",
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
+    )
+    bound = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
+    )
+    planning_runner = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="research",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
+    )
+    monkeypatch.setattr(runtime_mod, "build_chat_model", lambda cfg: {"model": cfg.model})
+    monkeypatch.setattr(
+        runtime_mod.SpecialistRunner,
+        "_load_subagent",
+        staticmethod(lambda: _FakeSubAgent),
+    )
+
+    def _tool_names(runner: Any, thread_id: str) -> set[str]:
+        return {
+            tool.name
+            for tool in runner._specialist_tools(
+                "research",
+                thread_id=thread_id,
+            )
+        }
+
+    unbound_tools = _tool_names(unbound.runner, "thread_unbound")
+    bound_tools = _tool_names(bound.runner, bound_thread.thread_id)
+    planning_tools = _tool_names(
+        planning_runner.runner,
+        planning_thread.thread_id,
+    )
+    assert unbound_tools == {
+        "create_research_graph",
+        "list_research_graphs",
+        "web_search",
+    }
+    assert "query_research_graph_sql" in bound_tools
+    assert "stage_research_plan" not in bound_tools
+    assert "stage_research_plan" in planning_tools
+
+    fake_runtime: dict[str, object] = {}
+    unbound_reasoning = unbound.runner._scientific_reasoning_subagents(
+        runtime=fake_runtime,
+        thread_id="thread_unbound",
+    )
+    bound_reasoning = bound.runner._scientific_reasoning_subagents(
+        runtime=fake_runtime,
+        thread_id=bound_thread.thread_id,
+    )
+    planning_reasoning = planning_runner.runner._scientific_reasoning_subagents(
+        runtime=fake_runtime,
+        thread_id=planning_thread.thread_id,
+    )
+    assert [item.kwargs["name"] for item in unbound_reasoning] == [
+        "evidence_judge"
+    ]
+    assert [item.kwargs["name"] for item in bound_reasoning] == [
+        "hypothesis_proposer",
+        "evidence_judge",
+    ]
+    assert [item.kwargs["name"] for item in planning_reasoning] == [
+        "hypothesis_proposer",
+        "evidence_judge",
+        "experiment_evaluator",
+    ]
+    assert "query_research_graph_sql" not in {
+        tool.name for tool in unbound_reasoning[0].kwargs["tools"]
+    }
+    assert "stage_research_plan" not in {
+        tool.name for tool in bound_reasoning[0].kwargs["tools"]
+    }
+    assert "stage_research_plan" in {
+        tool.name for tool in planning_reasoning[0].kwargs["tools"]
+    }
+    assert "evaluate_research_experiments" in {
+        tool.name for tool in planning_reasoning[2].kwargs["tools"]
+    }
+
+
 def test_specialist_callbacks_include_ui_event_handler(tmp_path: Path) -> None:
     workspace = tmp_path / "project_space"
     workspace.mkdir(parents=True)
@@ -1330,6 +1479,42 @@ def test_specialist_usage_callback_tracks_agent_scoped_usage() -> None:
     assert handler.usage_metadata_by_role["writing_specialist"]["openai/gpt-5.4-20260305"]["input_tokens"] == 25
 
 
+def test_specialist_usage_callback_groups_by_configured_model_label() -> None:
+    handler = runtime_mod.SpecialistUsageCallbackHandler(
+        default_agent_name="writing_specialist"
+    )
+    message = AIMessage(
+        content="done",
+        response_metadata={"model_name": "gpt-5.6-luna"},
+        usage_metadata={
+            "input_tokens": 100,
+            "output_tokens": 12,
+            "total_tokens": 112,
+            "input_token_details": {"cache_read": 60},
+        },
+    )
+    result = LLMResult(generations=[[ChatGeneration(message=message)]])
+
+    handler.on_chat_model_start(
+        {},
+        [[]],
+        run_id="run-labeled",
+        metadata={
+            "lc_agent_name": "writing_worker_agent",
+            "catmaster_model_label": "codex-oauth-luna-worker",
+        },
+    )
+    handler.on_llm_end(result, run_id="run-labeled")
+
+    assert handler.call_counts_by_model == {"codex-oauth-luna-worker": 1}
+    usage = handler.usage_metadata["codex-oauth-luna-worker"]
+    assert usage["_catmaster_model_name"] == "gpt-5.6-luna"
+    assert usage["input_tokens"] == 100
+    assert handler.usage_metadata_by_role["writing_worker_agent"][
+        "codex-oauth-luna-worker"
+    ]["output_tokens"] == 12
+
+
 def test_specialist_usage_callback_falls_back_to_default_agent_name() -> None:
     handler = runtime_mod.SpecialistUsageCallbackHandler(default_agent_name="experiment_specialist")
     message = AIMessage(
@@ -1753,6 +1938,32 @@ def test_research_reasoning_final_model_surface_reads_only_scoped_skill(
     workspace = tmp_path / "project_space"
     files_root = workspace / "files"
     files_root.mkdir(parents=True)
+    graph_service = ResearchGraphService(workspace=workspace, workspace_id="proj")
+    graph = graph_service.create_graph(
+        GraphCreateRequest(question="Which route should be planned next?")
+    )
+    graph_id = graph["graph"]["graph_id"]
+    revision = graph["graph"]["revision"]
+    planning, claimed = graph_service.store.claim_planning(
+        graph_id,
+        expected_revision=revision,
+    )
+    assert claimed is True
+    planning_thread = graph_service.thread_store.create_thread(
+        title="Internal planning",
+        entrypoint="research",
+    )
+    graph_service.thread_store.update_thread(
+        planning_thread.thread_id,
+        active_research_graph_id=graph_id,
+    )
+    graph_service.store.update_planning(
+        graph_id,
+        planning["planning_id"],
+        start_revision=revision,
+        status="attached",
+        thread_id=planning_thread.thread_id,
+    )
     built = build_specialist_runner(
         workspace=workspace,
         llm_profile=_FakeProfile(),
@@ -1760,8 +1971,16 @@ def test_research_reasoning_final_model_surface_reads_only_scoped_skill(
         run_control=None,
         project_id="proj",
         preferred_entrypoint="research",
+        runtime_context={
+            "research_graph_id": graph_id,
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        },
     )
-    built.runner._stage_deepagent_assets(files_root, thread_id="thread-1")
+    built.runner._stage_deepagent_assets(
+        files_root,
+        thread_id=planning_thread.thread_id,
+    )
     reasoning_root = built.runner._skill_roots_for_group("research_reasoning")[0]
     skill_path = f"{reasoning_root}/{skill_name}/SKILL.md"
 
@@ -1807,7 +2026,7 @@ def test_research_reasoning_final_model_surface_reads_only_scoped_skill(
         system_prompt="Read the applicable skill before acting.",
         tools=built.runner._research_reasoning_tools(
             role=role,
-            thread_id="thread-1",
+            thread_id=planning_thread.thread_id,
             extra_names=extra_names,
         ),
         middleware=built.runner._research_reasoning_middleware(),
@@ -1968,7 +2187,6 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
                 "general-purpose",
                 "hypothesis_proposer",
                 "evidence_judge",
-                "experiment_evaluator",
                 "experiment_specialist",
                 "writing_specialist",
                 "peer_review_specialist",
@@ -2060,6 +2278,15 @@ def test_specialist_lanes_start_with_staged_skills(
         run_control=None,
         project_id="proj",
         preferred_entrypoint=entrypoint,
+        runtime_context=(
+            {
+                "research_graph_id": bound_graph_id,
+                "research_focus_node_id": "",
+                "research_launch_id": "",
+            }
+            if entrypoint == "research"
+            else None
+        ),
     )
 
     result = asyncio.run(
@@ -2188,7 +2415,8 @@ def test_specialist_lanes_start_with_staged_skills(
 
     if entrypoint == "research":
         assert {tool.name for tool in agent_kwargs["tools"]} == (
-            _RESEARCH_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+            (_RESEARCH_TOOL_ALLOWLIST - {"stage_research_plan"})
+            | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
         )
         assert "Research Graph contract" in agent_kwargs["system_prompt"]
         assert "Never guess among multiple graphs" in agent_kwargs["system_prompt"]
@@ -2226,23 +2454,14 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "runnable" in subagents_by_name["peer_review_specialist"]
         proposer = subagents_by_name["hypothesis_proposer"]
         judge = subagents_by_name["evidence_judge"]
-        evaluator = subagents_by_name["experiment_evaluator"]
         assert {tool.name for tool in proposer["tools"]} == {
             "acquire_literature_source",
             "query_literature_corpus",
             "query_research_graph_sql",
-            "stage_research_plan",
             "web_search",
         }
         assert {tool.name for tool in judge["tools"]} == {
             "acquire_literature_source",
-            "query_literature_corpus",
-            "query_research_graph_sql",
-            "web_search",
-        }
-        assert {tool.name for tool in evaluator["tools"]} == {
-            "acquire_literature_source",
-            "evaluate_research_experiments",
             "query_literature_corpus",
             "query_research_graph_sql",
             "web_search",
@@ -2253,15 +2472,13 @@ def test_specialist_lanes_start_with_staged_skills(
         } <= {
             type(item).__name__ for item in proposer["middleware"]
         }
-        for reasoning in (proposer, judge, evaluator):
+        for reasoning in (proposer, judge):
             _assert_native_skill_groups(reasoning, "research_reasoning")
         assert proposer["model"] == {"model": "hypothesis_proposer-model"}
         assert judge["model"] == {"model": "evidence_judge-model"}
-        assert evaluator["model"] == {"model": "hypothesis_proposer-model"}
         assert "evidence attributes, not a global strength grade" in judge["system_prompt"]
         assert "response_format" not in proposer
         assert "response_format" not in judge
-        assert "response_format" not in evaluator
         assert "does not execute scientific experiments" in proposer["description"]
         assert "does not propose branches or schedule work" in judge["description"]
 
@@ -2531,7 +2748,10 @@ def test_specialist_lanes_start_with_staged_skills(
             for item in ml_worker_kwargs["middleware"]
         )
     elif entrypoint == "writing":
-        assert {tool.name for tool in agent_kwargs["tools"]} == (_WRITING_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
+        assert {tool.name for tool in agent_kwargs["tools"]} == (
+            (_WRITING_TOOL_ALLOWLIST - {"query_research_graph_sql"})
+            | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES
+        )
         _assert_native_skill_groups(agent_kwargs, "writing_specialist", "writing_quality")
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         writing_worker_kwargs = _find_created_agent("writing_worker_agent")

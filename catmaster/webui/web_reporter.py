@@ -434,18 +434,23 @@ class WebReporter(Reporter):
                     }
                 )
             model_name = str(payload.get("model") or self._llm_state.get("model") or "").strip()
+            model_label = str(payload.get("model_label") or "").strip()
+            usage_bucket = model_label or model_name
             agent_name = str(payload.get("agent_name") or "").strip()
-            if model_name and usage:
-                self._usage_metadata_by_model[model_name] = _merge_usage_payload(
-                    self._usage_metadata_by_model.get(model_name) if isinstance(self._usage_metadata_by_model.get(model_name), dict) else {},
-                    usage,
+            if usage_bucket and usage:
+                aggregate_usage = dict(usage)
+                if model_label and model_name:
+                    aggregate_usage["_catmaster_model_name"] = model_name
+                self._usage_metadata_by_model[usage_bucket] = _merge_usage_payload(
+                    self._usage_metadata_by_model.get(usage_bucket) if isinstance(self._usage_metadata_by_model.get(usage_bucket), dict) else {},
+                    aggregate_usage,
                 )
-                self._call_counts_by_model[model_name] = int(self._call_counts_by_model.get(model_name, 0)) + 1
+                self._call_counts_by_model[usage_bucket] = int(self._call_counts_by_model.get(usage_bucket, 0)) + 1
                 if agent_name:
                     role_bucket = self._usage_metadata_by_role.setdefault(agent_name, {})
-                    role_bucket[model_name] = _merge_usage_payload(
-                        role_bucket.get(model_name) if isinstance(role_bucket.get(model_name), dict) else {},
-                        usage,
+                    role_bucket[usage_bucket] = _merge_usage_payload(
+                        role_bucket.get(usage_bucket) if isinstance(role_bucket.get(usage_bucket), dict) else {},
+                        aggregate_usage,
                     )
                     self._call_counts_by_role[agent_name] = int(self._call_counts_by_role.get(agent_name, 0)) + 1
                 self._usage_totals = summarize_usage_from_metadata(

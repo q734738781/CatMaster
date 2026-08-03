@@ -66,6 +66,8 @@ Research Graph 是 workspace 级科学图，不属于当前 thread。顶部 cata
 
 New graph 只强制填写研究问题。标题、完成条件、编排模式和 seed hypotheses 都收在可选设置中；完成条件留空时，系统使用可见默认值：由已记录 Result 和可追溯来源支撑一个站得住脚的答案。seed Hypothesis 只需一条 claim，也可以在创建时直接附上启发它的论文、note 或其他来源。没有 seed 时，可以直接点击 “Ask Research to propose starting routes”，不必先在 Chat 中让 Agent 初始化。
 
+未绑定 thread 第一次提交 Research 回合时，会在模型启动前完成附着：workspace 中只有一个未完成且未归档的 graph 时直接复用；一个也没有时，以本次 Research 请求作为研究问题创建 manual graph；存在多个 open graph 时保持未绑定，由用户明确选择。这个默认行为只作用于 Research Entry，直接使用 Experiment、Literature Review 或 Writing 不会静默选择或创建 graph。自动附着只是提供连续性和导航，不会迫使一次性问题生成科学节点。
+
 图中只有三种科学节点：
 
 - Hypothesis 显示简短命题、相对重要性及由所有 Result 派生的关系概览；这不是证据等级。
@@ -76,7 +78,7 @@ New graph 只强制填写研究问题。标题、完成条件、编排模式和 
 
 “Add scientific input” 支持先写一两句话：Hypothesis 只需 claim，draft Experiment 只需 objective，Observation/Result 只需 summary；标题、rationale、predictions、关系、优先级、解释和来源都在可选细节中。draft Experiment 可以暂时不完整，但没有 plan 和 decision rule 时不能标记为 Ready，也不能运行。Hypothesis 可以发展实验 proposal、编辑或查看关联证据。Experiment 可以准备、运行、复现、查看 active launch、添加依赖、记录结果或标记阻塞。Result 可以由用户直接发展新 Hypothesis 或 follow-up Experiment；它对任一 Hypothesis 的支持、反对或无法区分判断也可以事后新增、替换或清除，不必重建 Result。图中允许科学循环和分叉；只有 Experiment 的 dependency 关系必须无环。
 
-Research Specialist 创建 graph 后会自动附着到当前 thread。每轮开始时，host 固定该轮
+Research Specialist 显式创建 graph 后也会自动附着到当前 thread。每轮开始时，host 固定该轮
 实际 Entry、Graph、focus 和匹配的未完成 launch；运行中切换界面 focus 不会改变已经在跑的
 工具目标，interrupt resume 也沿用被中断轮的绑定。顶层 Experiment 或 Literature Review
 只有在本轮绑定 graph 时才获得只读查询和 Result 写回；Experiment focus 会产生 linked
@@ -89,7 +91,7 @@ run 来源，Writing 继续只读并沿来源打开原始证据。
 
 Research planning 先给 `hypothesis_proposer` 一份 partial focus snippet，并提供完整绑定图的只读 SQL 查询。proposer 也可以按需检索网络与本地 corpus，并读取或获取已选来源。Result-focused planning 会先比较新 Result、已有预测和旧 Result，再决定是否需要真正不同的新 Hypothesis；也可以判断本轮无需新增分支。staging action 只发布带来源的临时 Hypothesis/Experiment，不会实体化或启动。分支数量由当前证据支持的科学差异决定。临时 Experiment 可以只是只有 objective 的 draft，补齐可执行 plan 和 decision rule 后才会成为 runnable。
 
-evaluator 会比较当前 revision 的全部候选 Experiment，包括完整 runnable frontier，并分别给出创新分和保守分。这些数值及两种推荐只存在于当前 preview。候选分支在落图前以半透明节点显示，inspector 会同时展示两种分数和推荐。planning run 不会污染普通 thread 列表。Manual 模式下可以点击临时节点把相关路线原子加入图中；未选分支会随下一次 planning 替换，不进入永久科学图。
+只有具备可信 Graph turn snapshot 的回合才会看到 Graph SQL；staging action 和 evaluator 只在有效的内部 planning thread 中暴露。evaluator 会比较当前 revision 的全部候选 Experiment，包括完整 runnable frontier，并分别给出创新分和保守分。这些数值及两种推荐只存在于当前 preview。候选分支在落图前以半透明节点显示，inspector 会同时展示两种分数和推荐。planning run 不会污染普通 thread 列表。Manual 模式下可以点击临时节点把相关路线原子加入图中；未选分支会随下一次 planning 替换，不进入永久科学图。
 
 Automatic orchestration 会在每次 graph 变化后先重新规划，再最多运行一个真实 Experiment；这只限制执行并发，不限制图中并行 Hypothesis 的数量。系统默认采用当前 revision 的保守推荐。推荐临时 Experiment 时先通过独立转换实体化；推荐已有 ready Experiment 时可以直接启动。no-change、评价缺失或无效、推荐为空，或 graph 被并发修改时，系统会保持等待，不会退回 runnable frontier 的第一项。完成条件被已有 Result 满足后，graph 标记为 Completed 并停止自动推进。切回 Manual 只停止后续自动启动，不取消当前 thread 或远程任务。
 
@@ -140,7 +142,7 @@ Files 上传同名文件会覆盖，删除目录是永久递归操作。重要�
 
 ## Monitor 用来判断过程是否正常
 
-Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机器时间汇总起来。每次 LLM 调用完成后都会更新 token 统计；provider 提供时会分别记录 input、output、cache 和 reasoning token，仍在运行的单次调用则暂时没有最终用量。Overview 适合快速看状态和规模；Live 显示当前阶段、活动工具、Todo、subagent 与近期日志；Events 可以按 thread、run、agent、tool、category 和 channel 过滤；Raw 和 Details 用于排查更具体的问题。
+Monitor 将一次运行的模型、Agent、tools、tasks、token、费用和机器时间汇总起来。每次 LLM 调用完成后都会更新 token 统计；provider 提供时会分别记录 input、output、cache 和 reasoning token，仍在运行的单次调用则暂时没有最终用量。展开 **Token details by model** 可以按 `llm.yaml` 中的模型标签查看未缓存输入、缓存输入、缓存写入、输出、总 token 和已完成调用数。Overview 适合快速看状态和规模；Live 显示当前阶段、活动工具、Todo、subagent 与近期日志；Events 可以按 thread、run、agent、tool、category 和 channel 过滤；Raw 和 Details 用于排查更具体的问题。
 
 当 Agent 看似停住时，先看 Live 中是否仍有远程 tool 或 subagent 在运行。当结果不完整时，查 Events 中的 tool error、document warning 或 multimodal 状态。当成本异常时，查看模型调用、token 和远程机器时间。Monitor 是诊断界面，不需要作为日常报告手工抄写。
 

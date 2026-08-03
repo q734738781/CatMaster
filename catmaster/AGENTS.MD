@@ -230,11 +230,14 @@ scientific state belongs to a workspace Research Graph in
 through its formal `active_research_graph_id` and `research_focus_node_id`
 fields. The binding is attention, not ownership.
 
-Use a Research Graph when a question needs falsifiable hypotheses, several
-experiments, evidence shared across explanations, or continuation across
-threads. A one-off answer does not need a graph. When several active graphs
-exist, use the explicitly bound graph or ask the user to choose. Never scan
-workspace files and guess from similar titles.
+Before an unbound ordinary Research entry turn freezes its runtime context, the
+host attaches the workspace's sole open non-archived graph, or creates a manual
+graph from that Research request when none exists. When several active graphs
+exist, keep the turn unbound and ask the user to choose. Never scan workspace
+files and guess from similar titles. This default applies only to Research;
+direct Experiment, Literature Review, and Writing turns remain opt-in. A
+one-off answer does not require creating Graph nodes merely because the host
+attached a graph.
 
 The scientific model has only Hypothesis, Experiment, and Result nodes.
 Hypotheses may carry one coarse relative importance band. Experiments may carry
@@ -261,6 +264,9 @@ proposer, and evidence judge one host-bound read-only SQLite query tool whose
 model-visible input is only a required SQL string. A general-purpose child under
 the Research specialist may inherit this read-only tool through the existing GP
 factory; general-purpose children under other entrypoints must not receive it.
+An unbound Research turn sees only graph listing and creation, not the query or
+mutation surface. Expose temporary plan staging and `experiment_evaluator` only
+for a trusted active internal planning thread at the current graph revision.
 The host derives the workspace, graph ID, and planning revision from trusted
 thread state. The model must not pass database paths, binding identifiers,
 capacity controls, or output modes.

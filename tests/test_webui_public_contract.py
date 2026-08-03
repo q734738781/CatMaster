@@ -85,6 +85,68 @@ def _read_diagnostics_json(
     return json.loads(serialized), pages
 
 
+def test_monitor_projection_exposes_bounded_token_rows_by_model_label() -> None:
+    projected = project_monitor_snapshot(
+        {
+            "selected_run": "run_usage",
+            "usage_summary": {
+                "input_tokens": 180,
+                "input_uncached_tokens": 70,
+                "input_cached_tokens": 110,
+                "output_tokens": 30,
+                "total_tokens": 210,
+                "raw_usage_metadata": {"private": {"request": "not public"}},
+                "by_model": [
+                    {
+                        "name": "codex-oauth-main",
+                        "calls": 2,
+                        "input_tokens": 120,
+                        "input_uncached_tokens": 40,
+                        "input_cached_tokens": 80,
+                        "input_cache_write_tokens": 0,
+                        "output_tokens": 20,
+                    },
+                    {
+                        "name": "codex-oauth-luna-worker",
+                        "calls": 1,
+                        "input_tokens": 60,
+                        "input_uncached_tokens": 30,
+                        "input_cached_tokens": 30,
+                        "input_cache_write_tokens": 0,
+                        "output_tokens": 10,
+                    },
+                ],
+            },
+        },
+        workspace=None,
+        diagnostics_available=False,
+    )
+
+    assert projected["overview"]["input_uncached_tokens"] == 70
+    assert projected["overview"]["input_cached_tokens"] == 110
+    assert projected["usage"]["by_model"] == [
+        {
+            "model_label": "codex-oauth-main",
+            "calls": 2,
+            "input_uncached_tokens": 40,
+            "input_cached_tokens": 80,
+            "input_cache_write_tokens": 0,
+            "output_tokens": 20,
+            "total_tokens": 140,
+        },
+        {
+            "model_label": "codex-oauth-luna-worker",
+            "calls": 1,
+            "input_uncached_tokens": 30,
+            "input_cached_tokens": 30,
+            "input_cache_write_tokens": 0,
+            "output_tokens": 10,
+            "total_tokens": 70,
+        },
+    ]
+    assert "raw_usage_metadata" not in projected["usage"]
+
+
 def test_ordinary_message_projection_hides_raw_and_diagnostics_recovers_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

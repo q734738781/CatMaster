@@ -2706,6 +2706,57 @@ body.v2-resizing-columns * {
   font-size: 16px;
 }
 
+.v2-model-usage-details {
+  border: 1px solid #d4d4d4;
+  border-radius: 4px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.v2-model-usage-details > summary {
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #3c3c3c;
+  font-size: 13px;
+}
+
+.v2-model-usage-details > summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.v2-model-usage-details > summary svg {
+  color: #007acc;
+}
+
+.v2-model-usage-details > summary small {
+  color: #616161;
+  font-size: 12px;
+}
+
+.v2-model-usage-details[open] > summary {
+  border-bottom: 1px solid #d4d4d4;
+}
+
+.v2-model-usage-body {
+  padding: 10px;
+}
+
+.v2-model-usage-body .v2-table-wrap {
+  max-height: 320px;
+}
+
+.v2-model-usage-body .v2-table th:first-child {
+  min-width: 180px;
+}
+
 .v2-subtabs {
   display: flex;
   flex-wrap: wrap;

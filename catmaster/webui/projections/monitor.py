@@ -26,6 +26,49 @@ def _rows(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _model_usage_rows(value: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in _rows(value):
+        label = str(item.get("name") or "").strip()
+        if not label:
+            continue
+        input_tokens = _nonnegative_int(item.get("input_tokens"))
+        cached_tokens = _nonnegative_int(
+            item.get("input_cache_read_tokens", item.get("input_cached_tokens"))
+        )
+        cache_write_tokens = _nonnegative_int(item.get("input_cache_write_tokens"))
+        if item.get("input_uncached_tokens") is None:
+            uncached_tokens = max(
+                0,
+                input_tokens - cached_tokens - cache_write_tokens,
+            )
+        else:
+            uncached_tokens = _nonnegative_int(item.get("input_uncached_tokens"))
+        output_tokens = _nonnegative_int(item.get("output_tokens"))
+        total_tokens = _nonnegative_int(item.get("total_tokens"))
+        if not total_tokens:
+            total_tokens = input_tokens + output_tokens
+        rows.append(
+            {
+                "model_label": label[:240],
+                "calls": _nonnegative_int(item.get("calls")),
+                "input_uncached_tokens": uncached_tokens,
+                "input_cached_tokens": cached_tokens,
+                "input_cache_write_tokens": cache_write_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+            }
+        )
+    return rows
+
+
 def _collection_page(
     *,
     shown_count: int,
@@ -178,6 +221,7 @@ def project_monitor_snapshot(
     live = _record(payload.get("live_state"))
     llm = _record(live.get("llm"))
     progress = _record(live.get("progress"))
+    usage_by_model = _model_usage_rows(usage.get("by_model"))
 
     timeline: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -302,10 +346,15 @@ def project_monitor_snapshot(
             "tool_failures": int(metrics.get("tool_failures") or 0),
             "total_tokens": int(usage.get("total_tokens") or 0),
             "input_tokens": int(usage.get("input_tokens") or 0),
+            "input_uncached_tokens": int(usage.get("input_uncached_tokens") or 0),
+            "input_cached_tokens": int(usage.get("input_cached_tokens") or 0),
             "output_tokens": int(usage.get("output_tokens") or 0),
             "cost_usd": float(usage.get("cost_usd") or 0.0),
             "core_hours": float(machine.get("core_hours") or 0.0),
             "node_hours": float(machine.get("node_hours") or 0.0),
+        },
+        "usage": {
+            "by_model": usage_by_model,
         },
         "live": {
             "progress": {

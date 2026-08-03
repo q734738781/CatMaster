@@ -435,6 +435,7 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         self.call_counts_by_role: dict[str, int] = {}
         self.usage_metadata_by_role: dict[str, dict[str, Any]] = {}
         self._pending_agents_by_run: dict[str, str] = {}
+        self._pending_model_labels_by_run: dict[str, str] = {}
         self._seen_usage_keys: set[str] = set()
         self._usage_update_callback: Callable[[], None] | None = None
         self._usage_update_lock = threading.Lock()
@@ -469,6 +470,9 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
     def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
         run_id = str(kwargs.get("run_id") or "").strip()
         agent_name = self._pending_agents_by_run.pop(run_id, "") if run_id else ""
+        model_label = (
+            self._pending_model_labels_by_run.pop(run_id, "") if run_id else ""
+        )
         message = self._extract_ai_message(response)
         if message is None:
             return
@@ -476,6 +480,7 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
             message,
             call_id=run_id,
             agent_name=agent_name or self.default_agent_name,
+            model_label=model_label,
         )
 
     @staticmethod
@@ -495,6 +500,7 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         *,
         call_id: str = "",
         agent_name: str = "",
+        model_label: str = "",
     ) -> bool:
         """Count one finalized LangChain AI message, deduplicating stream/callback aliases."""
         usage = getattr(message, "usage_metadata", None)
@@ -508,8 +514,14 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
             or getattr(message, "name", "")
             or "unknown"
         ).strip() or "unknown"
+        resolved_model_label = str(model_label or "").strip()
+        usage_bucket = resolved_model_label or model_name
         message_id = str(getattr(message, "id", "") or "").strip()
         usage_metadata = dict(usage)
+        if resolved_model_label:
+            # Keep provider/model identity for pricing while grouping the
+            # user-visible report by the configured YAML model label.
+            usage_metadata["_catmaster_model_name"] = model_name
         usage_keys = {
             value
             for value in (
@@ -524,22 +536,27 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
             if usage_keys and any(key in self._seen_usage_keys for key in usage_keys):
                 return False
             self._seen_usage_keys.update(usage_keys)
-            previous = self.usage_metadata.get(model_name)
+            previous = self.usage_metadata.get(usage_bucket)
             if isinstance(previous, dict):
-                self.usage_metadata[model_name] = self._merge_usage_dict(previous, usage_metadata)
+                self.usage_metadata[usage_bucket] = self._merge_usage_dict(previous, usage_metadata)
             else:
-                self.usage_metadata[model_name] = usage_metadata
-            self.call_counts_by_model[model_name] = int(self.call_counts_by_model.get(model_name, 0)) + 1
+                self.usage_metadata[usage_bucket] = usage_metadata
+            self.call_counts_by_model[usage_bucket] = int(
+                self.call_counts_by_model.get(usage_bucket, 0)
+            ) + 1
             if resolved_agent_name:
                 self.call_counts_by_role[resolved_agent_name] = int(
                     self.call_counts_by_role.get(resolved_agent_name, 0)
                 ) + 1
                 current = self.usage_metadata_by_role.setdefault(resolved_agent_name, {})
-                previous_role_usage = current.get(model_name)
+                previous_role_usage = current.get(usage_bucket)
                 if isinstance(previous_role_usage, dict):
-                    current[model_name] = self._merge_usage_dict(previous_role_usage, usage_metadata)
+                    current[usage_bucket] = self._merge_usage_dict(
+                        previous_role_usage,
+                        usage_metadata,
+                    )
                 else:
-                    current[model_name] = usage_metadata
+                    current[usage_bucket] = usage_metadata
 
         callback = self._usage_update_callback
         if callback is not None:
@@ -568,6 +585,13 @@ class SpecialistUsageCallbackHandler(UsageMetadataCallbackHandler):
         agent_name = self._agent_name_from_kwargs(self.default_agent_name, **kwargs)
         if agent_name:
             self._pending_agents_by_run[run_id] = agent_name
+        for source in (kwargs.get("metadata"), kwargs.get("inheritable_metadata")):
+            if not isinstance(source, dict):
+                continue
+            model_label = str(source.get("catmaster_model_label") or "").strip()
+            if model_label:
+                self._pending_model_labels_by_run[run_id] = model_label
+                break
 
     @classmethod
     def _merge_usage_dict(cls, base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
@@ -973,7 +997,7 @@ class SpecialistRunner:
         create_agent = self._load_create_agent()
         ToolStrategy = self._load_tool_strategy()
         system_prompt = self._proposal_system_prompt(entrypoint=entrypoint)
-        model = build_chat_model(self.llm_profile.config_for_role(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint]))
+        model = self._build_role_chat_model(_ENTRYPOINT_TO_MODEL_ROLE[entrypoint])
         agent = create_agent(
             model=model,
             tools=[],
@@ -1040,8 +1064,47 @@ class SpecialistRunner:
         )
 
     def _build_deepagent_chat_model(self, role: str) -> Any:
-        model = build_chat_model(self.llm_profile.config_for_role(role))
+        model = self._build_role_chat_model(role)
         return self._apply_deepagent_context_profile_cap(model, role=role)
+
+    def _build_role_chat_model(self, role: str) -> Any:
+        config = self.llm_profile.config_for_role(role)
+        model = build_chat_model(config)
+        label_for_role = getattr(self.llm_profile, "label_for_role", None)
+        if callable(label_for_role):
+            try:
+                model_label = str(label_for_role(role) or "").strip()
+            except (KeyError, TypeError, ValueError):
+                model_label = ""
+        else:
+            model_label = ""
+        if not model_label:
+            model_label = str(getattr(config, "model", "") or role).strip()
+        return self._attach_model_label_metadata(model, model_label=model_label)
+
+    @staticmethod
+    def _attach_model_label_metadata(model: Any, *, model_label: str) -> Any:
+        label = str(model_label or "").strip()
+        if not label:
+            return model
+        current = getattr(model, "metadata", None)
+        metadata = dict(current) if isinstance(current, dict) else {}
+        metadata["catmaster_model_label"] = label
+        model_copy = getattr(model, "model_copy", None)
+        if callable(model_copy):
+            try:
+                return model_copy(update={"metadata": metadata})
+            except Exception:
+                pass
+        try:
+            setattr(model, "metadata", metadata)
+        except Exception:
+            logger.warning(
+                "Could not attach model label metadata for usage reporting: %s",
+                label,
+                exc_info=True,
+            )
+        return model
 
     def _apply_deepagent_context_profile_cap(self, model: Any, *, role: str) -> Any:
         cap = self._deepagent_profile_max_input_token_cap()
@@ -1171,7 +1234,10 @@ class SpecialistRunner:
         thread_id: str = "",
     ) -> list[Any]:
         if entrypoint == "research":
-            return self._research_subagents(runtime=runtime)
+            return self._research_subagents(
+                runtime=runtime,
+                thread_id=thread_id,
+            )
         if entrypoint == "experiment":
             return self._experiment_subagents(
                 runtime=runtime,
@@ -1262,26 +1328,33 @@ class SpecialistRunner:
     ) -> list[Any]:
         SubAgent = self._load_subagent()
         reasoning_skills = self._skill_roots_for_group("research_reasoning")
-        return [
-            SubAgent(
-                name="hypothesis_proposer",
-                description=(
-                    "Form or revise scientifically distinct falsifiable competing "
-                    "hypotheses and their discriminating checks using graph, literature, "
-                    "and web evidence. It does not execute scientific experiments or "
-                    "judge completed results."
-                ),
-                system_prompt=self._hypothesis_proposer_prompt(),
-                tools=self._research_reasoning_tools(
-                    role="hypothesis_proposer",
-                    thread_id=thread_id,
-                    extra_names={"stage_research_plan"},
-                ),
-                middleware=self._research_reasoning_middleware(),
-                skills=reasoning_skills,
-                model=self._build_deepagent_chat_model("hypothesis_proposer"),
+        judge = self._evidence_judge_subagent(thread_id=thread_id)
+        if not self._turn_graph_id():
+            return [judge]
+
+        proposer = SubAgent(
+            name="hypothesis_proposer",
+            description=(
+                "Form or revise scientifically distinct falsifiable competing "
+                "hypotheses and their discriminating checks using graph, literature, "
+                "and web evidence. It does not execute scientific experiments or "
+                "judge completed results."
             ),
-            self._evidence_judge_subagent(thread_id=thread_id),
+            system_prompt=self._hypothesis_proposer_prompt(),
+            tools=self._research_reasoning_tools(
+                role="hypothesis_proposer",
+                thread_id=thread_id,
+                extra_names={"stage_research_plan"},
+            ),
+            middleware=self._research_reasoning_middleware(),
+            skills=reasoning_skills,
+            model=self._build_deepagent_chat_model("hypothesis_proposer"),
+        )
+        if not self._turn_has_active_research_planning(thread_id):
+            return [proposer, judge]
+        return [
+            proposer,
+            judge,
             self._experiment_evaluator_subagent(thread_id=thread_id),
         ]
 
@@ -1295,9 +1368,11 @@ class SpecialistRunner:
         names = {
             "acquire_literature_source",
             "query_literature_corpus",
-            "query_research_graph_sql",
-            *(extra_names or set()),
         }
+        if self._turn_graph_id():
+            names.add("query_research_graph_sql")
+        if self._turn_has_active_research_planning(thread_id):
+            names.update(extra_names or set())
         tools = self._named_tools(
             names,
             audience=role,
@@ -1818,11 +1893,19 @@ class SpecialistRunner:
         top_level: bool = True,
     ) -> list[Any]:
         if entrypoint == "writing":
-            requested = _WRITING_TOOL_ALLOWLIST
+            requested = set(_WRITING_TOOL_ALLOWLIST)
+            if not self._turn_graph_id():
+                requested.discard("query_research_graph_sql")
         elif entrypoint == "peer_review":
-            requested = _PEER_REVIEW_TOOL_ALLOWLIST
+            requested = set(_PEER_REVIEW_TOOL_ALLOWLIST)
         elif entrypoint == "research":
-            requested = _RESEARCH_TOOL_ALLOWLIST
+            requested = (
+                set(_RESEARCH_TOOL_ALLOWLIST)
+                if self._turn_graph_id()
+                else {"create_research_graph", "list_research_graphs"}
+            )
+            if not self._turn_has_active_research_planning(thread_id):
+                requested.discard("stage_research_plan")
         else:
             requested = set(_EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST)
             if top_level and self._turn_graph_id():
@@ -1850,13 +1933,20 @@ class SpecialistRunner:
 
     def _specialist_subagent_tools(self, entrypoint: SpecialistEntrypoint) -> list[Any]:
         if entrypoint == "writing":
-            requested = _WRITING_TOOL_ALLOWLIST
+            requested = set(_WRITING_TOOL_ALLOWLIST)
+            if not self._turn_graph_id():
+                requested.discard("query_research_graph_sql")
         elif entrypoint == "peer_review":
-            requested = _PEER_REVIEW_TOOL_ALLOWLIST
+            requested = set(_PEER_REVIEW_TOOL_ALLOWLIST)
         elif entrypoint == "research":
-            requested = _RESEARCH_TOOL_ALLOWLIST
+            requested = (
+                set(_RESEARCH_TOOL_ALLOWLIST)
+                if self._turn_graph_id()
+                else {"create_research_graph", "list_research_graphs"}
+            )
+            requested.discard("stage_research_plan")
         else:
-            requested = _EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST
+            requested = set(_EXPERIMENT_SPECIALIST_BASE_TOOL_ALLOWLIST)
         return self._augment_with_default_autonomous_tools(
             self._named_tools(requested),
             model_role=_ENTRYPOINT_TO_MODEL_ROLE[entrypoint],
@@ -1864,6 +1954,26 @@ class SpecialistRunner:
 
     def _turn_graph_id(self) -> str:
         return str(self.runtime_context.get("research_graph_id") or "").strip()
+
+    def _turn_has_active_research_planning(self, thread_id: str) -> bool:
+        graph_id = self._turn_graph_id()
+        trusted_thread_id = str(thread_id or "").strip()
+        if not graph_id or not trusted_thread_id:
+            return False
+        try:
+            from catmaster.research.knowledge_graph.store import ResearchGraphStore
+
+            store = ResearchGraphStore(self.run_context.workspace)
+            planning = store.find_planning_by_thread(trusted_thread_id)
+            graph = store.get_graph(graph_id)
+            return bool(
+                planning is not None
+                and str(planning.get("graph_id") or "") == graph_id
+                and int(planning.get("revision") or -1)
+                == int(graph.get("revision") or 0)
+            )
+        except (KeyError, OSError, TypeError, ValueError):
+            return False
 
     def _turn_focus_is_experiment(self) -> bool:
         graph_id = self._turn_graph_id()
@@ -2393,8 +2503,9 @@ class SpecialistRunner:
                 "You are ResearchSpecialist, the only orchestration-capable specialist.\n"
                 "You coordinate scientific campaigns, decide when bounded experiment work is justified, "
                 "and decide when writing/report generation should start.\n"
-                "You may delegate only to `hypothesis_proposer`, `experiment_evaluator`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
-                "For a bound Research Graph, delegate model-generated hypothesis formation and evidence-driven revisions to `hypothesis_proposer`; do not invent graph hypotheses or decision rules in the coordinator. The proposer reads graph and literature evidence, may publish a temporary technology-tree preview through its bound planning tool, and returns a concise scientific memo in ordinary language. Preserve a user's explicit hypothesis or observation directly rather than asking the proposer to rewrite it.\n"
+                "Delegate only to subagent types exposed by the current task interface; depending on the turn these may include `hypothesis_proposer`, `experiment_evaluator`, `evidence_judge`, `experiment_specialist`, `writing_specialist`, `peer_review_specialist`, and `litreview_agent`.\n"
+                "For a bound Research Graph, delegate model-generated hypothesis formation and evidence-driven revisions to `hypothesis_proposer` when it is exposed; do not invent graph hypotheses or decision rules in the coordinator. The proposer reads graph and literature evidence and returns a concise scientific memo in ordinary language. It may publish a temporary technology-tree preview only when its planning action is exposed in a host-created planning turn; otherwise use its memo to make any justified durable coordinator mutation. Preserve a user's explicit hypothesis or observation directly rather than asking the proposer to rewrite it.\n"
+                "Use `experiment_evaluator` only when it is exposed in an active internal planning turn after a temporary plan has been staged.\n"
                 "After a graph experiment succeeds, delegate its scientific result to `evidence_judge` with the relevant hypotheses and decision rule. Read its scientific assessment, then record only the hypothesis effects that the evidence actually addresses; do not require a judgment for every graph branch.\n"
                 "Delegate literature-review work that needs source discovery, evidence synthesis, selective source reading, or citation finalization to `litreview_agent`.\n"
                 f"{cls._physical_chemical_property_lookup_policy()}\n"
@@ -2770,9 +2881,8 @@ class SpecialistRunner:
     @staticmethod
     def _research_graph_contract() -> str:
         return (
-            "Research Graph contract: ordinary one-off questions do not require a graph. "
-            "For multi-step falsifiable work, evidence-driven hypothesis revision, or work that must continue across threads, use the explicitly bound workspace Research Graph or suggest creating one. "
-            "Never guess among multiple graphs. Keep graph nodes concise and scientific; put detailed notes, calculations, logs, receipts, and reports in their owning workspace stores and connect them with typed refs. "
+            "Research Graph contract: a Research entry turn may arrive with the workspace's sole active graph already bound by the host, or with a graph created from the first Research request. A binding provides continuity and navigation; it does not require manufacturing Hypothesis, Experiment, or Result nodes for an ordinary one-off request. "
+            "For multi-step falsifiable work, evidence-driven hypothesis revision, or work that must continue across threads, use the explicitly bound workspace Research Graph. When several active graphs exist, the host leaves the turn unbound so the user can choose. Never guess among multiple graphs. Keep graph nodes concise and scientific; put detailed notes, calculations, logs, receipts, and reports in their owning workspace stores and connect them with typed refs. "
             "Treat the graph's completion criterion as the research stop condition. A temporary planning preview may compare several evidence-aware routes, but only the selected route becomes durable graph state. "
             "A result may support, oppose, or remain inconclusive for different hypotheses, and no single judgment closes later independent verification."
         )
@@ -2789,10 +2899,12 @@ class SpecialistRunner:
             "language: state the key evidence, the plausible alternatives, the most useful "
             "next check, and why. Headings are optional and empty sections are unnecessary. "
             "Do not emit JSON or repeat runtime identifiers for protocol purposes. "
-            "When the evidence supports useful temporary technology-tree branches, publish "
-            "them through the bound planning write action, then return the scientific "
-            "reasoning in ordinary language. The action already targets the correct graph "
-            "and revision; do not relay that protocol context through the memo. "
+            "When the evidence supports useful temporary technology-tree branches and the "
+            "planning write action is available, publish them through that action, then "
+            "return the scientific reasoning in ordinary language. Outside an internal "
+            "planning turn, return the proposed branches in the memo for the coordinator "
+            "instead of attempting a staging action. The action already targets the correct "
+            "graph and revision; do not relay that protocol context through the memo. "
             "A recommendation needs a scientific reason. Hypothesis importance and "
             "Experiment compute cost are optional coarse user/execution constraints; "
             "leave them empty when unknown. A temporary "
