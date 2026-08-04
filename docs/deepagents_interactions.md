@@ -101,6 +101,10 @@ checks, symlink checks, and model-visible conflict errors.
 
 The model emits a `custom_tool_call`. DeepAgents executes it through the normal
 tool scheduler and returns `custom_tool_call_output` on the next model call.
+For LangChain v3 event streaming, CatMaster restores missing scheduler metadata
+from the completed provider block at the Codex OAuth model-result boundary. The
+original block is retained unchanged for Responses API replay, and recovery is
+skipped when LangChain already supplied the tool call.
 `/memories` remains a routed DeepAgents store, so persistent memory edits use
 `edit_file` rather than this workspace patch tool.
 
@@ -108,7 +112,7 @@ The live acceptance script is:
 
 ```bash
 PYTHONPATH=. \
-  /home/chenhh/miniconda3/envs/catmaster/bin/python \
+  /home/chenhh/miniconda3/envs/catmaster-dev/bin/python \
   tests/manual/codex_oauth_apply_patch_live.py --workers 3
 ```
 

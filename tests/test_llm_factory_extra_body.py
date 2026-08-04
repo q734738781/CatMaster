@@ -6,6 +6,8 @@ import time
 import types
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from catmaster.llm.config import LLMConfig
 from catmaster.llm.factory import build_chat_model
@@ -233,12 +235,42 @@ def test_build_chat_model_does_not_map_anthropic_reasoning(monkeypatch) -> None:
     assert "thinking" not in captured
 
 
-def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch) -> None:
+def test_codex_oauth_model_passes_kwargs_and_recovers_patch_calls(monkeypatch) -> None:
     captured: dict = {}
+    patch = "*** Begin Patch\n*** Add File: result.txt\n+done\n*** End Patch\n"
+    bridged_result = ChatResult(
+        generations=[
+            ChatGeneration(
+                message=AIMessage(
+                    content=[
+                        {
+                            "type": "non_standard",
+                            "value": {
+                                "type": "custom_tool_call",
+                                "name": "apply_patch",
+                                "input": patch,
+                                "call_id": "patch-call",
+                                "status": "completed",
+                            },
+                        }
+                    ]
+                )
+            )
+        ]
+    )
 
     class FakeChatOpenAICodex:
         def __init__(self, *args, **kwargs):
             captured.update(kwargs)
+
+        def _generate_with_cache(
+            self,
+            messages,
+            stop=None,
+            run_manager=None,
+            **kwargs,
+        ):
+            return bridged_result
 
     class FakeChatGPTToken:
         pass
@@ -293,7 +325,7 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
         },
     )
 
-    build_chat_model(cfg)
+    model = build_chat_model(cfg)
 
     assert captured.get("model") == "gpt-5.5"
     assert captured.get("base_url") == "https://chatgpt.com/backend-api/codex"
@@ -309,6 +341,16 @@ def test_build_chat_model_passes_codex_oauth_kwargs_without_api_key(monkeypatch)
     assert "system_prompt_mode" not in captured
     assert "text_verbosity" not in captured
     assert "api_key" not in captured
+
+    normalized = model._generate_with_cache([]).generations[0].message
+    assert normalized.tool_calls == [
+        {
+            "name": "apply_patch",
+            "args": {"__arg1": patch},
+            "id": "patch-call",
+            "type": "tool_call",
+        }
+    ]
 
 
 def test_build_chat_model_passes_codex_oauth_top_level_reasoning_summary(monkeypatch) -> None:

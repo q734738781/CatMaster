@@ -9,6 +9,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_openai.chat_models.base import _construct_responses_api_input
 
+from catmaster.llm.codex_oauth import recover_codex_apply_patch_tool_calls
 from catmaster.runtime.apply_diff import apply_diff
 from catmaster.runtime.native_apply_patch import (
     APPLY_PATCH_LARK_GRAMMAR,
@@ -188,27 +189,35 @@ def test_custom_tool_schema_matches_codex_freeform_protocol(tmp_path: Path) -> N
 def test_langchain_replays_custom_patch_call_and_output() -> None:
     call_id = "patch-replay"
     patch = _patch("*** Delete File: old.txt")
+    provider_call = {
+        "type": "custom_tool_call",
+        "name": "apply_patch",
+        "input": patch,
+        "call_id": call_id,
+        "id": "custom-patch-item",
+        "status": "completed",
+    }
+    bridged_message = AIMessage(
+        content=[{"type": "non_standard", "value": provider_call}]
+    )
+    normalized_message = recover_codex_apply_patch_tool_calls(bridged_message)
+
+    assert normalized_message.content == bridged_message.content
+    assert normalized_message.tool_calls == [
+        {
+            "name": "apply_patch",
+            "args": {"__arg1": patch},
+            "id": call_id,
+            "type": "tool_call",
+        }
+    ]
+    assert (
+        recover_codex_apply_patch_tool_calls(normalized_message)
+        is normalized_message
+    )
+
     messages = [
-        AIMessage(
-            content=[
-                {
-                    "type": "custom_tool_call",
-                    "name": "apply_patch",
-                    "input": patch,
-                    "call_id": call_id,
-                    "id": "custom-patch-item",
-                    "status": "completed",
-                }
-            ],
-            tool_calls=[
-                {
-                    "name": "apply_patch",
-                    "args": {"__arg1": patch},
-                    "id": call_id,
-                    "type": "tool_call",
-                }
-            ],
-        ),
+        normalized_message,
         ToolMessage(
             content=[
                 {
@@ -222,14 +231,7 @@ def test_langchain_replays_custom_patch_call_and_output() -> None:
     ]
 
     assert _construct_responses_api_input(messages, store=False) == [
-        {
-            "type": "custom_tool_call",
-            "name": "apply_patch",
-            "input": patch,
-            "call_id": call_id,
-            "id": "custom-patch-item",
-            "status": "completed",
-        },
+        provider_call,
         {
             "type": "custom_tool_call_output",
             "call_id": call_id,

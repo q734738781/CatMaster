@@ -25,6 +25,14 @@ references describe the current system.
 
 ### Runtime Reliability
 
+- The control-plane LangChain, LangGraph, and provider integrations have been
+  refreshed while DeepAgents remains pinned at 0.6.12 to preserve its current
+  todo and base-prompt contracts. MCP remains on the latest 1.x line until its
+  2.0 boundary is validated.
+- Codex OAuth `apply_patch` calls that LangChain v3 streaming exposes only as a
+  `non_standard` provider block now recover their missing scheduler metadata at
+  the model-result boundary. The original custom-call block remains intact for
+  Responses API replay, and already-normalized calls are not duplicated.
 - Codex OAuth model calls now retry a prematurely closed chunked SSE response
   twice with short bounded backoff. This recovery replays only the interrupted
   model call, not the complete specialist episode or previously completed local

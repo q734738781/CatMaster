@@ -48,19 +48,22 @@ dependencies:
   # this single conda environment file so local setup has one source of truth.
   - pip:
       # LLM / agent runtime: exact pins because CatMaster adapts provider payloads.
-      - openai==2.45.0
+      - openai==2.53.0
       - openrouter==0.11.1
-      - langchain==1.3.13
-      - langchain-core==1.5.1
+      - langchain==1.3.14
+      - langchain-core==1.5.3
       - langchain-openai==1.4.1
-      - langchain-openrouter==0.2.5
-      - langchain-anthropic==1.4.8
+      - langchain-openrouter==0.2.7
+      - langchain-anthropic==1.5.3
       - langchain-deepseek==1.1.0
-      - langchain-google-genai==4.2.7
-      - langgraph==1.2.7
+      - langchain-google-genai==4.3.2
+      - langgraph==1.2.10
+      # DeepAgents 0.7 changes the todo and base-prompt contracts used here.
       - deepagents==0.6.12
-      - langchain-mcp-adapters==0.3.0
-      - langgraph-checkpoint-sqlite==3.1.0
+      - langchain-mcp-adapters==0.3.1
+      # The adapter has no upper MCP bound; keep the unvalidated 2.0 API out.
+      - mcp==1.29.0
+      - langgraph-checkpoint-sqlite==3.1.1
       - aiosqlite==0.22.1
 
       # LLM-adjacent HTTP/search packages used by runtime integrations.

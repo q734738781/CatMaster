@@ -675,6 +675,9 @@ def build_chat_model(cfg: LLMConfig) -> Any:
                 _ChatGPTToken,
                 _FileChatGPTOAuthTokenProvider,
             )
+            from catmaster.llm.codex_oauth import (
+                recover_codex_apply_patch_chat_result,
+            )
         except ImportError as exc:  # pragma: no cover - dependency guidance
             raise RuntimeError(
                 "provider=codex_oauth requires langchain-openai with Codex OAuth support. "
@@ -725,7 +728,40 @@ def build_chat_model(cfg: LLMConfig) -> Any:
         )
         kwargs.setdefault("model", cfg.model)
 
-        return _ChatOpenAICodex(**kwargs)
+        class CatMasterChatOpenAICodex(_ChatOpenAICodex):
+            """Codex OAuth model with v3 custom-tool scheduler recovery."""
+
+            def _generate_with_cache(
+                self,
+                messages: list[Any],
+                stop: list[str] | None = None,
+                run_manager: Any | None = None,
+                **call_kwargs: Any,
+            ) -> Any:
+                result = super()._generate_with_cache(
+                    messages,
+                    stop=stop,
+                    run_manager=run_manager,
+                    **call_kwargs,
+                )
+                return recover_codex_apply_patch_chat_result(result)
+
+            async def _agenerate_with_cache(
+                self,
+                messages: list[Any],
+                stop: list[str] | None = None,
+                run_manager: Any | None = None,
+                **call_kwargs: Any,
+            ) -> Any:
+                result = await super()._agenerate_with_cache(
+                    messages,
+                    stop=stop,
+                    run_manager=run_manager,
+                    **call_kwargs,
+                )
+                return recover_codex_apply_patch_chat_result(result)
+
+        return CatMasterChatOpenAICodex(**kwargs)
 
     if cfg.provider in ("openai", "oai_compatible", "deepseek"):
         if cfg.provider == "deepseek":
