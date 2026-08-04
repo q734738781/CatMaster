@@ -9,7 +9,7 @@ allowed-tools: "query_research_graph_sql query_literature_corpus acquire_literat
 
 ## Overview
 
-Judge one Result against its actual prediction and decision rule without grading papers, ranking branches, or inventing untested relationships.
+Judge one already completed scientific Result against its actual prediction and decision rule without grading papers, ranking branches, auditing proposal/platform feasibility, or inventing untested relationships.
 
 ## Quick Start
 

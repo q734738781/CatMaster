@@ -45,7 +45,7 @@ Use this skill for CP2K AIMD tasks in `dynamics_worker`: NVE, NVT, NPT, restart,
 ## Method-critical defaults
 - Parameter priority: honor explicit user requirements first; otherwise choose CP2K AIMD `settings` overrides from the system class and sampling objective; if that judgment remains uncertain, run a narrow literature or official documentation check before finalizing the override.
 - Do not add CP2K `settings` overrides just to restate the tool baseline; only override when the user, system class, task objective, or a checked source justifies it.
-- Project policy: prefer output completion over performance when safe, but keep receipt/context if remote execution fails.
+- Project policy: prefer output completion over performance when safe. Preserve receipt/context in runtime recovery records if remote execution fails.
 - Report ensemble, timestep, total simulated time, temperature/pressure controls, trajectory stride, and restart stride.
 - Do not infer free-energy barriers or mechanisms from a generic trajectory summary.
 
@@ -54,8 +54,9 @@ Return:
 - AIMD stage path
 - selected recipe and ensemble
 - `manifest.json` path
-- submitted receipt/context
 - `cp2k_output_summary` and trajectory summary artifact paths
+
+The manifest remains a required execution contract. Receipt IDs and platform details remain in runtime records unless a concrete failure makes them relevant; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_aimd_reference.md`

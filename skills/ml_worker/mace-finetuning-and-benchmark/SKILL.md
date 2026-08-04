@@ -28,7 +28,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 ### 2. Train as one remote job
 - The training stage must contain the dataset, optional foundation model, optional E0 JSON, optional replay/statistics/local CLI assets, and `params/train_params.json`.
 - Do not split one train/valid/test dataset across inference-style structure chunks. Training batch size and distributed-training behavior belong to the MACE training configuration; an independent model, seed, or hyperparameter trial is a separate complete training stage.
-- Report stage-local outputs plus receipt/context fields, not just that the submission launched.
+- Report stage-local model and metric outputs, not just that the submission launched. Keep receipt/context fields in runtime recovery records.
 - The reference-validated route is replay-style finetuning with explicit `foundation_head`, `multiheads_finetuning`, `pt_train_file`, replay sampling knobs, and explicit loss weights.
 - If the user did not ask for a custom ablation, keep the validated baseline explicit: `mh-1`, `omat_pbe`, and `estimated`/fixed estimated E0s. Do not silently swap to another foundation model or another head.
 - When the user needs additional official MACE CLI knobs beyond the common first-class fields, pass them through `cli_args` rather than writing a local wrapper script.
@@ -37,7 +37,7 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 - The training run can already carry `test.extxyz`; use `mace_eval` when you need an additional benchmark pass on a retained checkpoint or an alternate split.
 - Keep one checkpoint-and-dataset evaluation as one complete evaluation stage. Do not manually shard the held-out dataset into remote stages unless the evaluation workflow explicitly supports deterministic shard merging.
 - Keep the evaluation output root separate from the training root.
-- Choose the evaluation device explicitly when the remote resource is not guaranteed to expose CUDA.
+- Use the task's supported device control when a concrete compatibility constraint requires it; device identity is runtime metadata rather than benchmark evidence.
 
 ### 4. Use this skill once the workflow artifact is a dataset or model
 - Start from a prepared dataset directory, a checkpoint to benchmark, or an explicit model-comparison plan.
@@ -56,9 +56,10 @@ Use this skill to train or fine-tune a MACE model on a prepared dataset while ma
 Return:
 - training output root
 - evaluation output root
-- `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts` when present
 - model artifact path(s)
 - metrics JSON / per-config CSV path(s)
+
+Keep receipt/context identifiers, hardware/device identity, scheduler layout, software build, and performance telemetry in runtime records unless a concrete failure or compatibility issue makes them relevant. If the user explicitly asks to inspect, compare, record, or report any of these fields, follow that request directly.
 
 ## References
 - Use `mace-dataset-curation` first when the dataset root has not yet been built from VASP outputs.

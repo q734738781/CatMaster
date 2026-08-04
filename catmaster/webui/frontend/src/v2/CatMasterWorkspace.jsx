@@ -738,6 +738,7 @@ export default function CatMasterWorkspace({ boot }) {
                   error={runtimeState.error}
                   onSelect={handleSelection}
                   onResume={runtimeState.resume}
+                  onContinueFromCheckpoint={runtimeState.continueFromCheckpoint}
                   hasMore={Boolean(runtimeState.messagePage?.truncated)}
                   onLoadOlder={runtimeState.loadOlderMessages}
                   loadingOlder={runtimeState.loadingOlder}

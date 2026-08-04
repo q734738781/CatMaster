@@ -53,10 +53,11 @@ Use this skill for LAMMPS equilibration, annealing, and production MD stages in 
 ## Output Contract
 Return:
 - force-field card and stage paths
-- submitted receipt/context
 - log summary and trajectory summary paths
 - ensemble, timestep, steps, thermo/dump/restart strides
 - warnings, errors, and observable limitations
+
+Keep receipt, launcher/rank, build, and hardware details in runtime records unless a concrete failure makes them relevant. If the user explicitly asks to inspect, compare, record, or report them, follow that request directly.
 
 ## References
 - Local source note: `references/lammps_md_reference.md`

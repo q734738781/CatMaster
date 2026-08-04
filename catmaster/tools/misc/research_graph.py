@@ -56,10 +56,30 @@ class QueryResearchGraphSQLInput(BaseModel):
         ...,
         min_length=1,
         description=(
-            "One standard SELECT or WITH statement over research_graphs, "
-            "research_nodes, research_edges, research_refs, research_launches, "
-            "research_planning, workspace_artifacts, or thread_messages. Use "
-            "ordinary LIMIT/OFFSET or keyset pagination when desired."
+            "One read-only SELECT or WITH statement over these exact logical "
+            "schemas: research_graphs(graph_id, title, question, "
+            "completion_criterion, completed, orchestration_mode, archived, "
+            "revision, created_at, updated_at); research_nodes(graph_id, "
+            "node_id, kind, title, state, body_json, revision, created_at, "
+            "updated_at); research_edges(graph_id, source_node_id, "
+            "target_node_id, relation); research_refs(graph_id, node_id, "
+            "ref_kind, ref_id); research_launches(launch_id, graph_id, "
+            "experiment_node_id, idempotency_key, status, thread_id, run_id, "
+            "lease_owner, lease_until, created_at, updated_at); "
+            "research_planning(planning_id, graph_id, start_revision, status, "
+            "thread_id, preview_json, lease_until, created_at, updated_at); "
+            "workspace_artifacts(artifact_id, thread_id, payload_json, "
+            "created_at, updated_at); thread_messages(row_id, thread_id, "
+            "message_id, created_at, updated_at, payload_json, message_role, "
+            "message_run_id). Node details such as claim, summary, objective, "
+            "or decision_rule are JSON keys in body_json, not columns; for "
+            "example use json_extract(n.body_json, '$.claim'). Artifact path, "
+            "mime_type, title, renderer, and summary are JSON keys in "
+            "payload_json; for example use json_extract(a.payload_json, "
+            "'$.path'). Message content is likewise in payload_json. Do not "
+            "query sqlite_master or qualify tables with main. Graph binding is "
+            "host-supplied. Use ordinary LIMIT/OFFSET or keyset pagination when "
+            "desired."
         ),
     )
 

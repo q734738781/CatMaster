@@ -32,6 +32,8 @@ Query `research_nodes` and `research_edges` from the focus, handoff, or known no
 
 For selected Results, query their producing Experiment and `research_refs`. The available logical tables are `research_graphs`, `research_nodes`, `research_edges`, `research_refs`, `research_launches`, `research_planning`, `workspace_artifacts`, and `thread_messages`. The last two contain only owners reachable from refs on the bound graph.
 
+Use only the exact columns declared on the query tool's `sql` argument. Node-specific scientific fields are inside `research_nodes.body_json`; artifact locators such as `path`, `mime_type`, and `title` are inside `workspace_artifacts.payload_json`. Use SQLite JSON1 expressions such as `json_extract(n.body_json, '$.summary')` and `json_extract(a.payload_json, '$.path')` instead of guessing flattened columns or querying `sqlite_master`.
+
 ### 3. Read decisive owner material
 
 Treat Result summaries and owner payloads as locators. Before using claim-critical numbers, conditions, mechanisms, or limitations, open the referenced owner through the normal workspace or source-reading capability. A DOI or URL identifies a source; it is not the source text.

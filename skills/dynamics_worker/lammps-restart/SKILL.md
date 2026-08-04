@@ -14,7 +14,7 @@ Use this skill when a LAMMPS stage must continue from an existing restart file.
 2. Run `lammps_log_summary` and `md_trajectory_summary` on the prior stage.
 3. Prepare with `lammps_prepare(recipe="restart")`.
 4. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
-5. Keep old and new receipt/context IDs in the report.
+5. Preserve the scientific restart lineage: source stage, restart file, and intentionally changed simulation settings.
 
 ## Allowed tools
 - `lammps_forcefield_validate`
@@ -40,6 +40,7 @@ Use this skill when a LAMMPS stage must continue from an existing restart file.
 ### 3. Preserve execution compatibility
 - Prefer the same CPU/KOKKOS execution mode as the source stage unless the restart and every active style are verified against the other deployment build.
 - Use `lammps_execute` when KOKKOS compatibility is incomplete; use `lammps_execute_kokkos` only for a fully compatible stage.
+- Build compatibility is a runtime prerequisite for reading the binary restart, not routine scientific report content; surface it only when incompatibility is detected.
 
 ### 4. Analyze continuation
 - Use `lammps_log_summary` to confirm completion and thermo behavior.
@@ -54,9 +55,10 @@ Return:
 - prior result path inspected
 - restart file path
 - new stage path
-- submitted receipt/context
 - log and trajectory summary paths
 - warnings/errors and restart ambiguity
+
+Keep old/new receipt IDs, launcher/rank details, and hardware identity in runtime recovery records rather than the scientific restart report.
 
 ## References
 - Local source note: `references/lammps_restart_reference.md`

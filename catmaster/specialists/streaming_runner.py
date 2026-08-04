@@ -773,12 +773,35 @@ class CatMasterStreamTranslator:
             },
         )
 
-    def fail(self, error: str) -> None:
-        self.store.update_message(self.thread_id, self.message_id, status="failed")
+    def fail(
+        self,
+        error: str,
+        *,
+        checkpoint_resume_available: bool = False,
+    ) -> None:
+        message = self.store.get_message(self.thread_id, self.message_id)
+        meta = dict(message.meta or {}) if message is not None else {}
+        meta["checkpoint_resume_available"] = bool(
+            checkpoint_resume_available
+        )
+        if str(error or "").strip():
+            meta["error"] = str(error)
+        self.store.update_message(
+            self.thread_id,
+            self.message_id,
+            status="failed",
+            meta=meta,
+        )
         self._emit(
             "message.failed",
             status="failed",
-            data={"message_id": self.message_id, "error": str(error or "")},
+            data={
+                "message_id": self.message_id,
+                "error": str(error or ""),
+                "checkpoint_resume_available": bool(
+                    checkpoint_resume_available
+                ),
+            },
         )
 
     def _emit(self, event: str, *, status: str = "", data: dict[str, Any] | None = None) -> None:
@@ -1946,6 +1969,28 @@ class StreamingSpecialistRunner:
             resume_tool_inputs=resume_tool_inputs or [],
         )
 
+    async def acontinue_from_checkpoint(
+        self,
+        *,
+        entrypoint: SpecialistEntrypoint,
+        thread_id: str,
+        message_id: str,
+        text_part_id: str,
+        deepagent_thread_id: str,
+    ) -> dict[str, Any]:
+        """Resume the failed graph tail without appending semantic input."""
+
+        return await self._run_stream(
+            input_payload=None,
+            entrypoint=entrypoint,
+            thread_id=thread_id,
+            message_id=message_id,
+            text_part_id=text_part_id,
+            deepagent_thread_id=deepagent_thread_id,
+            user_prompt="",
+            resume=False,
+        )
+
     async def _run_stream(
         self,
         *,
@@ -1986,6 +2031,8 @@ class StreamingSpecialistRunner:
             observability_store=ObservabilityStore(runner.run_context.run_dir),
             resume_tool_inputs=resume_tool_inputs or [],
         )
+        graph_execution_started = False
+        graph_execution_finished = False
         runner._emit("RUN_START", payload={"entrypoint": entrypoint, "status": "running", "thread_id": thread_id})
         self.thread_store.update_thread(thread_id, status=ThreadStatus.RUNNING, active_run_id=runner.run_context.run_id, active_message_id=message_id)
         self._emit_thread_event(thread_id, "thread.status", message_id=message_id, status="running", data={"status": "running"})
@@ -2030,6 +2077,7 @@ class StreamingSpecialistRunner:
                     ),
                     "metadata": {"lc_agent_name": f"{entrypoint}_specialist"},
                 }
+                graph_execution_started = True
                 steered = await self._consume_agent_stream(
                     agent,
                     input_payload=input_payload,
@@ -2037,6 +2085,7 @@ class StreamingSpecialistRunner:
                     translator=translator,
                     usage_handler=usage_handler,
                 )
+                graph_execution_finished = True
             if steered:
                 partial_text = translator.final_text_from_stream.strip()
                 translator.complete(
@@ -2246,7 +2295,13 @@ class StreamingSpecialistRunner:
             raise
         except Exception as exc:
             error = str(exc)
-            translator.fail(error)
+            checkpoint_resume_available = bool(
+                graph_execution_started and not graph_execution_finished
+            )
+            translator.fail(
+                error,
+                checkpoint_resume_available=checkpoint_resume_available,
+            )
             runner._write_run_state(
                 {
                     "schema_version": 1,
@@ -2266,9 +2321,28 @@ class StreamingSpecialistRunner:
             )
             runner._write_usage_summary(usage_handler)
             self._emit_usage_updated(thread_id=thread_id, message_id=message_id)
-            runner._emit("RUN_END", payload={"entrypoint": entrypoint, "status": "error", "error": error, "thread_id": thread_id})
+            runner._emit(
+                "RUN_END",
+                payload={
+                    "entrypoint": entrypoint,
+                    "status": "error",
+                    "error": error,
+                    "thread_id": thread_id,
+                    "checkpoint_resume_available": checkpoint_resume_available,
+                },
+            )
             self.thread_store.update_thread(thread_id, status=ThreadStatus.ERROR, active_message_id="", active_run_id="")
-            self._emit_thread_event(thread_id, "thread.status", message_id=message_id, status="error", data={"status": "error", "error": error})
+            self._emit_thread_event(
+                thread_id,
+                "thread.status",
+                message_id=message_id,
+                status="error",
+                data={
+                    "status": "error",
+                    "error": error,
+                    "checkpoint_resume_available": checkpoint_resume_available,
+                },
+            )
             raise
 
     def _publish_usage_update(

@@ -43,7 +43,7 @@ Use this skill to submit prepared VASP jobs without corrupting the input tree or
 ### 4. Submit and collect
 - The remote submission tool expects the stage directory to already be a valid VASP calculation folder, or a batch root whose first-level children are valid VASP calculation folders.
 - Outputs are downloaded back into the same stage directory.
-- The tool returns `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts`; keep those fields in the handoff summary.
+- The tool retains `remote_context_id`, `submission_hash`, `receipt_rel`, and `task_state_counts` for runtime recovery. Do not copy them into an ordinary successful scientific handoff.
 
 ### 5. Triage failures minimally
 - Only after the tool returns a failure, inspect its receipt before resubmitting; the remote job may still be live.
@@ -65,9 +65,10 @@ Return:
 - whether the run used `remote_submission` or `remote_submission_batch`
 - submitted calc-directory count
 - `work_dir_rel`
-- `remote_context_id`, `submission_hash`, and `receipt_rel` when present
 - representative output path
 - whether every required VASP output was returned
+
+Surface receipt, scheduler, license, module, build, MPI, or hardware details after a concrete execution failure or whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Use `execute` only for focused follow-up reads after the receipt or stage-local status files point to a concrete failure target.

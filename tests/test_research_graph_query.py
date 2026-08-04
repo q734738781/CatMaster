@@ -267,7 +267,11 @@ def test_owner_views_expose_only_rows_referenced_by_the_bound_graph(
     query = ResearchGraphSQLQuery(workspace)
     artifact_rows = query.execute(
         graph_id=graph_id,
-        sql="SELECT artifact_id, thread_id FROM workspace_artifacts",
+        sql=(
+            "SELECT artifact_id, thread_id, "
+            "json_extract(payload_json, '$.path') AS path "
+            "FROM workspace_artifacts"
+        ),
     )["rows"]
     message_rows = query.execute(
         graph_id=graph_id,
@@ -281,6 +285,7 @@ def test_owner_views_expose_only_rows_referenced_by_the_bound_graph(
         {
             "artifact_id": visible_artifact.artifact_id,
             "thread_id": first.thread_id,
+            "path": "files/visible.txt",
         }
     ]
     assert message_rows == sorted(

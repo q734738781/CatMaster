@@ -98,6 +98,7 @@ from .projections.self_evolution import (
     project_self_evolution_payload,
 )
 from .thread_models import (
+    ThreadCheckpointContinueRequest,
     ThreadCreateRequest,
     ThreadPatchRequest,
     ThreadResumeRequest,
@@ -3761,6 +3762,32 @@ def create_app(
                     workspace=workspace,
                 ),
                 "thread": project_thread(result["thread"]),
+        }
+
+    @app.post(
+        "/api/threads/{thread_id}/continue-from-checkpoint",
+        response_model=PublicResumeEnvelope,
+    )
+    async def _thread_continue_from_checkpoint(
+        thread_id: str,
+        payload: ThreadCheckpointContinueRequest,
+    ):
+        identity = _identity_or_401()
+        workspace, workspace_name = _workspace_for_thread(thread_id, identity)
+        result = await _agent_loop(
+            workspace,
+            workspace_name,
+        ).continue_from_checkpoint(
+            thread_id=thread_id,
+            payload=payload,
+        )
+        return {
+            "accepted": True,
+            "assistant_message": project_message(
+                result["assistant_message"],
+                workspace=workspace,
+            ),
+            "thread": project_thread(result["thread"]),
         }
 
     @app.get("/api/threads/{thread_id}/stream", response_model=PublicEvent)

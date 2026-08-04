@@ -41,10 +41,11 @@ Use this skill for CP2K electronic-property stages after the structural footing 
 ## Output Contract
 Return:
 - property-stage path
-- submitted receipt/context if executed
 - parser script path when created
 - output JSON/CSV/plot paths
 - limitations of the property extraction
+
+Keep receipt and platform fields in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_properties_reference.md`

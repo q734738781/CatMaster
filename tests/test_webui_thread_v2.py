@@ -26,6 +26,7 @@ from catmaster.webui.thread_events import ThreadEventBroker
 from catmaster.webui.thread_models import (
     ArtifactPart,
     MessagePart,
+    ThreadCheckpointContinueRequest,
     ThreadMessage,
     ThreadStopRequest,
     ThreadSubmitRequest,
@@ -101,6 +102,66 @@ def test_thread_request_models_keep_model_config_as_an_api_alias() -> None:
     assert "llm_config" not in ThreadSubmitRequest.model_json_schema()["properties"]
     assert ThreadStopRequest().emergency is False
     assert ThreadStopRequest().reason == ""
+    assert ThreadCheckpointContinueRequest(message_id="msg_failed").message_id == "msg_failed"
+
+
+def test_checkpoint_continue_route_forwards_failed_message_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    client = TestClient(create_app(project_space_root=str(tmp_path), no_login=True))
+    created = client.post(
+        "/api/workspaces/default/threads",
+        json={"title": "Checkpoint continuation"},
+    )
+    thread_id = created.json()["thread"]["thread_id"]
+    captured: dict[str, str] = {}
+
+    async def fake_continue(self, *, thread_id: str, payload: Any):
+        captured["thread_id"] = thread_id
+        captured["message_id"] = payload.message_id
+        message = ThreadMessage(
+            id="msg_checkpoint_continuation",
+            thread_id=thread_id,
+            role="assistant",
+            status="streaming",
+            parts=[
+                MessagePart(
+                    id="part_checkpoint_continuation",
+                    type="text",
+                    status="streaming",
+                )
+            ],
+        )
+        self.store.append_message(message)
+        thread = self.store.update_thread(thread_id, status="running")
+        return {
+            "accepted": True,
+            "assistant_message": message,
+            "thread": thread,
+        }
+
+    monkeypatch.setattr(
+        ThreadAgentLoopService,
+        "continue_from_checkpoint",
+        fake_continue,
+    )
+    response = client.post(
+        f"/api/threads/{thread_id}/continue-from-checkpoint",
+        json={"message_id": "msg_failed_route"},
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "thread_id": thread_id,
+        "message_id": "msg_failed_route",
+    }
+    assert response.json()["assistant_message"]["id"] == "msg_checkpoint_continuation"
+    assert client.post(
+        f"/api/threads/{thread_id}/continue-from-checkpoint",
+        json={},
+    ).status_code == 422
 
 
 def test_thread_store_persists_messages_and_events_replay(tmp_path: Path) -> None:
@@ -1041,6 +1102,200 @@ def test_agent_loop_service_launches_turn_and_queues_steering(tmp_path: Path) ->
     assert store.get_thread(thread.thread_id).pending_steering[0]["model_config"] == ""
 
 
+def test_checkpoint_continue_reuses_failed_graph_tail_without_user_message(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    async def _run() -> None:
+        workspace = _workspace(tmp_path)
+        store = ThreadStore(workspace=workspace, workspace_id="default")
+        thread = store.create_thread(
+            entrypoint="writing",
+            meta={"permission_mode": "hitl"},
+        )
+        failed_message = ThreadMessage(
+            id="msg_failed_tail",
+            thread_id=thread.thread_id,
+            role="assistant",
+            status="failed",
+            parts=[
+                MessagePart(
+                    id="part_failed_text",
+                    type="text",
+                    status="streaming",
+                )
+            ],
+            meta={
+                "entrypoint": "experiment",
+                "permission_mode": "auto",
+                "model_config": "",
+                "checkpoint_resume_available": True,
+                "research_graph_id": "",
+                "research_focus_node_id": "",
+                "research_launch_id": "",
+                "run_id": "run_failed_tail",
+            },
+        )
+        store.append_message(failed_message)
+        store.update_thread(thread.thread_id, status="error")
+        broker = ThreadEventBroker(workspace=workspace)
+        captured: dict[str, object] = {}
+        tasks: dict[str, asyncio.Task] = {}
+
+        class FakeRunner:
+            def __init__(self, **kwargs):
+                self.thread_store = kwargs["thread_store"]
+
+            async def acontinue_from_checkpoint(self, **kwargs):
+                captured["continue"] = kwargs
+                self.thread_store.update_message(
+                    kwargs["thread_id"],
+                    kwargs["message_id"],
+                    status="completed",
+                )
+                self.thread_store.update_thread(
+                    kwargs["thread_id"],
+                    status="idle",
+                    active_message_id="",
+                    active_run_id="",
+                )
+                return {"status": "done"}
+
+        def fake_build_runner(**kwargs):
+            captured["build_runner"] = kwargs
+            return SimpleNamespace(
+                runner=object(),
+                run_context=SimpleNamespace(
+                    run_id="run_checkpoint_continue",
+                    run_dir=tmp_path / "run_checkpoint_continue",
+                ),
+            )
+
+        service = ThreadAgentLoopService(
+            workspace=workspace,
+            workspace_id="default",
+            store=store,
+            broker=broker,
+            artifact_registry=ArtifactRegistry(
+                workspace=workspace,
+                workspace_id="default",
+            ),
+            thread_tasks=tasks,
+            thread_stop_flags=set(),
+            build_runner=fake_build_runner,
+            streaming_runner_cls=FakeRunner,
+            permission_mode_for_thread=lambda _thread, override="": override or "hitl",
+            interrupt_on_for_permission_mode=lambda _mode: {},
+            normalize_entrypoint=lambda value: value or "research",
+            should_stop=lambda _thread_id: False,
+        )
+
+        result = await service.continue_from_checkpoint(
+            thread_id=thread.thread_id,
+            payload=ThreadCheckpointContinueRequest(
+                message_id=failed_message.id
+            ),
+        )
+        active_task = tasks.get(thread.thread_id)
+        if active_task is not None:
+            await active_task
+
+        assert captured["continue"] == {
+            "entrypoint": "experiment",
+            "thread_id": thread.thread_id,
+            "message_id": result["assistant_message"].id,
+            "text_part_id": result["assistant_message"].parts[0].id,
+            "deepagent_thread_id": thread.deepagent_thread_id,
+        }
+        assert captured["build_runner"]["preferred_entrypoint"] == "experiment"
+        assert captured["build_runner"]["runtime_context"] == {
+            "research_graph_id": "",
+            "research_focus_node_id": "",
+            "research_launch_id": "",
+        }
+        messages = store.list_messages(thread.thread_id)
+        assert [message.role for message in messages] == ["assistant", "assistant"]
+        assert store.get_thread(thread.thread_id).entrypoint == "writing"
+        assert result["assistant_message"].meta[
+            "checkpoint_continue_from_message_id"
+        ] == failed_message.id
+
+    asyncio.run(_run())
+
+
+def test_checkpoint_continue_rejects_stale_or_nonresumable_failure(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+    from fastapi import HTTPException
+
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    failed_message = ThreadMessage(
+        id="msg_not_resumable",
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="failed",
+        parts=[MessagePart(id="part_failed", type="text")],
+    )
+    store.append_message(failed_message)
+    store.update_thread(thread.thread_id, status="error")
+    service = ThreadAgentLoopService(
+        workspace=workspace,
+        workspace_id="default",
+        store=store,
+        broker=ThreadEventBroker(workspace=workspace),
+        artifact_registry=ArtifactRegistry(workspace=workspace, workspace_id="default"),
+        thread_tasks={},
+        thread_stop_flags=set(),
+        build_runner=lambda **_kwargs: None,
+        streaming_runner_cls=object,
+        permission_mode_for_thread=lambda _thread, override="": override or "auto",
+        interrupt_on_for_permission_mode=lambda _mode: {},
+        normalize_entrypoint=lambda value: value or "research",
+        should_stop=lambda _thread_id: False,
+    )
+
+    with pytest.raises(HTTPException, match="no resumable graph checkpoint") as exc_info:
+        asyncio.run(
+            service.continue_from_checkpoint(
+                thread_id=thread.thread_id,
+                payload=ThreadCheckpointContinueRequest(
+                    message_id=failed_message.id
+                ),
+            )
+        )
+    assert exc_info.value.status_code == 409
+
+
+def test_streaming_runner_checkpoint_continue_passes_none_as_graph_input() -> None:
+    import asyncio
+
+    captured: dict[str, object] = {}
+    runner = object.__new__(StreamingSpecialistRunner)
+
+    async def fake_run_stream(**kwargs):
+        captured.update(kwargs)
+        return {"status": "done"}
+
+    runner._run_stream = fake_run_stream  # type: ignore[method-assign]
+    result = asyncio.run(
+        runner.acontinue_from_checkpoint(
+            entrypoint="experiment",
+            thread_id="thread_public",
+            message_id="msg_continue",
+            text_part_id="part_text",
+            deepagent_thread_id="thread_checkpoint",
+        )
+    )
+
+    assert result["status"] == "done"
+    assert captured["input_payload"] is None
+    assert captured["user_prompt"] == ""
+
+
 def test_first_research_turn_binds_a_graph_before_freezing_runtime_context(
     tmp_path: Path,
 ) -> None:
@@ -1226,6 +1481,7 @@ def test_agent_loop_persists_submit_entrypoint_and_passes_it_to_runner(tmp_path:
     assert stored_message.meta == {
         "permission_mode": "hitl",
         "entrypoint": "writing",
+        "model_config": "",
         "research_graph_id": "",
         "research_focus_node_id": "",
         "research_launch_id": "",
@@ -1641,6 +1897,49 @@ def awaitable_result(awaitable):
         return result
 
     return asyncio.run(_run())
+
+
+def test_stream_translator_marks_failed_message_as_checkpoint_resumable(
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    store = ThreadStore(workspace=workspace, workspace_id="default")
+    thread = store.create_thread()
+    message = ThreadMessage(
+        id="msg_resumable_failure",
+        thread_id=thread.thread_id,
+        role="assistant",
+        status="streaming",
+        parts=[MessagePart(id="part_text", type="text", status="streaming")],
+        meta={"entrypoint": "experiment"},
+    )
+    store.append_message(message)
+    broker = ThreadEventBroker(workspace=workspace)
+    translator = CatMasterStreamTranslator(
+        store=store,
+        events=broker,
+        artifact_registry=ArtifactRegistry(
+            workspace=workspace,
+            workspace_id="default",
+        ),
+        thread_id=thread.thread_id,
+        message_id=message.id,
+        text_part_id="part_text",
+        run_id="run_resumable_failure",
+    )
+
+    translator.fail(
+        "provider stream failed",
+        checkpoint_resume_available=True,
+    )
+
+    saved = store.get_message(thread.thread_id, message.id)
+    assert saved.status == "failed"
+    assert saved.meta["entrypoint"] == "experiment"
+    assert saved.meta["checkpoint_resume_available"] is True
+    failed_event = broker.replay(thread.thread_id, last_seq=0)[-1]
+    assert failed_event.event == "message.failed"
+    assert failed_event.data["checkpoint_resume_available"] is True
 
 
 def test_stream_translator_persists_interrupt_state(tmp_path: Path) -> None:

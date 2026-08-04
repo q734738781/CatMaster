@@ -41,6 +41,7 @@ Report:
 - convergence, maximum projected force, constraint drift, and final energy;
 - significant imaginary-mode count, lowest frequency, and `validated_first_order_saddle`;
 - final `ts.vasp`, `ts.xyz`, or `ts.extxyz`, plus the shared `vibrations.npz`, `frequencies.csv`, `modes.extxyz`, and `reaction_mode.txt`;
-- receipt/context identifiers and any per-stage error.
+- any per-stage scientific or execution error.
 
 An optimizer-completed structure with zero or multiple significant imaginary modes is still a useful result, but it is not a validated first-order saddle.
+Keep receipt/context identifiers and platform details in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.

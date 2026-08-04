@@ -121,6 +121,13 @@ For quantitative scientific workflows, do not silently rely on tool defaults for
 
 Such settings should be made explicit in task packets and/or skill-guided execution, and must remain consistent across reference and target calculations when required by the scientific question.
 
+### Keep scientific provenance separate from operations
+
+- Preserve scientific inputs, structures, model/checkpoint or parameter identity, physical conditions, method settings, analyses, evidence sources, and scientific results.
+- Hardware/device identity, MPI/OpenMP or scheduler layout, software build, executable/module/queue details, receipt IDs, access/license state, and performance telemetry belong to runtime records. Do not require them in ordinary scientific QC, Result writeback, or successful-run handoffs. An explicit user request to inspect, compare, record, or report any such field overrides this default; otherwise surface it only for a concrete failure or known result-changing compatibility issue.
+- Hashes/checksums are a separate file-identity exception: use them only when explicitly requested or required by transfer, checkpoint, retry, an existing protocol, or a machine consumer.
+- Existing tool/API/stage contracts are a separate execution exception and remain binding. Create an explicit contract artifact when the user requests one, but do not create an ad hoc schema, manifest, baseline, lockfile, or acceptance checklist merely to formalize a one-off task.
+
 ## Maintenance
 
 When changing a tool in a way that affects SOP, outputs, or constraints, update the corresponding skill in the same change.

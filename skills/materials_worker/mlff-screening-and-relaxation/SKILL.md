@@ -55,7 +55,7 @@ Prepare deterministic SP/relax stages, choose an enabled backend, and keep backe
 
 ### 4. Interpret as MLFF evidence
 
-- Verify backend, model/checkpoint, provider version, precision/device, method settings, per-input errors, and actual outputs.
+- Verify backend, model/checkpoint, precision, method settings, per-input errors, and actual outputs. Provider version and device identity stay in runtime records unless a known compatibility issue changes the scientific result.
 - Use a consistent backend/model/domain task across structures being ranked unless a difference is scientifically intentional and reported.
 - Treat MLFF screening as triage unless the user explicitly accepts ML-potential accuracy for the conclusion.
 
@@ -74,9 +74,11 @@ Return:
 
 - operation, backend, model/checkpoint, and method-critical overrides;
 - stage path or batch root with first-level stage count;
-- `work_dir_rel`, `remote_context_id`, `submission_hash`, and `receipt_rel` when present;
+- `work_dir_rel`;
 - `output/batch_summary.json`, each reported output structure, preserved constraint format (`opt.extxyz` for extxyz relax input), per-input error count, and shortlist/keep-drop rule;
 - the boundary between MLFF screening and any downstream reference calculation.
+
+Keep receipt/context identifiers, hardware/device identity, software build, scheduler details, and performance telemetry in runtime records unless a concrete failure or compatibility issue makes them relevant. If the user explicitly asks to inspect, compare, record, or report any of these fields, follow that request directly.
 
 ## References
 

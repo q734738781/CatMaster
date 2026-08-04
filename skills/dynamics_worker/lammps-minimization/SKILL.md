@@ -51,9 +51,10 @@ Use this skill for LAMMPS minimization from an explicit force-field card or preb
 Return:
 - normalized force-field card path
 - prepared stage path
-- submitted receipt/context
 - `lammps_log_summary` path
 - minimization stopping criterion and warnings/errors
+
+Keep receipt, launcher/rank, build, and hardware details in runtime records unless a concrete failure makes them relevant. If the user explicitly asks to inspect, compare, record, or report them, follow that request directly.
 
 ## References
 - Local source note: `references/lammps_minimization_reference.md`

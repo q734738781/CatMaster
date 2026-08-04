@@ -8,6 +8,11 @@ references describe the current system.
 
 ### WebUI
 
+- A failure raised while LangGraph is executing now exposes **Continue from
+  checkpoint** on the latest failed turn. The action resumes the same durable
+  DeepAgent thread with `None` input, so it retries the failed graph tail
+  without adding a synthetic user message or replaying completed checkpointed
+  steps. Stale and non-resumable failure cards cannot start a continuation.
 - Monitor now provides an expandable per-model-label token table with
   uncached input, cached input, cache-write, output, total-token, and call
   counts while keeping raw provider usage metadata out of the public view.
@@ -46,6 +51,15 @@ references describe the current system.
   and ad hoc frozen contracts, schemas, manifests, baselines, lockfiles, or
   acceptance frameworks for ordinary one-off work while preserving artifacts
   required by real APIs, tools, reproducibility needs, and downstream consumers.
+- Scientific provenance, hash identity, and execution contracts are now three
+  separate prompt policies. Ordinary scientific QC preserves scientific inputs,
+  methods, conditions, evidence, and results while leaving hardware, launcher,
+  scheduler, build, license, receipt, and performance fields in runtime records
+  unless a concrete failure, result-changing incompatibility, or explicit
+  user request makes them relevant. A user may explicitly request inspection,
+  comparison, recording, or reporting of any operational field, and may request
+  an otherwise unnecessary contract artifact; those requests override the
+  default reporting boundary.
 - CatMaster now explicitly replaces DeepAgents' auto-added `general-purpose`
   child for every specialist and named worker. The shared child remains a
   non-delegating context-isolation worker, inherits the caller's direct
@@ -93,6 +107,16 @@ references describe the current system.
 
 ### Research Graph
 
+- The bound SQL tool now exposes its exact logical columns at the tool surface
+  and identifies node, artifact, and message fields stored inside JSON payloads.
+  Experiment writeback and query skills use the same JSON1 examples, avoiding
+  guessed columns such as `workspace_artifacts.path` without adding duplicate
+  database fields or allowing SQLite schema introspection.
+- Research Graph planning now chooses node granularity by scientific decision
+  rather than procedural step. Setup, acquisition, conversion, convergence or
+  smoke checks, individual conditions or replicates, and analysis remain inside
+  one Experiment when they serve the same Hypothesis and decision rule; a new
+  node is reserved for a standalone Result that can change the next decision.
 - An unbound thread's first Research turn now binds the workspace's sole open
   graph, or creates a manual graph from that request when none exists, before
   the turn context is frozen. Multiple open graphs still require an explicit
@@ -133,6 +157,11 @@ references describe the current system.
   the Result actually addresses are recorded, and an empty judgment set is
   valid. A Result-focused planning turn may reuse existing Hypotheses or create
   a distinct new Hypothesis and its discriminating Experiment.
+- Evidence judging is restricted to already completed scientific Results and no
+  longer audits proposals, plans, platform feasibility, operational readiness,
+  or preflight. Research Graph nodes likewise exclude access/license,
+  hardware/platform, scheduler/receipt, build, and performance state unless a
+  known compatibility issue materially changed a scientific observation.
 - Research Graph scientific text and semantic collections no longer have
   capacity-based schema limits. Corpus locators and DOCX/XLSX document reading
   now provide continuation cursors, and graph mutations return the exact changed

@@ -907,6 +907,67 @@ class ThreadAgentLoopService:
         )
         return {"accepted": True, "assistant_message": assistant_message, "thread": self.store.get_thread(thread_id)}
 
+    async def continue_from_checkpoint(
+        self,
+        *,
+        thread_id: str,
+        payload: Any,
+    ) -> dict[str, Any]:
+        """Continue only the latest resumable failed graph tail."""
+
+        thread = self.store.get_thread(thread_id)
+        task = self.thread_tasks.get(thread_id)
+        if task and not task.done():
+            raise HTTPException(status_code=409, detail="Thread is already running.")
+        if thread.status != ThreadStatus.ERROR:
+            raise HTTPException(
+                status_code=409,
+                detail="Only the latest failed thread state can continue from a checkpoint.",
+            )
+        message_id = str(getattr(payload, "message_id", "") or "").strip()
+        if not message_id or self.store.latest_message_id(thread_id) != message_id:
+            raise HTTPException(
+                status_code=409,
+                detail="This failure is no longer the latest thread state.",
+            )
+        failed_message = self.store.get_message(thread_id, message_id)
+        if (
+            failed_message is None
+            or failed_message.role != "assistant"
+            or failed_message.status != "failed"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="The selected message is not a failed assistant turn.",
+            )
+        failed_meta = dict(failed_message.meta or {})
+        if not bool(failed_meta.get("checkpoint_resume_available")):
+            raise HTTPException(
+                status_code=409,
+                detail="This failure has no resumable graph checkpoint.",
+            )
+        entrypoint = self.normalize_entrypoint(
+            str(failed_meta.get("entrypoint") or thread.entrypoint)
+        )
+        research_context = {
+            key: str(failed_meta.get(key) or "").strip()
+            for key in _RESEARCH_TURN_CONTEXT_KEYS
+        }
+        assistant_message = await self.launch_turn(
+            thread_id=thread_id,
+            prompt="",
+            entrypoint=entrypoint,
+            model_config=str(failed_meta.get("model_config") or ""),
+            permission_mode=str(failed_meta.get("permission_mode") or ""),
+            research_context=research_context,
+            checkpoint_continue_from_message_id=message_id,
+        )
+        return {
+            "accepted": True,
+            "assistant_message": assistant_message,
+            "thread": self.store.get_thread(thread_id),
+        }
+
     async def stop(self, *, thread_id: str, payload: Any) -> dict[str, Any]:
         task = self.thread_tasks.get(thread_id)
         if task is None or task.done():
@@ -968,10 +1029,18 @@ class ThreadAgentLoopService:
         resume_tool_inputs: list[dict[str, Any]] | None = None,
         existing_user_message_id: str = "",
         research_context: dict[str, Any] | None = None,
+        checkpoint_continue_from_message_id: str = "",
     ) -> ThreadMessage:
         thread = self.store.get_thread(thread_id)
         normalized_entrypoint = self.normalize_entrypoint(entrypoint)
-        if resume_decisions is None and thread.entrypoint != normalized_entrypoint:
+        checkpoint_continue = bool(
+            str(checkpoint_continue_from_message_id or "").strip()
+        )
+        if (
+            resume_decisions is None
+            and not checkpoint_continue
+            and thread.entrypoint != normalized_entrypoint
+        ):
             thread = self.store.update_thread(thread_id, entrypoint=normalized_entrypoint)
         thread = self._ensure_default_research_graph_binding(
             thread=thread,
@@ -979,11 +1048,18 @@ class ThreadAgentLoopService:
             entrypoint=normalized_entrypoint,
             inherited=research_context,
         )
-        turn_research_context = self._research_turn_context(
-            thread=thread,
-            entrypoint=normalized_entrypoint,
-            inherited=research_context,
-        )
+        if checkpoint_continue:
+            inherited_context = dict(research_context or {})
+            turn_research_context = {
+                key: str(inherited_context.get(key) or "").strip()
+                for key in _RESEARCH_TURN_CONTEXT_KEYS
+            }
+        else:
+            turn_research_context = self._research_turn_context(
+                thread=thread,
+                entrypoint=normalized_entrypoint,
+                inherited=research_context,
+            )
         turn_permission_mode = self.permission_mode_for_thread(thread, permission_mode)
         prior_assistant_message_id = self.store.latest_message_id(
             thread_id,
@@ -994,6 +1070,16 @@ class ThreadAgentLoopService:
             meta={
                 "permission_mode": turn_permission_mode,
                 "entrypoint": normalized_entrypoint,
+                "model_config": str(model_config or ""),
+                **(
+                    {
+                        "checkpoint_continue_from_message_id": str(
+                            checkpoint_continue_from_message_id
+                        )
+                    }
+                    if checkpoint_continue
+                    else {}
+                ),
                 **turn_research_context,
             },
         )
@@ -1004,12 +1090,13 @@ class ThreadAgentLoopService:
             rebuilt_attachments = self.rebuild_prepared_attachments(attachment_rows, capability=capability)
             turn_content = build_turn_content(prompt, rebuilt_attachments)
             attachment_rows = [item.sidecar() for item in rebuilt_attachments]
-        turn_content = self._research_graph_turn_content(
-            prompt=prompt,
-            turn_content=turn_content,
-            entrypoint=normalized_entrypoint,
-            research_context=turn_research_context,
-        )
+        if not checkpoint_continue:
+            turn_content = self._research_graph_turn_content(
+                prompt=prompt,
+                turn_content=turn_content,
+                entrypoint=normalized_entrypoint,
+                research_context=turn_research_context,
+            )
         event_attachments: list[PreparedAttachment] = []
         if attachment_rows:
             event_attachments = [
@@ -1076,7 +1163,15 @@ class ThreadAgentLoopService:
                         self.store.get_thread(active_thread_id).pending_steering
                     ),
                 )
-                if resume_decisions is not None:
+                if checkpoint_continue:
+                    run_result = await streaming_runner.acontinue_from_checkpoint(
+                        entrypoint=normalized_entrypoint,
+                        thread_id=thread_id,
+                        message_id=assistant_message.id,
+                        text_part_id=text_part_id,
+                        deepagent_thread_id=thread.deepagent_thread_id,
+                    )
+                elif resume_decisions is not None:
                     run_result = await streaming_runner.aresume(
                         decisions=resume_decisions,
                         entrypoint=normalized_entrypoint,
@@ -1106,7 +1201,13 @@ class ThreadAgentLoopService:
             except Exception as exc:
                 terminal_status = "error"
                 self.store.update_thread(thread_id, status=ThreadStatus.ERROR, active_message_id="", active_run_id="")
-                self.broker.emit(thread_id, "error", message_id=assistant_message.id, status="error", data={"error": str(exc)})
+                self.broker.emit(
+                    thread_id,
+                    "error",
+                    message_id=assistant_message.id,
+                    status="error",
+                    data={"error": str(exc)},
+                )
             finally:
                 if self.on_turn_finished is not None:
                     try:

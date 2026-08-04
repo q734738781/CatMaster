@@ -66,9 +66,11 @@ Execute one validated fixed-image MLFF path per stage without remote interpolati
 Return:
 
 - local image-tree/QC provenance, stage path, backend/model, fmax, steps, and climb choice;
-- `work_dir_rel` and receipt/context identifiers;
+- `work_dir_rel`;
 - `output/batch_summary.json`, per-path `summary.json`, energy CSV/profile, and final-image paths;
 - convergence status and the required downstream barrier/TS validation.
+
+Keep receipt/context identifiers and platform details in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 

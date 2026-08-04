@@ -177,8 +177,16 @@ explain why, and list the shared settings that still require my confirmation. St
 
 After a remote error, inspect the receipt and old job state before any retry. Chapter 8 provides recovery prompts and Chapter 11 contains diagnostic commands.
 
+When the latest turn fails inside a resumable LangGraph step, its error card
+shows **Continue from checkpoint**. This resumes the same durable thread with no
+new user message. Completed checkpointed steps remain available and only the
+failed graph tail runs again. It does not continue from the middle of a partial
+LLM token stream. If the error card instead shows **Review and try again**, the
+failure has no safe graph continuation and the composer remains the recovery
+path. An older failure card becomes inactive as soon as the thread advances.
+
 ## Important current limitations
 
-The WebUI does not yet rename, delete, branch, or retry threads, and it has no historical run selector. Research Graph can manage scientific branches across threads, but it is not a thread history or rollback control. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
+The WebUI does not yet rename, delete, or branch threads, and it cannot replay an arbitrary historical checkpoint or select a historical run. It can natively continue only the latest resumable failed graph tail. Research Graph can manage scientific branches across threads, but it is not a thread history or rollback control. Files overwrites same-name uploads and has no recycle bin. Approval interruptions must resume through their message cards. Stop does not cancel remote jobs. Skill Evolution appears only in login mode and affects the next run.
 
 Use versioned file names or external backup, divide independent objectives or incompatible project scopes into separate threads, and manage remote jobs through receipts. These practices cover the current UI gaps without pretending the agent can provide controls that do not exist.

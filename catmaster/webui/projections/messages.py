@@ -519,6 +519,9 @@ def project_message(
                 summary=meta.get("error") or meta.get("failure"),
                 error_code=meta.get("error_code"),
                 retry_safe=bool(meta.get("retry_safe")),
+                checkpoint_resumable=bool(
+                    meta.get("checkpoint_resume_available")
+                ),
                 diagnostics_ref=f"thread-message:{message_id}",
                 workspace=workspace,
             )

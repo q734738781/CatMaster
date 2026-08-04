@@ -298,8 +298,9 @@ function ItemList({ items, ordered = false, redact = false }) {
   );
 }
 
-function CardActions({ actions, part, onSelect }) {
+function CardActions({ actions, part, onSelect, onContinueFromCheckpoint }) {
   const rows = Array.isArray(actions) ? actions : [];
+  const [pendingAction, setPendingAction] = useState("");
   const detailTypes = new Set(["tool", "receipt", "attachment"]);
   const isArtifactWithoutOpen = String(part?.type || "") === "artifact"
     && !rows.some((action) => action?.id === "open_artifact");
@@ -338,6 +339,31 @@ function CardActions({ actions, part, onSelect }) {
             >
               <LinkIcon size={14} />
               {displayValue(action.label, "Open")}
+            </button>
+          );
+        }
+        if (action.id === "continue_from_checkpoint") {
+          if (!onContinueFromCheckpoint) return null;
+          const pending = pendingAction === action.id;
+          return (
+            <button
+              key={`${action.id}-${index}`}
+              type="button"
+              className="v2-primary-btn compact"
+              disabled={pending}
+              onClick={async () => {
+                setPendingAction(action.id);
+                try {
+                  await onContinueFromCheckpoint();
+                } catch {
+                  // The thread runtime presents the structured API error.
+                } finally {
+                  setPendingAction("");
+                }
+              }}
+            >
+              {pending ? <LoaderCircle className="spin" size={14} /> : null}
+              {displayValue(action.label, "Continue from checkpoint")}
             </button>
           );
         }
@@ -383,7 +409,13 @@ function CardActions({ actions, part, onSelect }) {
   );
 }
 
-function SemanticCard({ part, icon: Icon = Hammer, className = "", onSelect }) {
+function SemanticCard({
+  part,
+  icon: Icon = Hammer,
+  className = "",
+  onSelect,
+  onContinueFromCheckpoint,
+}) {
   const isError = String(part.type || "") === "error"
     || ["failed", "error"].includes(String(part.status || "").toLowerCase());
   const internalPath = isInternalStoragePath(part.path);
@@ -418,7 +450,12 @@ function SemanticCard({ part, icon: Icon = Hammer, className = "", onSelect }) {
         redact={isError}
       />
       <ItemList items={part.items} redact={isError} />
-      <CardActions actions={part.actions} part={part} onSelect={onSelect} />
+      <CardActions
+        actions={part.actions}
+        part={part}
+        onSelect={onSelect}
+        onContinueFromCheckpoint={onContinueFromCheckpoint}
+      />
       <TruncationNotice
         truncation={part.truncation || {}}
         onOpenFull={part.detail_ref ? () => onSelect?.({ type: "activity", part }) : null}
@@ -599,7 +636,12 @@ function InterruptCard({ part, onResume }) {
   );
 }
 
-function RenderProjectedPart({ part, onSelect, onResume }) {
+function RenderProjectedPart({
+  part,
+  onSelect,
+  onResume,
+  onContinueFromCheckpoint,
+}) {
   const type = String(part?.type || "unknown");
   if (type === "text") return <LongTextPart part={part} />;
   if (type === "reasoning") return <LongTextPart part={part} progress onSelect={onSelect} />;
@@ -611,7 +653,15 @@ function RenderProjectedPart({ part, onSelect, onResume }) {
   if (type === "tool") return <SemanticCard part={part} icon={Hammer} className="tool" onSelect={onSelect} />;
   if (type === "receipt") return <SemanticCard part={part} icon={Network} className="receipt" onSelect={onSelect} />;
   if (type === "interrupt") return <InterruptCard part={part} onResume={onResume} />;
-  if (type === "error") return <SemanticCard part={part} icon={CircleAlert} className="error" onSelect={onSelect} />;
+  if (type === "error") return (
+    <SemanticCard
+      part={part}
+      icon={CircleAlert}
+      className="error"
+      onSelect={onSelect}
+      onContinueFromCheckpoint={onContinueFromCheckpoint}
+    />
+  );
   if (type === "citations") return <SemanticCard part={part} icon={LinkIcon} className="citations" onSelect={onSelect} />;
   return <SemanticCard part={part} icon={CircleAlert} className="unknown" onSelect={onSelect} />;
 }
@@ -664,7 +714,7 @@ function activityPartLabel(part, groupTitle) {
   return label;
 }
 
-function ActivityGroup({ group, onSelect, onResume }) {
+function ActivityGroup({ group, onSelect, onResume, onContinueFromCheckpoint }) {
   const isLong = isLongActivityGroup(group);
   const [expanded, setExpanded] = useState(!isLong);
   const userChanged = useRef(false);
@@ -713,6 +763,7 @@ function ActivityGroup({ group, onSelect, onResume }) {
               part={part}
               onSelect={onSelect}
               onResume={onResume}
+              onContinueFromCheckpoint={onContinueFromCheckpoint}
             />
           ))}
         </div>
@@ -735,7 +786,14 @@ function partFromAssistantContent(part) {
   };
 }
 
-function CatMasterMessage({ canonicalTodoMessageId, canonicalTodoParts, onSelect, onResume }) {
+function CatMasterMessage({
+  canonicalTodoMessageId,
+  canonicalTodoParts,
+  latestMessageId,
+  onSelect,
+  onResume,
+  onContinueFromCheckpoint,
+}) {
   const message = useMessage();
   const role = String(message?.role || "assistant");
   const status = message?.status?.type || message?.status || "";
@@ -755,6 +813,11 @@ function CatMasterMessage({ canonicalTodoMessageId, canonicalTodoParts, onSelect
       ? withCanonicalTodoParts(parts, canonicalTodoParts)
       : parts,
   );
+  const continueLatestFailure = (
+    message?.id === latestMessageId && onContinueFromCheckpoint
+  )
+    ? () => onContinueFromCheckpoint?.(message.id)
+    : null;
 
   useEffect(() => {
     setAdditionalParts([]);
@@ -807,6 +870,7 @@ function CatMasterMessage({ canonicalTodoMessageId, canonicalTodoParts, onSelect
                 group={group}
                 onSelect={onSelect}
                 onResume={onResume}
+                onContinueFromCheckpoint={continueLatestFailure}
               />
             ))}
             {presentation.contentParts.map((part, index) => (
@@ -815,6 +879,7 @@ function CatMasterMessage({ canonicalTodoMessageId, canonicalTodoParts, onSelect
                 part={part}
                 onSelect={onSelect}
                 onResume={onResume}
+                onContinueFromCheckpoint={continueLatestFailure}
               />
             ))}
             {partsPage?.truncated ? (
@@ -839,6 +904,7 @@ export default function ThreadMessages({
   error,
   onSelect,
   onResume,
+  onContinueFromCheckpoint,
   hasMore = false,
   onLoadOlder,
   loadingOlder = false,
@@ -854,6 +920,7 @@ export default function ThreadMessages({
   const canonicalTodoMessageId = [...messages.slice(latestUserIndex + 1)]
     .reverse()
     .find((message) => message?.role === "assistant")?.id || "";
+  const latestMessageId = messages.at(-1)?.id || "";
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -990,8 +1057,10 @@ export default function ThreadMessages({
               <CatMasterMessage
                 canonicalTodoMessageId={canonicalTodoMessageId}
                 canonicalTodoParts={todoParts}
+                latestMessageId={latestMessageId}
                 onSelect={onSelect}
                 onResume={onResume}
+                onContinueFromCheckpoint={onContinueFromCheckpoint}
               />
             )}
           </ThreadPrimitive.Messages>

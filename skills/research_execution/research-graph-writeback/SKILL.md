@@ -32,9 +32,13 @@ If these tools are absent, return the evidence and owner paths to the parent age
 
 A prepared input, downloaded paper, status check, explanation of an existing Result, ordinary wait, or completed chat turn is not itself a Result. A Result is a distinct observation, measurement, or derived scientific conclusion supported by evidence inspected in this turn.
 
+Access or license state, hardware/platform readiness, scheduler or receipt state, software build, and performance telemetry are operational records, not Results. Keep them outside the Graph unless a known compatibility issue materially changed a scientific observation.
+
 ### 2. Check the relevant Graph context
 
 Use `query_research_graph_sql` when the existing target, Results, or judgments are not already clear. Read enough owner evidence to confirm claim-critical conditions and numbers. Do not rely on a filename, final answer, or Graph summary alone.
+
+Use the exact logical columns declared on the query tool's `sql` argument; do not guess convenience columns or inspect `sqlite_master`. Scientific fields such as `claim`, `objective`, and `summary` live inside `research_nodes.body_json`, while artifact fields such as `path`, `mime_type`, and `title` live inside `workspace_artifacts.payload_json`. Extract them with SQLite JSON1, for example `json_extract(n.body_json, '$.claim')` or `json_extract(a.payload_json, '$.path')`.
 
 ### 3. Record the smallest scientific unit
 

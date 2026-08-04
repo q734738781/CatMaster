@@ -43,7 +43,7 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 - Use `task_name="lammps_execute"` for the CPU resource, including inputs whose pair, fix, compute, or other styles do not have complete KOKKOS support.
 - Use `task_name="lammps_execute_kokkos"` only when it is listed and every method-critical input style is compatible with the deployment's KOKKOS build.
 - The KOKKOS task requests a GPU and does not fall back to CPU. The CPU task never enables GPU acceleration.
-- The CPU boot path maps `SLURM_NTASKS` to MPI ranks and probes the launcher before LAMMPS starts. On single-node Slurm allocations where Intel MPI is installed but `srun` is absent, it uses Hydra `fork` locally and still verifies the exact rank count. Treat a serial/stub build, missing launcher, or rank mismatch as a resource failure rather than running with fewer ranks.
+- The registered task owns launcher, rank-layout, build, and accelerator checks. Treat a concrete incompatibility as an execution failure; do not turn these platform details into routine scientific QC.
 - Do not pass `submission_config.resources` or `submission_config.machine`; each registered task owns its deployment binding.
 
 ## Method-critical defaults
@@ -55,10 +55,10 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 Return:
 - normalized force-field card path
 - LAMMPS stage path
-- submitted receipt/context
 - `lammps_log_summary` and trajectory summary paths when generated
-- `lammps_summary.json` MPI rank, launcher, and probe evidence
 - any force-field or parser limitation
+
+Receipt IDs, launcher/rank evidence, build details, and hardware identity remain in runtime records. Surface them for a concrete execution failure or whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/lammps_input_reference.md`

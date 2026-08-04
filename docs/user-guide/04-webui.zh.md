@@ -182,8 +182,15 @@ calculations/mlff_screen/output/，核对已有候选、失败项和排序依据
 
 如果上一次涉及远程错误，先读取 receipt 并判断旧作业状态，禁止把"重试"理解为重新提交。第 8 章给出了相应恢复 prompt，第 11 章收录更具体的诊断方法。
 
+如果最新一轮是在可恢复的 LangGraph 步骤内失败，错误卡片会显示
+**Continue from checkpoint**。它不会添加新的用户消息，而是以空输入续接同一个持久化
+thread；已经写入 checkpoint 的步骤继续保留，只重新执行失败的图尾部。它不会从一段
+中断的 LLM token 流中间接着生成。如果卡片仍显示 **Review and try again**，说明该失败
+没有可安全续接的图状态，需要从 composer 调整后再提交。Thread 一旦已经前进，旧失败
+卡片的续跑操作就会失效。
+
 ## 当前界面的重要限制
 
-WebUI 目前不能重命名、删除、分支或 retry thread，也不能从历史 run 选择器恢复某个任意节点。Research Graph 可以跨 thread 管理科学分支，但它不是 thread 历史或 rollback 控件。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
+WebUI 目前不能重命名、删除或分支 thread，也不能回放任意历史 checkpoint 或从历史 run 选择器恢复某个节点；它只能原生续接最新且可恢复的失败图尾部。Research Graph 可以跨 thread 管理科学分支，但它不是 thread 历史或 rollback 控件。Files 上传同名文件会覆盖，删除不会进入回收站。审批中断必须用消息内卡片恢复。Stop 不取消远程 job。Skill Evolution 只在登录模式显示，并从下一次 run 生效。
 
 这些限制不会阻止正常研究流程，但会影响如何备份、续跑和停止任务。重要文件使用版本化名称或 Git/外部备份；远程任务依靠 receipt；相互独立的目标或不兼容的项目范围使用不同 thread。这样可以避免把 UI 中缺少的操作误认为 Agent 会自动补齐。

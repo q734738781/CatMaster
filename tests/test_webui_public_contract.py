@@ -147,6 +147,28 @@ def test_monitor_projection_exposes_bounded_token_rows_by_model_label() -> None:
     assert "raw_usage_metadata" not in projected["usage"]
 
 
+def test_error_projection_uses_native_continue_only_for_resumable_checkpoint() -> None:
+    ordinary = project_error_part(part_id="part_error")
+    resumable = project_error_part(
+        part_id="part_checkpoint_error",
+        checkpoint_resumable=True,
+    )
+    projected_message = project_message(
+        ThreadMessage(
+            id="msg_checkpoint_error",
+            thread_id="thread_checkpoint_error",
+            role="assistant",
+            status="failed",
+            parts=[MessagePart(id="part_text", type="text")],
+            meta={"checkpoint_resume_available": True},
+        )
+    )
+
+    assert ordinary.actions[0].id == "focus_composer"
+    assert resumable.actions[0].id == "continue_from_checkpoint"
+    assert projected_message.parts[-1].actions[0].id == "continue_from_checkpoint"
+
+
 def test_ordinary_message_projection_hides_raw_and_diagnostics_recovers_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

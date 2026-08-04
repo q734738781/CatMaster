@@ -207,6 +207,12 @@ def test_research_tool_final_schemas_are_non_nullable_and_minimal(
             assert set(properties) == {"sql"}
             assert tool["parameters"]["required"] == ["sql"]
             assert properties["sql"]["type"] == "string"
+            sql_description = properties["sql"]["description"]
+            assert "research_nodes(graph_id, node_id, kind, title, state, body_json" in sql_description
+            assert "workspace_artifacts(artifact_id, thread_id, payload_json" in sql_description
+            assert "json_extract(n.body_json, '$.claim')" in sql_description
+            assert "json_extract(a.payload_json, '$.path')" in sql_description
+            assert "sqlite_master" in sql_description
         if tool["name"] == "evaluate_research_experiments":
             assert {
                 "experiment_ids",

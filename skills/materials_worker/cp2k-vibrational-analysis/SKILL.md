@@ -45,10 +45,11 @@ Use this skill when a CP2K frequency or vibrational-analysis stage is requested 
 ## Output Contract
 Return:
 - vibrational stage path
-- submitted receipt/context
 - parser script path if created
 - frequency/thermochemistry artifact paths
 - limitations or imaginary-mode warnings
+
+Keep receipt and platform fields in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_vibrational_reference.md`

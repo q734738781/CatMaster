@@ -57,8 +57,9 @@ Return:
 - prepared CP2K stage path
 - selected recipe
 - `manifest.json` path
-- `cp2k_execute` receipt/context when submitted
 - any unsupported setting or parser limitation
+
+The manifest remains a required execution contract. Receipt and platform fields remain in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_dft_reference.md`

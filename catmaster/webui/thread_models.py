@@ -153,6 +153,10 @@ class ThreadResumeRequest(BaseModel):
     text: str = ""
 
 
+class ThreadCheckpointContinueRequest(BaseModel):
+    message_id: str
+
+
 class ThreadStopRequest(BaseModel):
     emergency: bool = False
     reason: str = ""
@@ -181,6 +185,7 @@ __all__ = [
     "InterruptRecord",
     "MessagePart",
     "ThreadCreateRequest",
+    "ThreadCheckpointContinueRequest",
     "ThreadEventEnvelope",
     "ThreadMessage",
     "ThreadPatchRequest",

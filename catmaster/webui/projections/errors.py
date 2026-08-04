@@ -165,6 +165,7 @@ def project_error_part(
     summary: Any = "",
     error_code: Any = "",
     retry_safe: bool = False,
+    checkpoint_resumable: bool = False,
     diagnostics_ref: str = "",
     workspace: Path | None = None,
 ) -> PublicPart:
@@ -174,7 +175,9 @@ def project_error_part(
         PublicField(
             label="Try again",
             value=(
-                "The same request can be submitted again."
+                "Continue from the latest saved checkpoint without adding a user message."
+                if checkpoint_resumable
+                else "The same request can be submitted again."
                 if retry_safe
                 else "Review the inputs or diagnostics reference before submitting again."
             ),
@@ -194,8 +197,16 @@ def project_error_part(
         fields=fields,
         actions=[
             PublicAction(
-                id="focus_composer",
-                label="Review and try again",
+                id=(
+                    "continue_from_checkpoint"
+                    if checkpoint_resumable
+                    else "focus_composer"
+                ),
+                label=(
+                    "Continue from checkpoint"
+                    if checkpoint_resumable
+                    else "Review and try again"
+                ),
                 kind="primary",
             )
         ],

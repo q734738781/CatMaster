@@ -39,6 +39,21 @@ The tool accepts one required `sql` string. Graph identity and revision come fro
 
 `body_json` and owner payloads are raw JSON. SQLite JSON1, joins, aggregates, window functions, and recursive CTEs are available. The two owner tables contain only rows reachable through this graph's `artifact`, `thread`, or `message` refs.
 
+Do not guess flattened convenience columns. For example, `research_nodes` has no direct `claim`, `summary`, or `status` column (`state` is the canonical state column), and `workspace_artifacts` has no direct `path`, `mime_type`, `title`, or `description` column. Extract those payload fields explicitly:
+
+```sql
+SELECT n.node_id, n.state,
+       json_extract(n.body_json, '$.claim') AS claim
+FROM research_nodes AS n
+```
+
+```sql
+SELECT a.artifact_id,
+       json_extract(a.payload_json, '$.path') AS path,
+       json_extract(a.payload_json, '$.mime_type') AS mime_type
+FROM workspace_artifacts AS a
+```
+
 ### 2. Recover the scientific neighborhood
 
 Start from the focus rather than scanning titles:
@@ -73,6 +88,7 @@ Cover the focus and direct relations, relevant older Results and opposite judgme
 - Determine frontier eligibility only from Experiment state and satisfied dependencies.
 - Do not use importance, cost, creation order, or SQL row order as route value.
 - Do not treat `body_json`, refs, or owner payloads as complete until the required fields or sources have been opened.
+- Treat platform availability, access/license state, hardware/software-build readiness, scheduler/receipt state, and performance telemetry as operational constraints, not scientific Hypotheses, decision rules, Results, or proposal branches.
 
 ## Output Contract
 

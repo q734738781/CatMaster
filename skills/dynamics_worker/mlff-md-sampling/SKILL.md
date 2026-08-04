@@ -42,7 +42,7 @@ Run one trajectory lineage per stage with typed MD controls and preserve restart
 
 ### 2. Set typed controls
 
-- `backend_config` selects the backend's model, precision, acceleration, and device controls. Use the concrete task spec instead of copying another provider's fields.
+- `backend_config` selects the backend's model and precision plus any execution controls required by the concrete task spec. Use that spec instead of copying another provider's fields.
 - `task_config.dynamics` selects ensemble, temperatures, timestep, steps, seed, and velocity behavior.
 - `thermostat`, `barostat`, and `output` remain separate nested groups. NPT requires a non-none barostat; non-NPT requires `barostat.type=none`.
 - `dynamics.temperature_K` is the constant target or schedule start. Leave `temperature_end_K=0` (the default) or equal to `temperature_K` for constant temperature; set a different positive end value for a per-step linear schedule.
@@ -56,13 +56,13 @@ Run one trajectory lineage per stage with typed MD controls and preserve restart
 
 ### 4. Analyze before claiming convergence
 
-- Verify actual device, elapsed/startup timing, errors, final frame, energy/temperature behavior, and restart sources.
+- Verify errors, final frame, energy/temperature behavior, and restart sources. Inspect actual device and elapsed/startup timing only for a concrete compatibility/performance problem or when the user asks for them.
 - Short runs are equilibration or exploratory evidence unless the requested observable has a credible production window and uncertainty analysis.
 
 ## Method-critical defaults
 
 - Default to NVT, 300 K, 1 fs, 1000 steps, Bussi thermostat, seed 2026, and trajectory/log intervals of 10.
-- Resolve model, precision, and acceleration defaults from the selected backend spec; report the resolved values.
+- Resolve model and precision from the selected backend spec and report them. Acceleration/device choices remain runtime metadata unless they materially change the scientific result.
 - Use NVE for energy-conservation studies and NPT only with a real three-dimensional periodic cell.
 - Set Berendsen compressibility explicitly. Keep timestep, ensemble, constant target or schedule endpoints, thermostat/barostat, model/head, precision, and dispersion visible in the result.
 
@@ -71,9 +71,11 @@ Run one trajectory lineage per stage with typed MD controls and preserve restart
 Return:
 
 - stage/replica identity, backend/model, ensemble, timestep, step count, temperature/pressure controls, and seed;
-- `work_dir_rel` plus receipt/context identifiers;
+- `work_dir_rel`;
 - `output/batch_summary.json`, trajectory/log/restart paths, and restart-source fields;
 - whether the trajectory is exploratory, equilibration, or production evidence.
+
+Keep receipt/context identifiers, hardware/device identity, launcher layout, and performance telemetry in runtime records unless a concrete failure or compatibility issue makes them relevant. If the user explicitly asks to inspect, compare, record, or report any of these fields, follow that request directly.
 
 ## References
 

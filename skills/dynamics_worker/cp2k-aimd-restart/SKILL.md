@@ -14,7 +14,7 @@ Use this skill when a CP2K AIMD calculation needs continuation from a prior stag
 2. Use `cp2k_output_summary` and `md_trajectory_summary` to confirm the prior stage state.
 3. Prepare the continuation with `cp2k_aimd_prepare(recipe="restart")`.
 4. Submit the new stage with `remote_submission(task_name="cp2k_execute")`.
-5. Preserve both old and new receipt/context IDs in the result report.
+5. Preserve the scientific restart lineage: source result, restart file, and intentionally changed AIMD settings.
 
 ## Allowed tools
 - `cp2k_aimd_prepare`
@@ -41,7 +41,7 @@ Use this skill when a CP2K AIMD calculation needs continuation from a prior stag
 - After completion, inspect `cp2k_summary.json`, `job.out`, `.ener`, trajectory, and restart files before reporting.
 
 ## Method-critical defaults
-- Project policy: remote receipt/context fields are part of the restart record.
+- Remote receipt/context fields belong to runtime recovery records, not the scientific restart record.
 - Do not silently create a fresh AIMD run when the task is continuation.
 - Do not infer equilibration from frame count alone.
 
@@ -50,9 +50,10 @@ Return:
 - prior result path inspected
 - restart file path
 - new AIMD stage path
-- submitted receipt/context
 - CP2K output and trajectory summary paths
 - any ambiguity in selected restart files
+
+Surface receipt or platform details for a concrete execution failure or whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_aimd_restart_reference.md`

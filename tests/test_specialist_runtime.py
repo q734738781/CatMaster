@@ -811,15 +811,25 @@ def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
     assert "machine-readable files" in policy
 
 
-def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
+def test_tool_policy_separates_scientific_provenance_hash_and_contract_rules() -> None:
     policy = runtime_mod.SpecialistRunner._tool_policy()
-    checksum_rule = "By default, do not calculate or compare hashes/checksums unless the user explicitly requests it."
-    contract_rule = "Do not create, freeze, or persist an ad hoc contract, schema, manifest, baseline, lockfile, acceptance checklist, or similar governance artifact merely to formalize a one-off task."
+    provenance_rule = runtime_mod.SpecialistRunner._scientific_provenance_policy()
+    checksum_rule = runtime_mod.SpecialistRunner._hash_policy()
+    contract_rule = runtime_mod.SpecialistRunner._contract_policy()
     overlap_rule = "Before launching multiple subagents, consider whether their work may modify overlapping files or directories."
-    assert policy.startswith(checksum_rule)
-    assert policy.count("hash") == 1
+    assert policy.startswith(provenance_rule)
+    assert "Hardware identity, accelerator type, MPI/OpenMP layout" in provenance_rule
+    assert "not ordinary scientific QC" in provenance_rule
+    assert "Research Graph Results" in provenance_rule
+    assert "known compatibility issue materially changes the scientific result" in provenance_rule
+    assert "not a restriction on the user" in provenance_rule
+    assert "when the user explicitly asks to inspect, compare, record, or report any operational field" in provenance_rule
+    assert "Hash/checksum exception" in checksum_rule
+    assert "unless the user explicitly requests it" in checksum_rule
+    assert "Contract exception" in contract_rule
+    assert "Create one when the user explicitly requests it" in contract_rule
     assert contract_rule in policy
-    assert "existing API, tool, reproducibility requirement, or downstream machine consumer actually requires it" in policy
+    assert "Honor an existing API, tool, execution, or downstream machine contract" in contract_rule
     assert overlap_rule in policy
     assert "Read-only branches may run in parallel without special isolation." in policy
     assert "separate output paths, designate a single writer, or run those tasks sequentially" in policy
@@ -838,9 +848,68 @@ def test_tool_policy_rejects_hash_and_ad_hoc_contract_ceremony() -> None:
         runtime_mod.SpecialistRunner._peer_review_worker_prompt(),
     )
     for prompt in shared_prompts:
+        assert provenance_rule in prompt
         assert checksum_rule in prompt
         assert contract_rule in prompt
         assert overlap_rule in prompt
+
+
+def test_evidence_judge_accepts_only_completed_scientific_results() -> None:
+    prompt = runtime_mod.SpecialistRunner._evidence_judge_prompt()
+    proposer_prompt = runtime_mod.SpecialistRunner._hypothesis_proposer_prompt()
+    graph_contract = runtime_mod.SpecialistRunner._research_graph_contract()
+
+    assert "only an already completed scientific Result" in prompt
+    assert "do not audit a proposal, plan, platform feasibility, operational readiness, or preflight" in prompt
+    assert "not scientific Hypotheses, decision rules, or proposal branches" in proposer_prompt
+    assert "Platform availability, access or license state, hardware readiness" in graph_contract
+    assert "do not become scientific Hypothesis, Experiment decision-rule, or Result content" in graph_contract
+
+
+def test_skill_output_contracts_do_not_require_operational_qc_fields() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    skill_paths = sorted((repo_root / "skills").glob("**/SKILL.md"))
+    recovery_skill = repo_root / "skills/execution/dpdispatcher-remote-receipts/SKILL.md"
+    operational_field = re.compile(
+        r"receipt|remote_context_id|submission_hash|task_state_counts|hardware|"
+        r"launcher|\bmpi\b|openmp|software build|provider version|device identity|"
+        r"performance telemetry",
+        re.IGNORECASE,
+    )
+
+    assert skill_paths
+    for path in skill_paths:
+        if path == recovery_skill:
+            continue
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"^## Output [Cc]ontract\s*$", text, re.MULTILINE)
+        if match is None:
+            continue
+        output_contract = re.split(r"^## ", text[match.end() :], maxsplit=1, flags=re.MULTILINE)[0]
+        operational_bullets = [
+            line
+            for line in output_contract.splitlines()
+            if line.startswith("- ") and operational_field.search(line)
+        ]
+        assert not operational_bullets, f"{path}: {operational_bullets}"
+
+    recovery_text = recovery_skill.read_text(encoding="utf-8")
+    assert "narrow operational-recovery exception" in recovery_text
+    assert "they are not scientific QC" in recovery_text
+
+    writeback_text = (
+        repo_root / "skills/research_execution/research-graph-writeback/SKILL.md"
+    ).read_text(encoding="utf-8")
+    reconciliation_text = (
+        repo_root / "skills/research_reasoning/research-evidence-reconciliation/SKILL.md"
+    ).read_text(encoding="utf-8")
+    authoring_text = (repo_root / "skills/AGENTS.MD").read_text(encoding="utf-8")
+    assert "operational records, not Results" in writeback_text
+    assert "already completed scientific Result" in reconciliation_text
+    assert "auditing proposal/platform feasibility" in reconciliation_text
+    assert "Hashes/checksums are a separate file-identity exception" in authoring_text
+    assert "Existing tool/API/stage contracts are a separate execution exception" in authoring_text
+    assert "An explicit user request to inspect, compare, record, or report any such field overrides this default" in authoring_text
 
 
 def test_general_purpose_policy_is_context_only_without_lane_or_concurrency_rules() -> None:

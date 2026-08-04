@@ -62,6 +62,7 @@ def project_event(
             summary=data.get("error") or data.get("summary"),
             error_code=data.get("error_code") or data.get("code"),
             retry_safe=bool(data.get("retry_safe")),
+            checkpoint_resumable=bool(data.get("checkpoint_resume_available")),
             diagnostics_ref=_event_diagnostics_ref(event),
             workspace=workspace,
         )
@@ -163,6 +164,7 @@ def project_event(
                 summary=data.get("error") or thread_payload.get("error"),
                 error_code=data.get("error_code"),
                 retry_safe=bool(data.get("retry_safe")),
+                checkpoint_resumable=bool(data.get("checkpoint_resume_available")),
                 diagnostics_ref=_event_diagnostics_ref(event),
                 workspace=workspace,
             )

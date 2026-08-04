@@ -73,9 +73,11 @@ Return:
 - input stage and backend/model metadata;
 - free and constrained degrees of freedom;
 - projected-force stationarity check and stationary-point class;
-- resolved Hessian method, displacement settings, force-evaluation count, and Hessian asymmetry diagnostic;
+- resolved Hessian method, displacement settings, and Hessian asymmetry diagnostic;
 - significant imaginary-mode count and frequency range;
-- `vibrations.npz`, `frequencies.csv`, `modes.extxyz`, `summary.json`, and the remote receipt/context.
+- `vibrations.npz`, `frequencies.csv`, `modes.extxyz`, and `summary.json`.
+
+Keep receipt/context identifiers, device identity, and performance telemetry in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 

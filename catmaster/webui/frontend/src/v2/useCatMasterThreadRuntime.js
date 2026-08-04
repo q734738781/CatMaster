@@ -259,6 +259,28 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     }
   }, [thread, onThreadUpdate]);
 
+  const continueFromCheckpoint = useCallback(async (messageId) => {
+    if (!thread?.thread_id || !messageId) return;
+    setError("");
+    try {
+      const payload = await apiFetch(
+        `/api/threads/${encodeURIComponent(thread.thread_id)}/continue-from-checkpoint`,
+        {
+          method: "POST",
+          body: JSON.stringify({ message_id: messageId }),
+        },
+      );
+      if (payload.assistant_message) {
+        setMessages((prev) => upsertById(prev, payload.assistant_message));
+      }
+      if (payload.thread) onThreadUpdate?.(payload.thread);
+      return payload;
+    } catch (err) {
+      setError(err);
+      throw err;
+    }
+  }, [thread, onThreadUpdate]);
+
   const assistantMessages = useMemo(() => catMessagesToAssistant(messages), [messages]);
   const attachmentAdapter = useMemo(() => new CatMasterAttachmentAdapter(), []);
   const runtime = useExternalStoreRuntime({
@@ -290,6 +312,7 @@ export function useCatMasterThreadRuntime({ thread, onThreadUpdate, onSelectArti
     submitText,
     stop,
     resume,
+    continueFromCheckpoint,
     refreshMessages,
     loadOlderMessages,
     refreshArtifacts,

@@ -61,7 +61,7 @@ Use an enabled molecular-capable MLFF backend for fast triage without replacing 
 
 ## Output Contract
 
-Return backend/model, operation, charge/spin mapping, stage/batch path, receipt context, batch summary, shortlist, and the planned xTB/ORCA validation.
+Return backend/model, operation, charge/spin mapping, stage/batch path, batch summary, shortlist, and the planned xTB/ORCA validation. Keep receipt/context and platform details in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 

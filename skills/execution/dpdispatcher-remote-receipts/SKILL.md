@@ -10,6 +10,7 @@ allowed-tools: "execute"
 ## Overview
 
 Account for possibly live remote work after a returned managed-execution failure, then recover without duplicate submissions.
+This is a narrow operational-recovery exception: receipt IDs and submission hashes may be inspected here to preserve job identity, but they are not scientific QC and must not be copied into scientific Results or ordinary successful-run reports.
 
 ## Quick Start
 

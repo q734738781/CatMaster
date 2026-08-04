@@ -51,8 +51,9 @@ Return:
 - image or TS-guess source path
 - prepared CP2K path stage path
 - `manifest.json` path
-- submitted receipt/context if executed
 - parser artifact path and limitations after analysis
+
+The manifest remains a required execution contract. Receipt and platform fields remain in runtime records unless failure recovery needs them; provide them whenever the user explicitly asks to inspect, compare, record, or report them.
 
 ## References
 - Local source note: `references/cp2k_pathway_reference.md`
