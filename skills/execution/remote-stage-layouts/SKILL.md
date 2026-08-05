@@ -105,6 +105,7 @@ stage/
 ```
 
 Both tasks use this identical prepared-stage contract. `lammps_execute` is the CPU path; `lammps_execute_kokkos` is a strict GPU/KOKKOS path with no CPU fallback.
+Choose one path from task availability and known input-style compatibility. Do not make CPU/GPU equivalence or execution on both paths a default preflight, scientific gate, or production prerequisite.
 The registered boot wrapper owns launcher/rank validation. A reported mismatch is an execution failure, but launcher and rank-layout evidence is not routine scientific QC.
 
 #### orca_execute

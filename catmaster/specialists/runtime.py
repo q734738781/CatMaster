@@ -2406,9 +2406,13 @@ class SpecialistRunner:
                 "Local `execute` is only for preparation, inspection, lightweight scripts, dependency setup for bounded local steps, and post-processing; do not use it to run engine binaries, MPI/sbatch wrappers, or boot scripts that bypass a managed path.",
                 "Before low-level managed remote submission, read the task catalog or mounted execution skill, prepare and verify the declared stage layout, then submit prepared stages with `remote_submission` or `remote_submission_batch`.",
                 "Treat a listed registered task plus a configured execution-binding result as sufficient platform preflight. Administrator-owned preset revisions, queue/account/module/executable/license identifiers, and historical success receipts are not end-user prerequisites; only a concrete catalog, spec, or submission error makes infrastructure a blocker.",
+                "Select one registered execution path that fits the prepared input and current task evidence. Hardware or accelerator choice is operational routing: do not require a CPU reference run, a cross-device equivalence test, or an alternate-backend smoke run before using an otherwise compatible registered path. Compare execution backends only when the user explicitly requests it or a concrete compatibility failure may have changed the scientific result.",
                 "For registered remote tasks, set method-critical command-template values through the declared template-override parameter field; do not modify copied `task_script` files or use `sitecustomize` as a template-default workaround.",
                 "If managed submission fails with receipt/context fields, bounded automatic recovery is allowed when it serves the user's output goal, but read or preserve the receipt context before retrying and account for possible live remote jobs.",
+                "A recovery limit bounds repeated submission of the failed stage; it is an operational stop, not a scientific NO-GO or a global experiment-wide recovery quota.",
                 "If managed execution is unavailable, report the missing task/config/layout context instead of falling back to local engine execution unless the user explicitly requests local-only execution or a dry run.",
+                self._worker_execution_adaptation_policy(),
+                self._delegation_failure_routing_policy(),
             ]
         )
 
@@ -2518,11 +2522,13 @@ class SpecialistRunner:
                 "When `peer_review_specialist` returns, treat its returned markdown or saved review memo as the authoritative revision brief. Do not rely on a graph node to preserve full editor/reviewer comment text.\n"
                 "If `peer_review_specialist` gives you a saved review memo path, read that memo directly before deciding the next revision or experiment step.\n"
                 "You remain the sole coordinator and final decision-maker for the run.\n"
-                "Treat the user's requested deliverable or explicitly approved stage as the stop condition. After a delegate returns, delegate again only when required to finish that stage or for one bounded recovery of a failed required step.\n"
+                "Treat the user's requested deliverable or explicitly approved scientific stage as the stop condition. A delegate owns implementation-equivalent corrections inside that stage; do not pre-count or prescribe those corrections from the coordinator. If a delegate fails, first distinguish an internal delegation mismatch from a human blocker: when the scientific model and binding boundaries can be preserved, revise the delegation and continue within the existing authorization. Do not expand the research objective by default.\n"
                 "Default to on-demand closeout, not autonomous research expansion. Report condition mismatch, incomplete provenance, unresolved alternatives, or other evidence limitations with the recommended next action unless the user explicitly requested continued or open-ended investigation.\n"
                 "If peer review indicates the work cannot reach the requested publication bar within the user's stated scope, budget, evidence limits, or time constraints, stop and tell the user that directly instead of looping.\n"
-                "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. If submission-path, remote-environment, or resource visibility matters, issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread.\n"
+                "Do not treat your own local shell view or direct tool view as authoritative for managed experiment capability. Pass execution needs inside the scientific brief to `experiment_specialist`; request a standalone capability check only when the user asked for it or a concrete unresolved capability question prevents that delegation.\n"
                 f"{cls._research_layered_capability_visibility_policy()}\n"
+                f"{cls._cross_layer_computation_brief_policy()}\n"
+                f"{cls._delegation_failure_routing_policy()}\n"
                 f"{cls._delegated_computation_role_policy()}\n"
                 f"{cls._author_packet_policy()}\n"
                 f"{cls._report_packet_policy()}\n"
@@ -2615,17 +2621,19 @@ class SpecialistRunner:
             f"{cls._experiment_layered_capability_visibility_policy()}\n"
             f"{cls._physical_chemical_property_lookup_policy()}\n"
             "End `materials_worker` ownership at structure preparation, screening, single points, relaxation, and path optimization; route every MLFF MD, restart, and trajectory-QC task to `dynamics_worker`. Model fine-tuning, training, evaluation, feature/data pipelines, and ML algorithm development belong to `ml_worker`; molecular or cluster quantum-chemistry workflows belong to `orca_xtb_worker`; purely report writing from already completed evidence stays in `ExperimentSpecialist` rather than being delegated further.\n"
-                "Each worker should receive only one bounded execution episode around one primary artifact, such as one screening round, one training/evaluation pass, or one post-analysis step. "
-                "Each brief should contain one primary goal and one completion criterion. "
-                "If direction still needs to be chosen after the step finishes, bring that choice back to ExperimentSpecialist instead of letting the worker continue to expand. "
+                "Give each worker one bounded scientific objective around a primary artifact or result. Bounded means bounded by scientific scope, authorization, and cost, not by a fixed tool sequence or a single submission. "
+                "Keep preparation, implementation-equivalent corrections, compatible-path selection, execution or recovery, and the necessary domain QC in the same worker episode when they serve that objective. "
+                "Bring a choice back to ExperimentSpecialist only when it changes the scientific direction or another binding boundary; do not interrupt the worker for ordinary implementation decisions. "
                 "When one worker pass returns, treat its execution and domain QC as authoritative. "
                 "Unless the worker explicitly reports failure or a missing result, or the user requests independent verification, close out from the return without inspecting files, repeating QC, or calculating hashes.\n"
-                "Do not hand an entire high-throughput campaign to one worker; split it into episodes and decide the next episode yourself after each return.\n"
+                "Do not hand an entire open-ended high-throughput campaign to one worker; split it at genuine scientific decision boundaries, not at mechanical phases such as preparation, smoke testing, submission, or recovery.\n"
             "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient for a small piece of them; the worker boundary is part of the design contract.\n"
             "Do not assume your own specialist thread can directly verify every execution path or remote environment. Some submission or resource checks are only visible through worker-owned managed tools.\n"
-            "If execution-path, remote-environment, or resource availability is relevant and the relevant managed tool is not directly visible here, delegate a bounded probe to the matching worker instead of concluding the capability is absent.\n"
+            "Do not conclude that a capability is absent because its managed tool is not directly visible here. Put the execution need inside the scientific worker brief; delegate a standalone capability check only under the narrow conditions in the layered-capability policy.\n"
+            f"{cls._cross_layer_computation_brief_policy()}\n"
+            f"{cls._delegation_failure_routing_policy()}\n"
             f"{cls._delegated_computation_role_policy()}\n"
-            "For likely transient managed-execution failures, you may delegate one bounded recovery attempt toward the requested output when the previous receipt/context is preserved; ask the user only when recovery would materially increase cost, queue pressure, or scientific scope.\n"
+            "Do not put a fixed recovery script or retry count into the worker brief. Let the worker perform bounded, receipt-aware correction of concrete execution failures inside the approved objective. If the selected worker or route is unsuitable, preserve the scientific invariants, revise the brief or responsible worker, and try a concretely different compatible delegation before treating the stage as blocked.\n"
             "Only do the implementation directly in the specialist thread when no available worker matches the task, or when the action is a tiny coordination-only step that would not justify a delegation round.\n"
             "If the task is purely report writing from already completed evidence, do not restart calculations just to make the report look more complete. Summarize the executed scope honestly and keep unresolved points explicit.\n"
             "If a bounded workspace task is not covered by a dedicated registered tool and is not a scientific engine execution with a managed path, do not stop at that boundary alone; route it to the relevant worker so it can use local command/Python capability and mature third-party libraries for a focused custom implementation when the environment supports it.\n"
@@ -2667,9 +2675,36 @@ class SpecialistRunner:
     @staticmethod
     def _report_packet_policy() -> str:
         return (
-            "For experiment-report handoffs, pass one compact inline report packet with exactly these fields: "
+            "Only when handing off a report artifact after computation, pass one compact inline report packet with these fields: "
             "`objective`, `executed_scope`, `key_methods`, `key_results`, `failures_or_qc`, and `target_outputs`. "
-            "Keep it terse, execution-facing, and grounded in completed workspace evidence. Do not pad it with paper-style novelty framing or raw transcript excerpts."
+            "This is a completed-evidence summary, not a calculation brief or a pre-execution contract. Keep it terse, execution-facing, and grounded in completed workspace evidence. Do not pad it with paper-style novelty framing or raw transcript excerpts."
+        )
+
+    @staticmethod
+    def _cross_layer_computation_brief_policy() -> str:
+        return (
+            "Cross-layer computation brief contract: transfer scientific intent and binding boundaries, not an implementation script. "
+            "State the scientific objective, authoritative inputs or evidence, the scientific invariants and comparison or decision criterion that must survive, the authorized scope or cost boundary, and the requested deliverable or stopping condition. "
+            "Research leaves worker choice and execution mechanics to Experiment; Experiment may add the responsible worker and canonical artifact paths, but must not prescribe tool-call order, routine probes, hardware or backend, launcher details, file-edit order, retry plans, or intermediate operational gates unless the user explicitly required them or they are necessary to preserve a scientific invariant. "
+            "Mark user-mandated methods and scientific invariants as binding. Treat other lower-level implementation suggestions as advisory context that the receiving agent may revise."
+        )
+
+    @staticmethod
+    def _worker_execution_adaptation_policy() -> str:
+        return (
+            "Worker adaptation contract: own the assigned scientific objective end to end within its binding scientific invariants, authorization, and cost boundary. "
+            "Autonomously inspect and prepare inputs, choose a compatible registered path, correct implementation-level syntax, layout, launcher, runtime, and restart details, recover concrete execution failures without duplicating live work, and perform the domain QC needed for the deliverable; report material corrections in the handoff without asking permission for each one. "
+            "If the assigned worker or named implementation route is unsuitable but another route may preserve the scientific model and binding conditions, return a recoverable delegation mismatch to the immediate delegator with the failed assumption and capability needed; do not request human input. "
+            "Do not change the scientific question, system or composition, force field, model, method or parameterization identity, scientifically material physical conditions, constraints or sampling, comparison or decision rule, required deliverable, or authorization boundary on your own. Route such a proposed scientific change to the immediate delegator with its effect on interpretation or comparability."
+        )
+
+    @staticmethod
+    def _delegation_failure_routing_policy() -> str:
+        return (
+            "Delegation-failure routing contract: resolve failure in three levels. First, make safe implementation-equivalent corrections inside the current delegation. "
+            "Second, when a specialist-selected worker, task keyword, backend, or step sequence is unsuitable, treat that as an internal delegation mismatch, not a human blocker: preserve the scientific model, system, conditions, comparison rule, and intended evidence, then let the immediate coordinator rewrite the brief and select a concretely different compatible worker or route within the existing authorization. Do not repeat an identical failed delegation or duplicate possibly live work. "
+            "If Experiment was delegated by Research and the equivalent route lies outside Experiment's worker ownership, return the mismatch to Research for rerouting rather than asking the user. "
+            "Ask the human only when no authorized scientifically equivalent route remains, or when proceeding would change an explicit user requirement, a user-controlled scientific choice, the approved cost or time envelope, safety or destructive-action authority, or another boundary that agents are not authorized to change. A parent-routing return is not a human-blocked state."
         )
 
     @staticmethod
@@ -2688,25 +2723,27 @@ class SpecialistRunner:
     def _delegated_computation_role_policy() -> str:
         return (
             "Delegated computation role policy: do not answer that CatMaster cannot calculate merely because the current specialist thread lacks direct execution "
-            "tools or because your visible tool surface is incomplete. If the request fits a worker-owned domain or managed execution path, delegate a bounded "
-            "calculation/probe to the proper specialist or worker before declaring a capability blocker. Only report a blocker after identifying the concrete "
-            "missing input, task registration, resource configuration, stage layout, or user approval that prevents execution."
+            "tools or because your visible tool surface is incomplete. If the request fits a worker-owned domain or managed execution path, delegate the bounded "
+            "scientific calculation to the proper specialist or worker rather than substituting a capability probe for the requested work. Use a separate probe only when the user asked for capability inspection or one concrete unresolved capability question prevents a usable scientific brief. Before reporting a human blocker, exhaust safe scientifically equivalent local corrections and concretely different delegations within the existing authorization, then identify the specific "
+            "missing input, task registration, resource configuration, stage layout, or user-controlled decision that prevents execution."
         )
 
     @staticmethod
     def _research_layered_capability_visibility_policy() -> str:
         return (
             "Layered capability visibility: as ResearchSpecialist, do not inspect remote task catalogs, concrete remote resources, queue state, remote environments, or submission readiness directly. "
-            "If remote execution capability matters, delegate a bounded probe to ExperimentSpecialist with the scientific objective and decision needed. "
-            "Do not read worker-owned skills or tool source to reconstruct execution SOPs; pass objective, artifact constraints, and completion criteria instead."
+            "Pass the requested scientific objective to ExperimentSpecialist and let the lower layers resolve compatible managed execution internally. "
+            "Do not split out a probe as routine ceremony; a separate capability check is justified only when the user requested it or one unresolved capability question prevents a scientifically usable delegation. "
+            "Do not read worker-owned skills or tool source to reconstruct execution SOPs."
         )
 
     @staticmethod
     def _experiment_layered_capability_visibility_policy() -> str:
         return (
             "Layered capability visibility: as ExperimentSpecialist, you coordinate the experiment lane rather than performing worker-owned execution preflight yourself. "
-            "You may use the remote task catalog only to keep worker briefs accurate and avoid misleading local-fallback instructions. "
+            "You may use the remote task catalog only to choose the responsible domain and avoid impossible or misleading constraints; do not relay its low-level task details as a worker playbook. "
             "Do not treat catalog visibility as proof of concrete resource availability, queue health, credentials, remote environment health, or submission readiness. "
+            "Do not turn worker ownership into a mandatory probe episode: when the user has requested a calculation, delegate that scientific objective and let the worker select one compatible registered path. Delegate a separate capability probe only when the user requested it or an unresolved execution question blocks a scientifically usable brief. "
             "Do not read worker-owned skills or tool source to reconstruct detailed execution SOPs; concrete resource checks, skill-guided preflight, and managed submissions belong to the worker agent that owns the domain."
         )
 
@@ -2716,7 +2753,7 @@ class SpecialistRunner:
             "Experiment closeout discipline: use worker/tool returns as the QC source of record. "
             "Before final closeout, check only deliverable coverage: requested outputs, evidence paths, and worker-reported status or flags. "
             "Do not rerun or reparse calculation outputs just to repeat domain QC unless the user asks for an independent check, the worker report is missing, or it conflicts with the available evidence. "
-            "If the scope is complete, state the executed scope, key evidence paths, and residual limitations; if it is incomplete, either dispatch the next bounded worker step or return a blocked status with the minimal next action."
+            "If the scope is complete, state the executed scope, key evidence paths, and residual limitations. If it is incomplete, dispatch a scientifically equivalent revised delegation when one remains; otherwise return an internal delegation mismatch to the parent, or a human blocker only under the delegation-failure routing contract."
         )
 
     @staticmethod
@@ -2776,6 +2813,7 @@ class SpecialistRunner:
         return (
             "Scientific provenance boundary: preserve provenance for scientific inputs, structures, model or parameter identity, physical conditions, method settings, analyses, evidence sources, and scientific results. "
             "Hardware identity, accelerator type, MPI/OpenMP layout, scheduler configuration, software build, executable/module/queue details, task bindings, receipt identifiers, access or license state, and performance telemetry are operational metadata, not ordinary scientific QC. "
+            "Do not promote those operational differences into default scientific preflight or acceptance gates: in particular, do not require CPU-versus-GPU, accelerator-versus-reference, launcher, rank-layout, or build equivalence tests before a scientific run. Select one compatible registered execution path, and compare operational backends only after a concrete result-changing compatibility issue or when the user explicitly asks for that comparison. "
             "Keep operational metadata in runtime or tool records rather than scientific hypotheses, decision rules, evidence judgments, Research Graph Results, or ordinary user-facing deliverables. "
             "This is a default reporting boundary, not a restriction on the user: when the user explicitly asks to inspect, compare, record, or report any operational field, follow that request directly. Otherwise surface operational metadata only after a concrete execution failure or when a known compatibility issue materially changes the scientific result."
         )

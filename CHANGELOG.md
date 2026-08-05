@@ -68,6 +68,24 @@ references describe the current system.
   comparison, recording, or reporting of any operational field, and may request
   an otherwise unnecessary contract artifact; those requests override the
   default reporting boundary.
+- Managed scientific execution now treats CPU, GPU, accelerator, launcher, and
+  build choice as operational routing rather than a default scientific gate.
+  Workers select one compatible registered path and do not require cross-device
+  equivalence or alternate-backend smoke runs unless the user asks or a concrete
+  result-changing compatibility issue has been observed. Submission retry bounds
+  remain operational safeguards and no longer imply a scientific `NO_GO` or a
+  global experiment-wide recovery quota.
+- Research-to-Experiment-to-worker computation briefs now preserve scientific
+  objectives, invariants, comparison criteria, authority, cost, and stopping
+  conditions without prescribing an execution playbook. Workers may make and
+  report scientifically equivalent implementation corrections within that
+  boundary. A failed specialist-selected worker, task keyword, backend, or step
+  sequence now triggers an internal, scientifically equivalent revised
+  delegation before any human blocker is reported; Research reroutes work that
+  falls outside Experiment's worker ownership. Human input is reserved for cases
+  with no authorized equivalent or a required change to user-controlled science,
+  cost, time, safety, or authorization. Routine preparation, smoke, submission,
+  and recovery are no longer forced into separate delegation episodes.
 - CatMaster now explicitly replaces DeepAgents' auto-added `general-purpose`
   child for every specialist and named worker. The shared child remains a
   non-delegating context-isolation worker, inherits the caller's direct

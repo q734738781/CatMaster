@@ -820,6 +820,8 @@ def test_tool_policy_separates_scientific_provenance_hash_and_contract_rules() -
     assert policy.startswith(provenance_rule)
     assert "Hardware identity, accelerator type, MPI/OpenMP layout" in provenance_rule
     assert "not ordinary scientific QC" in provenance_rule
+    assert "do not require CPU-versus-GPU" in provenance_rule
+    assert "Select one compatible registered execution path" in provenance_rule
     assert "Research Graph Results" in provenance_rule
     assert "known compatibility issue materially changes the scientific result" in provenance_rule
     assert "not a restriction on the user" in provenance_rule
@@ -852,6 +854,39 @@ def test_tool_policy_separates_scientific_provenance_hash_and_contract_rules() -
         assert checksum_rule in prompt
         assert contract_rule in prompt
         assert overlap_rule in prompt
+
+
+def test_cross_layer_computation_brief_preserves_science_and_worker_autonomy() -> None:
+    brief_policy = runtime_mod.SpecialistRunner._cross_layer_computation_brief_policy()
+    worker_policy = runtime_mod.SpecialistRunner._worker_execution_adaptation_policy()
+    failure_policy = runtime_mod.SpecialistRunner._delegation_failure_routing_policy()
+    research_prompt = runtime_mod.SpecialistRunner._base_system_prompt("research")
+    experiment_prompt = runtime_mod.SpecialistRunner._base_system_prompt("experiment")
+
+    assert "scientific intent and binding boundaries, not an implementation script" in brief_policy
+    assert "scientific invariants and comparison or decision criterion" in brief_policy
+    assert "must not prescribe tool-call order" in brief_policy
+    assert "lower-level implementation suggestions as advisory context" in brief_policy
+    assert "own the assigned scientific objective end to end" in worker_policy
+    assert "report material corrections in the handoff without asking permission for each one" in worker_policy
+    assert "return a recoverable delegation mismatch to the immediate delegator" in worker_policy
+    assert "do not request human input" in worker_policy
+    assert "Route such a proposed scientific change to the immediate delegator" in worker_policy
+    assert "effect on interpretation or comparability" in worker_policy
+    assert "resolve failure in three levels" in failure_policy
+    assert "internal delegation mismatch, not a human blocker" in failure_policy
+    assert "concretely different compatible worker or route" in failure_policy
+    assert "return the mismatch to Research for rerouting rather than asking the user" in failure_policy
+    assert "Ask the human only when no authorized scientifically equivalent route remains" in failure_policy
+    assert "parent-routing return is not a human-blocked state" in failure_policy
+    assert "Cross-layer computation brief contract" in research_prompt
+    assert "Cross-layer computation brief contract" in experiment_prompt
+    assert "Delegation-failure routing contract" in research_prompt
+    assert "Delegation-failure routing contract" in experiment_prompt
+    assert "not by a fixed tool sequence or a single submission" in experiment_prompt
+    assert "split it at genuine scientific decision boundaries" in experiment_prompt
+    assert "try a concretely different compatible delegation" in experiment_prompt
+    assert "not a calculation brief or a pre-execution contract" in experiment_prompt
 
 
 def test_evidence_judge_accepts_only_completed_scientific_results() -> None:
@@ -896,6 +931,17 @@ def test_skill_output_contracts_do_not_require_operational_qc_fields() -> None:
     recovery_text = recovery_skill.read_text(encoding="utf-8")
     assert "narrow operational-recovery exception" in recovery_text
     assert "they are not scientific QC" in recovery_text
+    assert "not a scientific `NO_GO`" in recovery_text
+
+    lammps_preparation_text = (
+        repo_root / "skills/dynamics_worker/lammps-preparation/SKILL.md"
+    ).read_text(encoding="utf-8")
+    lammps_md_text = (
+        repo_root / "skills/dynamics_worker/lammps-md-execution/SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert "same-coordinate CPU/KOKKOS comparison" in lammps_preparation_text
+    assert "is not required before production" in lammps_preparation_text
+    assert "Cross-backend diagnosis is exceptional" in lammps_md_text
 
     writeback_text = (
         repo_root / "skills/research_execution/research-graph-writeback/SKILL.md"
@@ -1138,11 +1184,15 @@ def test_specialist_prompts_default_to_on_demand_delegation() -> None:
     peer_review_prompt = runtime_mod.SpecialistRunner._base_system_prompt("peer_review")
     litreview_prompt = runtime_mod.SpecialistRunner._litreview_wrapper_prompt()
 
-    assert "requested deliverable or explicitly approved stage as the stop condition" in research_prompt
+    assert "requested deliverable or explicitly approved scientific stage as the stop condition" in research_prompt
+    assert "delegate owns implementation-equivalent corrections inside that stage" in research_prompt
+    assert "distinguish an internal delegation mismatch from a human blocker" in research_prompt
+    assert "revise the delegation and continue within the existing authorization" in research_prompt
     assert "Default to on-demand closeout, not autonomous research expansion" in research_prompt
     assert "condition mismatch, incomplete provenance, unresolved alternatives" in research_prompt
     assert "weak evidence" not in research_prompt
-    assert "issue a bounded probe to `experiment_specialist` rather than deciding from absence in the research thread" in research_prompt
+    assert "Pass execution needs inside the scientific brief to `experiment_specialist`" in research_prompt
+    assert "request a standalone capability check only" in research_prompt
     assert "Research Graph contract" in research_prompt
     assert "Never guess among multiple graphs" in research_prompt
     assert "scientific reasonableness check" in research_prompt.lower()
@@ -1156,7 +1206,8 @@ def test_specialist_prompts_default_to_on_demand_delegation() -> None:
     assert "acquire_literature_source" not in litreview_prompt
     assert "finalize_citations" not in litreview_prompt
     assert "treat its execution and domain QC as authoritative" in experiment_prompt
-    assert "delegate a bounded probe to the matching worker instead of concluding the capability is absent" in experiment_prompt
+    assert "Put the execution need inside the scientific worker brief" in experiment_prompt
+    assert "delegate a standalone capability check only under the narrow conditions" in experiment_prompt
     assert "Experiment closeout discipline: use worker/tool returns as the QC source of record" in experiment_prompt
     assert "Do not rerun or reparse calculation outputs just to repeat domain QC" in experiment_prompt
     assert "When one writing-worker pass returns, actively decide whether another bounded delegate pass is needed" in writing_prompt
@@ -1173,8 +1224,9 @@ def test_specialist_prompts_integrate_property_lookup_and_delegated_compute_rule
         assert "do not launch new DFT" in prompt
         assert "explicitly request a calculation" in prompt
         assert "Delegated computation role policy" in prompt
-        assert "delegate a bounded calculation/probe" in prompt
-        assert "concrete missing input, task registration, resource configuration, stage layout, or user approval" in prompt
+        assert "delegate the bounded scientific calculation" in prompt
+        assert "rather than substituting a capability probe for the requested work" in prompt
+        assert "specific missing input, task registration, resource configuration, stage layout, or user-controlled decision" in prompt
 
 
 def test_execution_capability_contract_is_worker_scoped_and_tool_surface_bound(tmp_path: Path) -> None:
@@ -2508,6 +2560,10 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "experiment report, validation summary, QC note" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "compact inline report packet" in agent_kwargs["system_prompt"]
+        assert "Cross-layer computation brief contract" in agent_kwargs["system_prompt"]
+        assert "delegate owns implementation-equivalent corrections inside that stage" in agent_kwargs["system_prompt"]
+        assert "Delegation-failure routing contract" in agent_kwargs["system_prompt"]
+        assert "parent-routing return is not a human-blocked state" in agent_kwargs["system_prompt"]
         assert "Default to not launching `peer_review_specialist`" in agent_kwargs["system_prompt"]
         assert "publication-level paper quality" in agent_kwargs["system_prompt"]
         assert "formal submission requirements" in agent_kwargs["system_prompt"]
@@ -2710,6 +2766,11 @@ def test_specialist_lanes_start_with_staged_skills(
         orca_worker_kwargs = _find_created_agent("orca_xtb_worker")
         for worker_kwargs in (materials_worker_kwargs, ml_worker_kwargs, dynamics_worker_kwargs, orca_worker_kwargs):
             assert worker_kwargs["model"] == {"model": "task_runner-model"}
+            assert "Worker adaptation contract" in worker_kwargs["system_prompt"]
+            assert "recoverable delegation mismatch to the immediate delegator" in worker_kwargs["system_prompt"]
+            assert "Delegation-failure routing contract" in worker_kwargs["system_prompt"]
+            assert "internal delegation mismatch, not a human blocker" in worker_kwargs["system_prompt"]
+            assert "report material corrections in the handoff without asking permission for each one" in worker_kwargs["system_prompt"]
         assert "runnable" in subagents_by_name["materials_worker"]
         assert "runnable" in subagents_by_name["ml_worker"]
         assert "runnable" in subagents_by_name["dynamics_worker"]
@@ -2746,10 +2807,15 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "use `orca_xtb_worker` for molecular or cluster quantum-chemistry work" in agent_kwargs["system_prompt"]
         assert "purely report writing from already completed evidence" in agent_kwargs["system_prompt"]
         assert "stays in `ExperimentSpecialist`" in agent_kwargs["system_prompt"]
-        assert "Each worker should receive only one bounded execution episode around one primary artifact" in agent_kwargs["system_prompt"]
-        assert "Do not hand an entire high-throughput campaign to one worker" in agent_kwargs["system_prompt"]
+        assert "bounded by scientific scope, authorization, and cost" in agent_kwargs["system_prompt"]
+        assert "not by a fixed tool sequence or a single submission" in agent_kwargs["system_prompt"]
+        assert "split it at genuine scientific decision boundaries" in agent_kwargs["system_prompt"]
+        assert "Cross-layer computation brief contract" in agent_kwargs["system_prompt"]
+        assert "Delegation-failure routing contract" in agent_kwargs["system_prompt"]
+        assert "try a concretely different compatible delegation" in agent_kwargs["system_prompt"]
         assert "Do not personally absorb worker-owned tasks just because your own direct tool surface appears sufficient" in agent_kwargs["system_prompt"]
         assert "Only do the implementation directly in the specialist thread when no available worker matches the task" in agent_kwargs["system_prompt"]
+        assert "Do not turn worker ownership into a mandatory probe episode" in agent_kwargs["system_prompt"]
         assert "Delegate domain-owned work to the proper specialized subagent first." in agent_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in agent_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in agent_kwargs["system_prompt"]
@@ -2780,6 +2846,8 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "CP2K AIMD preparation/execution handoff, managed MLFF MD sampling" in dynamics_worker_kwargs["system_prompt"]
         assert "Do not invent force-field parameters" in dynamics_worker_kwargs["system_prompt"]
         assert "registered managed execution in this worker is authoritative" in dynamics_worker_kwargs["system_prompt"]
+        assert "do not require a CPU reference run" in dynamics_worker_kwargs["system_prompt"]
+        assert "not a scientific NO-GO or a global experiment-wide recovery quota" in dynamics_worker_kwargs["system_prompt"]
         assert "Start here when the primary artifact is a curated dataset" in ml_worker_kwargs["system_prompt"]
         assert "When a registered managed ML tool fits the task, prefer that managed path first." in ml_worker_kwargs["system_prompt"]
         assert "Prefer using libraries already available in the environment and reusable workspace code" in ml_worker_kwargs["system_prompt"]

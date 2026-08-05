@@ -46,7 +46,7 @@ They are built in [runtime.py](specialists/runtime.py).
   - Bounded execution specialist.
   - May delegate only to `materials_worker`, `dynamics_worker`, `ml_worker`, and `orca_xtb_worker`.
   - Uses direct public-source checking only for narrow best-practice, literature, or official documentation checks. Keep this limited to focused implementation grounding, not broad review.
-  - Do not answer that CatMaster cannot calculate solely because the specialist thread lacks direct execution tools. If a task fits a worker-owned domain or managed execution path, delegate a bounded calculation/probe before declaring a capability blocker.
+  - Do not answer that CatMaster cannot calculate solely because the specialist thread lacks direct execution tools. If a task fits a worker-owned domain or managed execution path, delegate the bounded scientific calculation before declaring a capability blocker. If a specialist-selected worker or route fails, prefer a scientifically equivalent revised delegation over asking the user. Do not substitute a standalone probe unless the user requested capability inspection or one concrete unknown prevents a usable delegation.
   - `materials_worker` owns structure preparation, screening, relaxation, single-point ranking, and path optimization. `dynamics_worker` owns all MLFF MD, restart, trajectory-QC, and LAMMPS workflows, including MD that continues a materials workflow. MLFF dataset/model lifecycle work, including MACE training, fine-tuning, and benchmark evaluation, remains with `ml_worker`.
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
@@ -56,11 +56,48 @@ They are built in [runtime.py](specialists/runtime.py).
   - Literature-review coordinator for both direct entry and Research delegation.
   - Delegates bounded discovery, source reading, extraction, and evidence-audit branches to the leaf `litreview_worker_agent`, then retains coverage, conflict resolution, and final synthesis.
 
-Layered capability visibility is part of the runtime contract. Research
-delegates remote-capability probes to `experiment_specialist`; experiment may
-use the remote task catalog only to make worker briefs accurate; concrete
-resource checks, worker skill/SOP interpretation, and managed submissions belong
-to the worker agent that owns the domain.
+Layered capability visibility is part of the runtime contract. Research passes
+execution needs through `experiment_specialist` instead of inspecting remote
+capability itself. Experiment may use the remote task catalog only to choose the
+responsible domain and avoid impossible constraints; concrete resource checks,
+worker skill/SOP interpretation, and managed submissions belong to the worker
+agent that owns the domain.
+
+Cross-layer computation briefs preserve scientific intent without freezing an
+implementation playbook:
+
+- Research-to-Experiment briefs carry the objective, authoritative inputs and
+  evidence, binding scientific invariants and decision criteria, authorized
+  scope or cost, and the requested deliverable or stopping point. They do not
+  prescribe workers, tool-call order, probes, backends, launchers, file-edit
+  sequences, retries, or operational gates.
+- Experiment may add the responsible domain worker and canonical artifact paths.
+  Keep preparation, scientifically equivalent corrections, execution, recovery,
+  and domain QC in one worker episode when they serve the same bounded scientific
+  objective; split work at scientific decision boundaries rather than mechanical
+  phases.
+- Workers own implementation choices inside the stated invariants and authority.
+  They may correct syntax, layout, compatible execution routing, runtime details,
+  and restart or recovery mechanics without an approval round trip, then report
+  material corrections in their handoff.
+- If a named worker, task keyword, backend, or prescribed sequence is unsuitable,
+  that is an internal delegation mismatch rather than a human blocker. The worker
+  returns the failed assumption and needed capability to its immediate delegator;
+  the coordinator preserves the scientific model and binding conditions, rewrites
+  the brief, and selects a concretely different compatible worker or route.
+- When the equivalent route lies outside Experiment's worker ownership, a
+  Research-delegated Experiment returns the mismatch to Research for rerouting.
+  Neither level asks the user merely to repair a specialist-authored brief.
+- Human input is blocking only when no authorized scientifically equivalent route
+  remains, or proceeding would change an explicit user requirement, a
+  user-controlled scientific choice, approved cost/time, safety or destructive
+  authority, or another boundary agents cannot change.
+
+Treat an explicit user requirement or clearly labeled scientific invariant as
+binding. Other lower-level suggestions in a parent brief are advisory and may be
+revised by the receiving agent. Standalone capability probes are exceptional:
+use one only when the user requested a capability check or one concrete unknown
+prevents a scientifically usable delegation.
 
 Subagent contexts share the workspace even when their task calls execute
 concurrently. Before launching multiple subagents, consider whether their work
@@ -76,8 +113,10 @@ Execution guidance for the active experiment path:
 - `ExperimentSpecialist` may inspect the remote task catalog to form clean worker briefs, but managed submission belongs to the worker agents.
 - Scientific engine execution with a registered managed path should stay managed remote execution. This includes VASP, CP2K, ORCA, xTB/CREST, LAMMPS, and MACE execution/training/MD paths.
 - Local command/Python capability is for general preparation, file inspection, lightweight glue scripts, dependency setup for bounded local steps, and post-processing. Do not use it as a fallback to run scientific engine binaries, boot scripts, `sbatch`, or `mpirun` when a managed path fits.
-- If a managed path is missing or unavailable, return a precise blocker with the missing task/config/layout context instead of silently switching to local execution, unless the user explicitly requested local-only execution or a dry run.
+- If a managed path is missing or unavailable, return the precise missing task/config/layout context to the coordinator so it can try a scientifically equivalent registered delegation. Report a human blocker only when no authorized equivalent remains; do not silently switch to local engine execution unless the user explicitly requested local-only execution or a dry run.
 - A listed registered task whose task spec reports a configured execution binding has sufficient deployment provenance for normal submission. Do not turn intentionally hidden administrator fields such as resource revisions, queue/account/module/executable/license identifiers, or prior success receipts into end-user prerequisites. Treat infrastructure as blocked only after a concrete catalog, spec, or submission error.
+- Treat hardware, accelerator, launcher, rank layout, and build choice as operational routing. Select one registered path that fits the prepared scientific input; do not require CPU/GPU, accelerator/reference, or cross-build equivalence as a default preflight, scientific gate, or production prerequisite. Compare execution backends only when the user explicitly requests it or a concrete compatibility problem may have changed the scientific result.
+- Bound automatic retry of a failed managed stage to avoid duplicate work, but do not turn that operational retry bound into a scientific `NO_GO` or a global experiment-wide recovery quota.
 - If a dedicated tool does not cover a bounded non-engine execution task, prefer implementing the missing step with local command/Python capability and mature third-party libraries inside the workspace over stopping at the tool boundary.
 - Local command calls run inside a workspace-local Python environment layered on top of the main environment. If a bounded local task needs a missing Python package, install it there instead of modifying the main environment.
 - If method defaults, package behavior, or scientific best practice are uncertain, prefer a narrow literature or official documentation check before improvising. Do not turn that into a broad literature campaign.

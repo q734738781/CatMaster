@@ -65,7 +65,7 @@ Research 可以列出、创建、查询和编辑 graph，加入 Hypothesis、Exp
 
 Experiment 负责边界明确的计算研究。它先理解体系、输入和预期结果，再把工作交给 Materials、Dynamics、ML 或 ORCA/xTB worker。它可以直接检索和下载 Materials Project 结构，也可以查看部署中有哪些远程 task；具体的结构构建、输入准备、科学分析和远程提交由相应 worker 完成。
 
-Experiment 的自主性体现在选择正确的 worker、组合多个准备与检查步骤，并根据中间结果修正后续工作。例如一项吸附筛选可能先由 Materials worker 建 slab 和位点，发现候选过多后使用 MLFF 做预筛，再只为少数结构准备 VASP。用户不必手工切换 worker，但应说明允许哪些近似、是否可以提交计算，以及哪些科学选择要先确认。
+Experiment 的自主性体现在选择正确的 worker、组合多个准备与检查步骤，并根据中间结果修正后续工作。例如一项吸附筛选可能先由 Materials worker 建 slab 和位点，发现候选过多后使用 MLFF 做预筛，再只为少数结构准备 VASP。用户不必手工切换 worker，但应说明允许哪些近似、是否可以提交计算，以及哪些科学选择要先确认。Experiment brief 会保留这些科学边界，但把 tool 顺序、兼容执行路径、输入层修正和有边界的恢复交给 worker。Specialist 选错 worker 或执行路线时，应先在科学等价范围内改写 brief 并重新委派，而不是询问用户；只有触及用户控制的科学选择、授权、成本、时间或安全边界时才等待人类输入。
 
 它覆盖四组主要能力：
 

@@ -12,7 +12,7 @@ Use this skill for LAMMPS minimization from an explicit force-field card or preb
 ## Quick Start
 1. Validate the force-field card with `lammps_forcefield_validate`.
 2. Prepare `lammps_prepare(recipe="minimize")`.
-3. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
+3. Query enabled tasks, select one compatible CPU or strict GPU/KOKKOS path, and submit it without a cross-hardware gate.
 4. Run `lammps_log_summary` and inspect minimization stopping criterion.
 
 ## Allowed tools
@@ -36,8 +36,9 @@ Use this skill for LAMMPS minimization from an explicit force-field card or preb
 - Use frozen atoms only through reviewed LAMMPS fixes in a custom script or curated recipe.
 
 ### 3. Select CPU or KOKKOS explicitly
-- Use `lammps_execute_kokkos` only when the minimization input's pair, fix, and related styles support the enabled KOKKOS build.
-- Otherwise use `lammps_execute`; the strict KOKKOS task must not silently retry on CPU.
+- Use `lammps_execute_kokkos` when it is listed and the minimization input has no known pair, fix, or related style incompatibility with the registered KOKKOS path.
+- Use `lammps_execute` for a known unsupported style or when it is otherwise the selected registered route; the strict KOKKOS task must not silently retry on CPU.
+- Do not require CPU run0, CPU/KOKKOS equivalence, or both backends as a scientific admission gate. Diagnose across backends only after a concrete accelerator-specific problem or an explicit user request.
 
 ### 4. Analyze generic evidence
 - Use `lammps_log_summary` for thermo rows, warnings/errors, minimization stopping criterion, final energy, and force evidence.

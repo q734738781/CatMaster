@@ -13,7 +13,7 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 1. Validate the force-field card with `lammps_forcefield_validate`.
 2. Prepare a stage with `lammps_prepare(recipe="minimize" | "nve" | "nvt" | "npt" | "anneal" | "restart")`.
 3. Verify `in.lammps`, `system.data` or restart file, `manifest.json`, and potential files.
-4. Query the enabled LAMMPS tasks, then submit with CPU `lammps_execute` or strict GPU `lammps_execute_kokkos`.
+4. Query the enabled LAMMPS tasks, select one compatible execution path, and submit it; do not create a CPU/GPU comparison gate.
 5. Summarize with `lammps_log_summary` and `md_trajectory_summary` when outputs are collected.
 
 ## Allowed tools
@@ -40,10 +40,11 @@ Use this skill for LAMMPS stages in `dynamics_worker`. LAMMPS requires an explic
 - Use `restart` only when the intended restart file is present and verified.
 
 ### 3. Select one explicit execution task
-- Use `task_name="lammps_execute"` for the CPU resource, including inputs whose pair, fix, compute, or other styles do not have complete KOKKOS support.
-- Use `task_name="lammps_execute_kokkos"` only when it is listed and every method-critical input style is compatible with the deployment's KOKKOS build.
+- Use `task_name="lammps_execute_kokkos"` when it is listed and the input has no known pair, fix, compute, or related style incompatibility with the registered KOKKOS path.
+- Use `task_name="lammps_execute"` when a method-critical style is known to be unsupported by that KOKKOS path or when the CPU task is otherwise the selected registered route.
 - The KOKKOS task requests a GPU and does not fall back to CPU. The CPU task never enables GPU acceleration.
 - The registered task owns launcher, rank-layout, build, and accelerator checks. Treat a concrete incompatibility as an execution failure; do not turn these platform details into routine scientific QC.
+- Select and run one path. A CPU baseline, same-coordinate CPU/KOKKOS comparison, or alternate-backend smoke run is not required before production. Use cross-backend comparison only when the user requests it or an observed accelerator-specific result may affect the scientific conclusion.
 - Do not pass `submission_config.resources` or `submission_config.machine`; each registered task owns its deployment binding.
 
 ## Method-critical defaults

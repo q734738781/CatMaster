@@ -48,6 +48,7 @@ dpdisp submission <submission_hash> --clean
 - Before rerunning the managed tool, account for the old submission as collected, still running, cleaned, not-yet-created, or intentionally abandoned before a recoverable handle existed.
 - Allow at most one automatic fresh retry per stage after a transient connection, upload, or download failure.
 - On repeated or changed failure, stop and report the evidence.
+- This retry bound prevents duplicate or looping submissions of the failed stage. It is not a scientific `NO_GO`, a global recovery quota for the experiment, or a requirement to repeat unrelated CPU/GPU paths.
 
 ## Method-critical defaults
 - Do not invent new status names. Use DPDispatcher status names as exposed in the receipt.

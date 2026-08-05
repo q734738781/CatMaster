@@ -17,6 +17,10 @@ Research 也是可执行入口。它可以把开放问题拆成多个阶段，�
 
 Experiment 会继续把计算工作交给四类 worker：Materials 处理晶体、表面、吸附、缺陷、反应路径和性质；Dynamics 处理 AIMD、LAMMPS、MLFF MD、restart 和轨迹；ML 处理数据集、MACE 和主动学习；ORCA/xTB 处理分子、构象、xTB、CREST、ORCA、TS、IRC、TDDFT 和 NMR。
 
+跨层委派传递的是科学边界，不是底层运行剧本。Research 只需说明目标、已有证据、必须保持不变的科学条件或比较规则、计算授权和停止点；Experiment 可以补充负责的 worker 以及 canonical 输入/输出路径。Worker 在这些边界内自行完成准备、选择兼容执行路径、修正实现细节、故障恢复和领域 QC。准备、smoke、提交和恢复即使属于不同机械步骤，只要服务于同一个科学目标，也不应被强制拆成多次委派。
+
+Specialist 的一次错误选择不自动构成人类 blocker。如果指定的 worker、task 关键字、backend 或步骤不合适，worker 应把具体不匹配返回给直接委派者；Experiment 优先改写 brief 或改派另一条兼容 worker/执行路径，同时保持科学模型、体系、条件、比较规则和目标证据不变。如果科学等价路线超出 Experiment 的 worker 权限，而本轮来自 Research 委派，则返回 Research 重新路由。只有不存在已授权的科学等价路线，或者继续执行会改变用户明确要求、必须由用户选择的科学问题、已批准成本/时间、安全或授权边界时，才需要等待人类输入。
+
 ## 一项研究任务可以推进到哪里
 
 以"解释 Pd 单原子在 CeO2 上的稳定机制"为例，Research 可以先让 Literature Review 建立机制和表征证据表，再让 Experiment 判断哪些结构或能量问题能够计算。获得计算结果后，它可以要求 Writing 整合文献与计算证据，也可以把固定稿件交给 Peer Review 独立审查。

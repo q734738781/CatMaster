@@ -12,7 +12,7 @@ Use this skill for LAMMPS equilibration, annealing, and production MD stages in 
 ## Quick Start
 1. Validate or reuse an explicit force-field card.
 2. Prepare with `lammps_prepare(recipe="nve" | "nvt" | "npt" | "anneal")`.
-3. Query enabled tasks and submit with CPU `lammps_execute` or compatible strict GPU `lammps_execute_kokkos`.
+3. Query enabled tasks, select one compatible CPU or strict GPU/KOKKOS path, and submit it without a cross-hardware gate.
 4. Summarize with `lammps_log_summary` and `md_trajectory_summary`.
 
 ## Allowed tools
@@ -38,8 +38,9 @@ Use this skill for LAMMPS equilibration, annealing, and production MD stages in 
 - Enable in-run `rdf` or `msd` only when the requested observable is generic enough for all atoms/groups represented by the stage.
 
 ### 3. Select CPU or KOKKOS explicitly
-- Prefer `lammps_execute_kokkos` only after checking that the stage's pair, fix, compute, and related styles support the enabled KOKKOS build.
-- Use `lammps_execute` for unsupported styles. Do not rely on GPU failure followed by an implicit CPU retry.
+- Prefer `lammps_execute_kokkos` when it is listed and the stage has no known pair, fix, compute, or related style incompatibility with the registered KOKKOS path.
+- Use `lammps_execute` for a known unsupported style or when it is otherwise the selected registered route. Do not rely on GPU failure followed by an implicit CPU retry.
+- Do not require a CPU baseline, same-coordinate CPU/KOKKOS equivalence, or smoke runs on both backends before production. Cross-backend diagnosis is exceptional and requires an explicit user request or an observed result-changing compatibility issue.
 
 ### 4. Analyze health before interpretation
 - Use `lammps_log_summary` for thermo segments, drift, warnings/errors, and run completion.
