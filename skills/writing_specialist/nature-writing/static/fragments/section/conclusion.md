@@ -2,14 +2,14 @@
 
 ## Default structure
 
-`contribution -> decisive evidence -> implication -> boundary`
+`solved problem -> distinctive contribution -> decisive evidence -> implication -> final memory point`
 
 ## Drafting rules
 
 - No new data. No unsupported promises.
 - Restate the central contribution in one sentence. Do not summarize each Result figure.
 - The implication must be narrower than or equal to the scope of the evidence.
-- A bounded future-work pointer is acceptable, but generic "more work is needed" is not.
+- End on the value established by the paper. Do not append a new limitations paragraph, future-work list, or self-assessment after the contribution has landed.
 
 ## Overclaim check
 
@@ -22,4 +22,4 @@ Before finalizing, run the check:
 
 ## Deeper reference
 
-For full conclusion structure (contribution-evidence-impact-limitation-future), open `references/conclusion.md`.
+For full conclusion structure (problem-contribution-evidence-impact-memory point), open `references/conclusion.md`.

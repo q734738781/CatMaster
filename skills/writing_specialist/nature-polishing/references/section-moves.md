@@ -132,26 +132,23 @@ Questions this section must answer:
 1. What do the main findings mean?
 2. How do they relate to earlier work?
 3. Which explanations are plausible?
-4. What limitations constrain interpretation?
-5. What follows from the findings, and what does not?
+4. Why does the strongest supported advance matter?
+5. Does one precise condition materially change that interpretation?
 
 Preferred move order:
 
 1. restate the main finding
 2. explain plausible reasons
 3. compare with earlier work
-4. note limitations
-5. state implications
-6. point to future work if needed
+4. state the scientific or practical implication
+5. add one necessary claim condition only when the evidence requires it
 
 Useful phrase families:
 
 - `Taken together, these findings suggest that ...`
 - `A possible explanation is that ...`
 - `This discrepancy may reflect ...`
-- `These results should be interpreted with caution because ...`
 - `An implication of this is that ...`
-- `Further work is needed to determine whether ...`
 
 Avoid:
 
@@ -164,26 +161,25 @@ Questions this section must answer:
 
 1. What was the central contribution?
 2. Which finding matters most?
-3. What implication follows, with what boundary?
+3. What implication should the reader remember?
 
 Preferred move order:
 
 1. return to the aim
 2. summarize the decisive finding
 3. state contribution or significance
-4. give a boundary or forward look
+4. end on the evidence-supported memory point
 
 Useful phrase families:
 
 - `This study set out to ...`
 - `The present findings indicate that ...`
 - `These results extend our understanding of ...`
-- `Notwithstanding these limitations, ...`
-- `Further studies are required to ...`
 
 Avoid:
 
 - introducing new experiments
+- adding a new limitations or future-work paragraph
 - ending on vague praise of the work
 
 ## Abstract

@@ -30,6 +30,7 @@ from catmaster.specialists.runtime import (
     _MATERIALS_WORKER_TOOL_ALLOWLIST,
     _ML_WORKER_TOOL_ALLOWLIST,
     _ORCA_XTB_WORKER_TOOL_ALLOWLIST,
+    _PLOT_WORKER_TOOL_ALLOWLIST,
     _RESEARCH_TOOL_ALLOWLIST,
     _WRITING_WORKER_TOOL_ALLOWLIST,
     _WRITING_TOOL_ALLOWLIST,
@@ -811,6 +812,63 @@ def test_prose_quality_policy_requires_skill_without_changing_science() -> None:
     assert "machine-readable files" in policy
 
 
+def test_publication_launch_policy_is_shared_by_writing_roles() -> None:
+    policy = runtime_mod.SpecialistRunner._publication_launch_policy()
+    prompts = (
+        runtime_mod.SpecialistRunner._base_system_prompt("writing"),
+        runtime_mod.SpecialistRunner._writing_worker_prompt(),
+        runtime_mod.SpecialistRunner._writing_polisher_prompt(),
+    )
+
+    assert "strongest publishable value" in policy
+    assert "not as a project summary, experiment log, or self-audit" in policy
+    assert "Do not volunteer negative verdicts, defensive prose, or self-weakening language" in policy
+    assert "introduce a comparison dimension that the core contribution does not need to win" in policy
+    assert "Delete, weaken, relocate, or redesign material" in policy
+    assert "Exclude irrelevant hardware, accelerator, launcher, scheduler, software-build, platform" in policy
+    for prompt in prompts:
+        assert policy in prompt
+
+
+def test_plot_worker_prompt_requires_direct_origin_style_rendered_qa() -> None:
+    prompt = runtime_mod.SpecialistRunner._plot_worker_prompt()
+
+    assert "Complete one bounded quantitative or data-native publication-figure job directly" in prompt
+    assert "Do not delegate" in prompt
+    assert "Origin-like scientific style" in prompt
+    assert "open the rendered raster preview with `read_file`" in prompt
+    assert "overlap between text and the visual signal" in prompt
+    assert "Do not report irrelevant hardware, platform, build, launcher" in prompt
+    assert "publication-data-plotting" in prompt
+
+
+def test_launch_and_plot_skills_keep_the_same_behavioral_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    launch_skill = (repo_root / "skills/writing_specialist/publication-launch-writing/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    plot_skill = (repo_root / "skills/plot_worker/publication-data-plotting/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    writing_method = (
+        repo_root
+        / "skills/writing_specialist/nature-writing/static/fragments/paper_type/methods.md"
+    ).read_text(encoding="utf-8")
+    polishing_method = (
+        repo_root
+        / "skills/writing_specialist/nature-polishing/static/fragments/paper_type/methods.md"
+    ).read_text(encoding="utf-8")
+
+    assert "strongest publishable advantage" in launch_skill
+    assert "Do not use phrases that volunteer a verdict" in launch_skill
+    assert "Origin-like scientific aesthetic" in plot_skill
+    assert "Open the raster preview with `read_file`" in plot_skill
+    assert "hardware and software environment" not in writing_method
+    assert "hardware and software environment" not in polishing_method
+    assert "software-build identity into narrative content" in writing_method
+    assert "software-build identity out of the scientific narrative" in polishing_method
+
+
 def test_tool_policy_separates_scientific_provenance_hash_and_contract_rules() -> None:
     policy = runtime_mod.SpecialistRunner._tool_policy()
     provenance_rule = runtime_mod.SpecialistRunner._scientific_provenance_policy()
@@ -846,6 +904,7 @@ def test_tool_policy_separates_scientific_provenance_hash_and_contract_rules() -
         runtime_mod.SpecialistRunner._ml_worker_prompt(),
         runtime_mod.SpecialistRunner._orca_xtb_worker_prompt(),
         runtime_mod.SpecialistRunner._writing_worker_prompt(),
+        runtime_mod.SpecialistRunner._plot_worker_prompt(),
         runtime_mod.SpecialistRunner._writing_polisher_prompt(),
         runtime_mod.SpecialistRunner._peer_review_worker_prompt(),
     )
@@ -1071,17 +1130,32 @@ def test_active_literature_skills_do_not_restore_retired_grade_contracts() -> No
                 assert retired.casefold() not in text, (path, retired)
 
 
-def test_writing_task_scale_numbers_live_in_skills_not_system_prompts() -> None:
+def test_writing_task_scale_numbers_live_in_unified_skill_not_system_prompts() -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    scientific_writing = (repo_root / "skills/writing_specialist/scientific-writing/SKILL.md").read_text(
+    nature_workflow = (
+        repo_root / "skills/writing_specialist/nature-writing/static/core/workflow.md"
+    ).read_text(
+        encoding="utf-8"
+    )
+    nature_review = (
+        repo_root / "skills/writing_specialist/nature-writing/references/paper-review.md"
+    ).read_text(
         encoding="utf-8"
     )
     achemso = (repo_root / "skills/writing_specialist/achemso-latex-manuscript/SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert "2-4 core claims can be a useful planning reference" in scientific_writing
-    assert "do not run a preset number of review or polishing rounds" in scientific_writing
+    assert "Two to four core claims can" in nature_workflow
+    assert "do not target a preset" in nature_review
     assert "do not target a preset number of passes" in achemso
+    assert not (repo_root / "skills/writing_specialist/scientific-writing").exists()
+    assert not (repo_root / "skills/research_specialist/nature-writing").exists()
+    assert (
+        repo_root / "skills/writing_specialist/nature-writing/references/reporting-standards.md"
+    ).is_file()
+    assert (
+        repo_root / "skills/writing_specialist/venue-templates/assets/reports/scientific_report.sty"
+    ).is_file()
 
     prompts = (
         runtime_mod.SpecialistRunner._base_system_prompt("research"),
@@ -1147,6 +1221,7 @@ def test_common_worker_prompts_require_relevant_skill_check() -> None:
     assert expected in runtime_mod.SpecialistRunner._ml_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._orca_xtb_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._writing_worker_prompt()
+    assert expected in runtime_mod.SpecialistRunner._plot_worker_prompt()
     assert expected in runtime_mod.SpecialistRunner._writing_polisher_prompt()
     assert expected in runtime_mod.SpecialistRunner._peer_review_worker_prompt()
 
@@ -1158,6 +1233,7 @@ def test_delegating_worker_prompts_do_not_gain_blanket_gp_serialization() -> Non
         runtime_mod.SpecialistRunner._dynamics_worker_prompt(),
         runtime_mod.SpecialistRunner._orca_xtb_worker_prompt(),
         runtime_mod.SpecialistRunner._writing_worker_prompt(),
+        runtime_mod.SpecialistRunner._plot_worker_prompt(),
         runtime_mod.SpecialistRunner._writing_polisher_prompt(),
         runtime_mod.SpecialistRunner._peer_review_worker_prompt(),
     )
@@ -2204,6 +2280,67 @@ def test_research_reasoning_final_model_surface_reads_only_scoped_skill(
     assert any(f"# {skill_name}" in content for content in read_results)
 
 
+def test_plot_worker_final_model_surface_has_direct_file_and_execution_tools(tmp_path: Path) -> None:
+    from deepagents.backends import LocalShellBackend
+
+    class _BindablePlotModel(FakeMessagesListChatModel):
+        bound_tool_names: ClassVar[list[list[str]]] = []
+
+        def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+            _ = (tool_choice, kwargs)
+            self.bound_tool_names.append(
+                [runtime_mod._agent_tool_name(tool) for tool in tools]
+            )
+            return self
+
+    _BindablePlotModel.bound_tool_names = []
+    workspace = tmp_path / "project_space"
+    files_root = workspace / "files"
+    files_root.mkdir(parents=True)
+    built = build_specialist_runner(
+        workspace=workspace,
+        llm_profile=_FakeProfile(),
+        reporter=None,
+        run_control=None,
+        project_id="proj",
+        preferred_entrypoint="writing",
+    )
+    built.runner._stage_deepagent_assets(files_root, thread_id="plot-surface")
+    plot_root = built.runner._skill_roots_for_group("plot_worker")[0]
+    model = _BindablePlotModel(responses=[AIMessage(content="Figure job ready.")])
+    agent = built.runner._load_create_deep_agent()(
+        model=model,
+        tools=[],
+        system_prompt=built.runner._plot_worker_prompt(),
+        skills=[plot_root],
+        subagents=[built.runner._general_purpose_subagent(skills=[plot_root])],
+        middleware=[runtime_mod._NoDelegationToolBoundaryMiddleware()],
+        backend=LocalShellBackend(root_dir=files_root, virtual_mode=True),
+    )
+
+    result = asyncio.run(
+        agent.ainvoke(
+            {"messages": [{"role": "user", "content": "Prepare one bounded plot."}]}
+        )
+    )
+
+    assert result["messages"][-1].content == "Figure job ready."
+    assert _BindablePlotModel.bound_tool_names
+    parent_surface = set(_BindablePlotModel.bound_tool_names[0])
+    assert {
+        "write_todos",
+        "ls",
+        "glob",
+        "grep",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "execute",
+    } <= parent_surface
+    assert "task" not in parent_surface
+    assert "web_search" not in parent_surface
+
+
 def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp_path: Path) -> None:
     class _BindableFakeModel(FakeMessagesListChatModel):
         bound_tool_names: list[list[str]] = []
@@ -2326,7 +2463,7 @@ def test_explicit_general_purpose_runtime_is_context_only_and_non_delegating(tmp
             ],
         ),
         ("literature_review", ["general-purpose", "litreview_worker_agent"]),
-        ("writing", ["general-purpose", "writing_worker_agent", "writing_polisher_agent"]),
+        ("writing", ["general-purpose", "writing_worker_agent", "plot_worker", "writing_polisher_agent"]),
         ("peer_review", ["general-purpose", "peer_review_worker_agent"]),
     ],
 )
@@ -2659,6 +2796,7 @@ def test_specialist_lanes_start_with_staged_skills(
         assert [subagent.kwargs["name"] for subagent in writing_agent_kwargs["subagents"]] == [
             "general-purpose",
             "writing_worker_agent",
+            "plot_worker",
             "writing_polisher_agent",
         ]
         assert not any(isinstance(item, _FakeMemoryMiddleware) for item in writing_agent_kwargs["middleware"])
@@ -2892,18 +3030,24 @@ def test_specialist_lanes_start_with_staged_skills(
         _assert_native_skill_groups(agent_kwargs, "writing_specialist", "writing_quality")
         assert "compile_text" not in {tool.name for tool in agent_kwargs["tools"]}
         writing_worker_kwargs = _find_created_agent("writing_worker_agent")
+        plot_worker_kwargs = _find_created_agent("plot_worker")
         writing_polisher_kwargs = _find_created_agent("writing_polisher_agent")
         assert writing_worker_kwargs["model"] == {"model": "section_writer-model"}
+        assert plot_worker_kwargs["model"] == {"model": "plot_worker-model"}
         assert writing_polisher_kwargs["model"] == {"model": "academic_polisher-model"}
         assert "runnable" in subagents_by_name["writing_worker_agent"]
+        assert "runnable" in subagents_by_name["plot_worker"]
         assert "runnable" in subagents_by_name["writing_polisher_agent"]
         assert {tool.name for tool in writing_worker_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(writing_worker_kwargs, "writing_specialist", "writing_quality")
+        assert {tool.name for tool in plot_worker_kwargs["tools"]} == _PLOT_WORKER_TOOL_ALLOWLIST
+        _assert_native_skill_groups(plot_worker_kwargs, "plot_worker")
         assert {tool.name for tool in writing_polisher_kwargs["tools"]} == (_WRITING_WORKER_TOOL_ALLOWLIST | _DEFAULT_AUTONOMOUS_AGENT_TOOL_NAMES)
         _assert_native_skill_groups(writing_polisher_kwargs, "writing_specialist", "writing_quality")
         assert "This lane owns paper, manuscript, and author-facing scientific writing" in agent_kwargs["system_prompt"]
         assert "compact inline author packet" in agent_kwargs["system_prompt"]
         assert "Use `writing_polisher_agent` only for local prose cleanup" in agent_kwargs["system_prompt"]
+        assert "delegate the bounded figure job to `plot_worker`" in agent_kwargs["system_prompt"]
         assert "read and apply the `humanizer` skill" in agent_kwargs["system_prompt"]
         assert "narrow background supplementation" in agent_kwargs["system_prompt"]
         assert "Each writing-worker handoff should cover only one section or one bounded organization/integration task" in agent_kwargs["system_prompt"]
@@ -2934,10 +3078,14 @@ def test_specialist_lanes_start_with_staged_skills(
         assert "do not batch figures into a later block" in writing_worker_kwargs["system_prompt"]
         assert "Do not treat a successful TeX compile as sufficient" in writing_worker_kwargs["system_prompt"]
         assert "publishable paper ready to enter peer review" in writing_worker_kwargs["system_prompt"]
+        assert "return a compact figure brief to WritingSpecialist so it can dispatch `plot_worker`" in writing_worker_kwargs["system_prompt"]
         assert "Tool discipline: if a relevant skill is available to the current agent, read it before acting." in writing_worker_kwargs["system_prompt"]
         assert "Prefer registered builtin tools when they fit the task." in writing_worker_kwargs["system_prompt"]
         assert "Perform conservative section-level prose polish" in writing_polisher_kwargs["system_prompt"]
         assert "without changing claim strength, scientific scope, evidence selection" in writing_polisher_kwargs["system_prompt"]
+        assert "Origin-like scientific style" in plot_worker_kwargs["system_prompt"]
+        assert "open the rendered raster preview with `read_file`" in plot_worker_kwargs["system_prompt"]
+        assert "Do not delegate" in plot_worker_kwargs["system_prompt"]
         assert "For journal-facing citations and BibTeX, use publication-style metadata only" in writing_worker_kwargs["system_prompt"]
         assert "Use `general-purpose` only to isolate one self-contained, context-heavy branch described by a complete task brief." in writing_worker_kwargs["system_prompt"]
         assert "Do not use `read_file` directly on PDF, DOCX, XLSX, or PPTX files." in writing_worker_kwargs["system_prompt"]
@@ -2976,6 +3124,7 @@ def test_specialist_lanes_start_with_staged_skills(
     staged_literature = snapshot_root / "skills" / "litreview_agent"
     staged_research_execution = snapshot_root / "skills" / "research_execution"
     staged_writing_quality = snapshot_root / "skills" / "writing_quality"
+    staged_plot_worker = snapshot_root / "skills" / "plot_worker"
     staged_quantum_chemistry = snapshot_root / "skills" / "orca_xtb_worker"
     staged_execution = snapshot_root / "skills" / "execution"
     assert staged_agents.read_text(encoding="utf-8") == "Project-level instructions."
@@ -2985,6 +3134,7 @@ def test_specialist_lanes_start_with_staged_skills(
     assert staged_reasoning.is_dir()
     assert staged_literature.is_dir()
     assert staged_writing_quality.is_dir()
+    assert staged_plot_worker.is_dir()
     assert staged_research_execution.is_dir()
     assert staged_quantum_chemistry.is_dir()
     assert staged_execution.is_dir()
@@ -3008,7 +3158,9 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_machine_learning) == _skill_names(repo_root / "skills" / "ml_worker")
     assert _skill_names(staged_quantum_chemistry) == _skill_names(repo_root / "skills" / "orca_xtb_worker")
     assert _skill_names(staged_execution) == _skill_names(repo_root / "skills" / "execution")
-    assert _skill_names(staged_researcher) == _skill_names(repo_root / "skills" / "research_specialist")
+    staged_research_names = _skill_names(staged_researcher)
+    assert staged_research_names == _skill_names(repo_root / "skills" / "research_specialist")
+    assert "nature-writing" not in staged_research_names
     assert _skill_names(staged_reasoning) == {
         "research-evidence-reconciliation",
         "research-graph-query",
@@ -3017,8 +3169,12 @@ def test_specialist_lanes_start_with_staged_skills(
     assert _skill_names(staged_research_execution) == {
         "research-graph-writeback"
     }
-    assert _skill_names(staged_writing) == _skill_names(repo_root / "skills" / "writing_specialist")
+    staged_writing_names = _skill_names(staged_writing)
+    assert staged_writing_names == _skill_names(repo_root / "skills" / "writing_specialist")
+    assert "nature-writing" in staged_writing_names
+    assert "scientific-writing" not in staged_writing_names
     assert _skill_names(staged_writing_quality) == {"humanizer"}
+    assert _skill_names(staged_plot_worker) == {"publication-data-plotting"}
     assert _skill_names(staged_writing)
     run_state = json.loads((built.run_context.run_dir / RUN_STATE_FILE).read_text(encoding="utf-8"))
     assert run_state["entrypoint"] == entrypoint

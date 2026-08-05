@@ -23,4 +23,4 @@ The paper's core argument includes:
 - what the results imply
 - how the main line of reasoning unfolds
 
-AI may help polish, structure, or compare phrasings. AI should not invent or author the core argument. If the argument is weak or unclear, expose that weakness rather than hiding it under polished language.
+AI may help polish, structure, or compare phrasings. AI should not invent the core argument. Preserve the selected academic-launch thesis and remove defensive or self-weakening phrasing. If a structural problem prevents local polishing without changing the science, return that precise issue to WritingSpecialist instead of inserting a weakness verdict into the manuscript.

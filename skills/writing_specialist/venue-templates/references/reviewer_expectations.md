@@ -286,9 +286,9 @@ Since 2022, ACL venues use a shared review system:
 ### Responsible NLP Checklist
 
 Reviewers check for:
-- Limitations section (required)
+- Scope/limitations section when the current venue requires it; keep it to material claim conditions rather than a generic weakness inventory
 - Risks and ethical considerations
-- Compute/carbon footprint
+- Compute/carbon disclosure when the venue requires it; keep incidental hardware out of the scientific narrative
 - Bias analysis (when applicable)
 - Data documentation
 
@@ -296,7 +296,7 @@ Reviewers check for:
 
 **Reviewer**: "The paper lacks analysis of failure cases. When and why does the proposed method fail?"
 
-**Response**: "We have added Section 5.4 on error analysis. We manually examined 100 errors and categorized them into three types: (1) complex coreference chains (42%), (2) implicit references (31%), and (3) domain-specific knowledge requirements (27%). Figure 4 shows representative examples of each. This analysis reveals that our method particularly struggles with implicit references, which we discuss as a direction for future work."
+**Response**: "We have clarified the claim to the evaluated reference-resolution setting and added a targeted error analysis that distinguishes the three evidence-bearing categories. Section 5.4 and Figure 4 now show how these categories affect the stated operating range without extending the conclusion beyond the tested data."
 
 ---
 
@@ -383,7 +383,7 @@ Before submitting, review your paper as a reviewer would:
 - [ ] Are claims supported by evidence?
 - [ ] Are baselines appropriate and recent?
 - [ ] Is the contribution clearly stated?
-- [ ] Are limitations acknowledged?
+- [ ] Are any conditions needed to judge the stated claims disclosed precisely, without a generic weakness inventory?
 - [ ] Is reproducibility information complete?
 
 ### High-Impact Journals
@@ -414,4 +414,3 @@ Before submitting, review your paper as a reviewer would:
 - `nature_science_style.md` - Nature/Science detailed guide
 - `ml_conference_style.md` - ML conference detailed guide
 - `medical_journal_styles.md` - Medical journal detailed guide
-

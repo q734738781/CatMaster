@@ -8,7 +8,9 @@ Another group should be able to determine:
 - what materials and conditions were used
 - which key parameters, controls, and replicates were used
 - how data were processed and analysed
-- which statistical tests and software versions were used
+- which statistical tests and scientifically result-bearing software or model versions were used
+
+Do not add CPU/GPU identity, accelerator, launcher, scheduler, platform, build, or performance detail unless it is required to reproduce the scientific result or a known compatibility issue changes that result.
 
 It is acceptable to abbreviate by citing an earlier report only when that report truly contains the necessary detail.
 

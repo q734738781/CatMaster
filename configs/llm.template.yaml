@@ -192,6 +192,7 @@ agents:
   evidence_judge: "openrouter-main-xhigh"
   write_director: "openrouter-main-xhigh"
   section_writer: "openrouter-main"
+  plot_worker: "openrouter-main"
   write_reviewer: "openrouter-main"
   academic_polisher: "openrouter-main-xhigh"
   tex_compile_fixer: "openrouter-main-xhigh"

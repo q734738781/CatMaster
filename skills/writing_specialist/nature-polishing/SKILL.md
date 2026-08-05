@@ -1,8 +1,9 @@
 ---
 name: nature-polishing
 description: Polish, restructure, or translate academic prose into Nature-leaning English using writing-strategy principles, curated Nature/Nature Communications article patterns, and phrase-level support from Academic Phrasebank. Use whenever the user asks to polish a manuscript paragraph, abstract, introduction, results, discussion, conclusion, title, methods section, or Chinese academic draft for publication-quality English. Also covers LaTeX layout/typesetting (排版) fixes — loose or sparse pages, stranded section headings, figures that don't fill the page or split across pages, "Float too large", multi-panel figure arrangement, and Supplementary Information that looks empty — via references/latex-layout.md. Also trigger on general academic/scientific writing requests even without the word "Nature", including academic writing, scientific writing, SCI/paper writing, English manuscript polishing, language editing, proofreading, and Chinese phrasings such as 学术写作、科研写作、论文润色、写paper、SCI写作、英文论文润色、语言润色、润色、改写、学术英语、英文写作.
-version: 6.1.0
-author: Yuan1z skill, refactored into static/dynamic layers
+metadata:
+  version: "6.1.0"
+  author: Yuan1z skill, refactored into static/dynamic layers
 ---
 
 # Nature-Style Academic Polishing — Router
@@ -43,7 +44,7 @@ Do **not** read every fragment in `static/`. Load only what step 2 selected.
 
 ### 4. Polish using the loaded material
 
-Apply the loaded fragments in this priority order, matching the `paper type -> section job -> paragraph logic -> claim/evidence/boundary -> sentence polish` rule from `core/failure-modes.md`:
+Apply the loaded fragments under the runtime academic-launch policy, matching the `launch thesis -> paper type -> section job -> paragraph logic -> claim/evidence -> sentence polish` rule from `core/failure-modes.md`:
 
 1. Paper-type playbook (architecture, writing order).
 2. Section-specific job and failure modes.
@@ -51,7 +52,7 @@ Apply the loaded fragments in this priority order, matching the `paper type -> s
 4. Language-specific sentence and paragraph rules (apply last).
 5. Core stance and ethics throughout.
 
-If a paragraph's structural problem cannot be fixed without inventing content, flag it instead of papering over it.
+If a paragraph's structural problem cannot be fixed locally without inventing content or changing the scientific stance, return that precise issue to WritingSpecialist. Do not insert defensive or self-weakening prose into the manuscript.
 
 ### 5. Reach for references only when needed
 

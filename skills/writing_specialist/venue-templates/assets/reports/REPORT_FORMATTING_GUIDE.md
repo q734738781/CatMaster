@@ -2,6 +2,11 @@
 
 Quick reference for using the `scientific_report.sty` style package.
 
+Use this style only for an explicitly requested non-journal report. The
+`limitations` environment name is retained for compatibility; use it only for
+a scope, safety, or applicability condition that changes a decision, not as a
+default weakness inventory.
+
 ## Overview
 
 The `scientific_report.sty` package provides professional formatting for scientific reports, technical documents, and white papers. It features:
@@ -38,8 +43,8 @@ The `scientific_report.sty` package provides professional formatting for scienti
 
 | Color Name | RGB | Hex | Usage |
 |------------|-----|-----|-------|
-| `cautionorange` | (255, 140, 66) | `#FF8C42` | Limitations, warnings, cautions |
-| `lightorange` | (255, 243, 224) | `#FFF3E0` | Limitations box backgrounds |
+| `cautionorange` | (255, 140, 66) | `#FF8C42` | Decision-critical scope, warnings, cautions |
+| `lightorange` | (255, 243, 224) | `#FFF3E0` | Scope/caution box backgrounds |
 | `criticalred` | (198, 40, 40) | `#C62828` | Critical notices, alerts |
 | `lightred` | (255, 235, 238) | `#FFEBEE` | Critical notice backgrounds |
 
@@ -110,17 +115,14 @@ For recommendations, implications, and action items.
 \end{recommendations}
 ```
 
-### Limitations Box (Orange)
+### Scope or Decision-Condition Box (Orange)
 
-For limitations, cautions, and caveats.
+For a material scope, safety, or applicability condition. Omit by default.
 
 ```latex
-\begin{limitations}[Study Limitations]
-\begin{itemize}
-    \item Sample limited to urban populations
-    \item Cross-sectional design precludes causal inference
-    \item Self-report measures may introduce bias
-\end{itemize}
+\begin{limitations}[Applicability Condition]
+The recommendation applies to the evaluated urban population. The
+cross-sectional design supports an association claim rather than causality.
 \end{limitations}
 ```
 
@@ -500,16 +502,16 @@ Tertiary & \meansd{18.5}{4.2} & \meansd{19.2}{4.5} & 0.16\signs & .328 \\
 \end{enumerate}
 \end{keyfindings}
 
-\begin{limitations}
-This study has several limitations that should be considered...
+\begin{limitations}[Applicability Condition]
+The recommendation applies to [evaluated population and setting] under
+[material condition]...
 \end{limitations}
 
-\begin{recommendations}[Future Research]
-Future studies should address the following:
+\begin{recommendations}[Decision Implications]
+The evidence supports the following actions:
 \begin{enumerate}
-    \item Replicate findings in diverse populations
-    \item Extend follow-up period to assess long-term effects
-    \item Investigate moderating variables
+    \item [primary evidence-supported action]
+    \item [secondary action under the stated condition]
 \end{enumerate}
 \end{recommendations}
 ```
@@ -558,7 +560,7 @@ xelatex report.tex   # NOT pdflatex
 | Methods | `\begin{methodology}...\end{methodology}` |
 | Results | `\begin{resultsbox}...\end{resultsbox}` |
 | Recommendation | `\begin{recommendations}...\end{recommendations}` |
-| Limitation | `\begin{limitations}...\end{limitations}` |
+| Material scope or caution | `\begin{limitations}...\end{limitations}` |
 | Warning | `\begin{criticalnotice}...\end{criticalnotice}` |
 | Definition | `\begin{definition}...\end{definition}` |
 | Executive summary | `\begin{executivesummary}...\end{executivesummary}` |
@@ -571,4 +573,3 @@ xelatex report.tex   # NOT pdflatex
 | Highlight | `\highlight{text}` |
 | Alt row | `\rowcolor{tablealt}` |
 | Significance | `\sigone`, `\sigtwo`, `\sigthree`, `\signs` |
-

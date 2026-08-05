@@ -1,8 +1,9 @@
 name: nature-writing
-version: 1.0.0
+version: 1.1.0
 description: >
-  Declarative manifest for the static/dynamic split. SKILL.md uses this to
-  decide which fragments to load for a given drafting or restructuring request.
+  Declarative manifest for the unified scientific-manuscript writing skill.
+  SKILL.md uses this to select only the fragments and standards needed for a
+  given drafting or restructuring request.
 
 always_load:
   # Shared layer — common to nature-polishing and nature-writing
@@ -89,12 +90,14 @@ references:
       path: references/method.md
     - condition: planning/writing experiments around baselines, ablations, metrics
       path: references/experiments.md
-    - condition: writing a bounded conclusion with contribution, evidence, impact, limitation
+    - condition: writing a conclusion centered on contribution, decisive evidence, impact, and the final memory point
       path: references/conclusion.md
     - condition: user asks whether a paragraph flows; use reverse outlining
       path: references/paragraph-flow.md
-    - condition: final manuscript self-review, rejection-risk audit, claim-evidence alignment
+    - condition: final manuscript review for launch-thesis clarity and claim-evidence alignment
       path: references/paper-review.md
+    - condition: randomized trial, observational study, systematic review, protocol, diagnostic or prediction study, case report, qualitative study, animal study, quality-improvement study, economic evaluation, or an explicit reporting-checklist request
+      path: references/reporting-standards.md
     - condition: deeper Chinese-author repair patterns beyond the language fragment
       path: references/chinese-author-workflow.md
     - condition: user wants concrete abstract/introduction/method examples

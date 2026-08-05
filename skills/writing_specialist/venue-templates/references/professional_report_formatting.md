@@ -2,6 +2,11 @@
 
 This reference guide covers professional formatting for scientific reports, technical documents, and white papers. Use the `scientific_report.sty` LaTeX style package for consistent, professional output.
 
+Use this only for an explicitly requested non-journal report. Preserve the
+academic-launch emphasis: lead with the strongest supported finding and do not
+add a generic weakness section. The legacy `limitations` environment remains
+available for a decision-critical scope, safety, or applicability condition.
+
 ---
 
 ## When to Use Professional Report Formatting
@@ -75,7 +80,7 @@ Colored boxes help readers quickly identify different types of content. Use them
 | `methodology` | Green | Methods, procedures, study design |
 | `resultsbox` | Blue-green | Statistical results, data highlights |
 | `recommendations` | Purple | Recommendations, action items, implications |
-| `limitations` | Orange | Limitations, cautions, caveats |
+| `limitations` | Orange | Decision-critical scope, safety, or applicability conditions; legacy environment name retained for compatibility |
 | `criticalnotice` | Red | Critical warnings, safety notices |
 | `definition` | Gray | Definitions, notes, supplementary info |
 | `executivesummary` | Blue (shadow) | Executive summaries |
@@ -163,28 +168,23 @@ Based on our findings, we recommend:
 - Link to supporting evidence
 - Include implementation guidance
 
-### Limitations Box
+### Scope or Decision-Condition Box (Optional)
 
-Use for limitations, caveats, and cautions:
+Use only when a condition changes how the report's recommendation or result
+should be interpreted:
 
 ```latex
-\begin{limitations}[Study Limitations]
-Several limitations should be considered:
-\begin{itemize}
-    \item \textbf{Sample:} Participants were recruited from academic
-        medical centers, limiting generalizability to community settings.
-    \item \textbf{Design:} The observational design precludes causal
-        inference about treatment effects.
-    \item \textbf{Attrition:} 15% dropout rate may introduce bias.
-\end{itemize}
+\begin{limitations}[Applicability Condition]
+The recommendation applies to the evaluated clinical-center population. The
+observational design supports an association claim rather than a causal claim.
 \end{limitations}
 ```
 
 **Best Practices:**
-- Be honest and thorough
-- Explain implications of each limitation
-- Suggest how future research could address limitations
-- Don't over-qualify findings
+- State the exact condition and its decision consequence
+- Keep the claim calibrated to that condition
+- Omit the box when no condition materially changes interpretation
+- Do not turn the box into a generic weakness or future-work inventory
 
 ### Critical Notice Box
 
@@ -358,7 +358,7 @@ The style package automatically formats captions with:
 |-------|---------|-----------------|
 | Primary Blue | Headers, important findings | Warnings, cautions |
 | Science Green | Methods, positive results | Negative findings |
-| Orange | Cautions, limitations | Positive findings |
+| Orange | Decision-critical cautions or scope conditions | Positive findings |
 | Red | Critical warnings | Routine content |
 | Purple | Recommendations | Findings, methods |
 | Gray | Definitions, notes | Key findings |
@@ -565,16 +565,12 @@ Results for secondary outcomes are presented in Table~\ref{tab:secondary}.
 \end{enumerate}
 \end{keyfindings}
 
-\section{Limitations}
+\section{Applicability}
 
-\begin{limitations}
-Several limitations warrant consideration:
-\begin{itemize}
-    \item The sample was predominantly [demographic], limiting
-          generalizability.
-    \item Attrition was higher in the control group (18\% vs. 12\%).
-    \item Self-report measures may be subject to response bias.
-\end{itemize}
+\begin{limitations}[Decision Condition]
+The recommendation is supported for [evaluated population and setting] under
+[material condition]. The evidence supports [association or causal claim] at
+the strength established by the study design.
 \end{limitations}
 
 \section{Implications}
@@ -613,7 +609,7 @@ Before finalizing your report, verify:
 - [ ] Key findings highlighted in boxes
 - [ ] Methods clearly described
 - [ ] Results properly formatted with statistics
-- [ ] Limitations acknowledged
+- [ ] Any scope condition needed for the stated recommendation is disclosed precisely, without a defensive weakness inventory
 - [ ] Recommendations are specific and actionable
 
 ### Tables
@@ -646,9 +642,9 @@ Before finalizing your report, verify:
 
 ### Files in This Skill
 
-- `assets/scientific_report.sty` - The LaTeX style package
-- `assets/scientific_report_template.tex` - Complete report template
-- `assets/REPORT_FORMATTING_GUIDE.md` - Quick reference guide
+- `assets/reports/scientific_report.sty` - The LaTeX style package
+- `assets/reports/scientific_report_template.tex` - Complete report template
+- `assets/reports/REPORT_FORMATTING_GUIDE.md` - Quick reference guide
 
 ### Related Skills
 
@@ -661,4 +657,3 @@ Before finalizing your report, verify:
 - [LaTeX Wikibook](https://en.wikibooks.org/wiki/LaTeX) - General LaTeX reference
 - [Booktabs Package Documentation](https://ctan.org/pkg/booktabs) - Professional table styling
 - [tcolorbox Package Documentation](https://ctan.org/pkg/tcolorbox) - Colored box environments
-

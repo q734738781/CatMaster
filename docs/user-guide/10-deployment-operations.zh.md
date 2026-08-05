@@ -70,6 +70,7 @@ agents:
 | `evidence_judge` | 独立解释验证证据 | `research_state_updater` |
 | `write_director` | Writing coordinator | `research_lead` |
 | `section_writer` | Writing worker | `task_runner` |
+| `plot_worker` | 定量论文绘图与最终渲染视觉检查 | `section_writer` |
 | `write_reviewer` | 写作检查与审稿 | `summary` |
 | `academic_polisher` | 保守语言润色 | `summary` |
 | `tex_compile_fixer` | TeX 编译修复 | `academic_polisher` |

@@ -94,7 +94,7 @@ Methods: [Study design, setting, participants, intervention, outcomes, analysis]
 
 Results: [Primary outcome with confidence intervals, secondary outcomes, adverse events]
 
-Conclusions: [Clinical implications, limitations acknowledged]
+Conclusions: [Clinical implications; any clinically material applicability or safety condition required to interpret the result]
 ```
 
 ### Evidence Language Conventions
@@ -119,8 +119,8 @@ ML conferences value **novelty**, **rigorous experiments**, and **reproducibilit
 1. **Contribution bullets**: Numbered list in introduction stating exactly what's new
 2. **Baselines are critical**: Compare against strong, recent baselines
 3. **Ablations expected**: Show what parts of your method matter
-4. **Reproducibility**: Seeds, hyperparameters, compute requirements
-5. **Limitations section**: Honest acknowledgment (increasingly required)
+4. **Reproducibility**: Seeds and hyperparameters; put any venue-required compute disclosure in the checklist or appendix rather than the scientific narrative
+5. **Venue compliance**: If a dedicated limitations or scope section is explicitly required, state only material claim conditions and required disclosures in neutral language
 
 ### Introduction Structure (ML Conferences)
 
@@ -149,9 +149,9 @@ ML abstracts are **dense and numbers-focused**:
 1. **Datasets**: Standard benchmarks, dataset statistics
 2. **Baselines**: Recent strong methods, fair comparisons
 3. **Main results table**: Clear, comprehensive
-4. **Ablation studies**: Remove/modify components systematically
-5. **Analysis**: Error analysis, qualitative examples, failure cases
-6. **Computational cost**: Training time, inference speed, memory
+4. **Ablation studies**: Test only components needed to establish the mechanism behind the claimed advantage
+5. **Analysis**: Use targeted error or qualitative analysis only when it is necessary to judge the stated claim
+6. **Computational cost**: Compare training time, inference speed, or memory only when efficiency is part of the paper's value proposition
 
 ---
 
@@ -201,7 +201,7 @@ When expanding a conference paper to journal:
 1. **Expand related work**: Comprehensive literature review
 2. **Detailed methods**: Full algorithmic description
 3. **More experiments**: Additional datasets, analyses
-4. **Extended discussion**: Implications, limitations, future work
+4. **Extended discussion**: Mechanism, implications, and only the scope conditions material to the central claim
 5. **Appendix → main text**: Move important details up
 
 ### Specialized → High-Impact Journal
@@ -298,7 +298,7 @@ When targeting Nature/Science/Cell from a specialized venue:
 - [ ] Strong baselines included
 - [ ] Ablation studies present
 - [ ] Reproducibility information complete
-- [ ] Limitations acknowledged
+- [ ] Any venue-required scope disclosure is precise and limited to conditions material to the claim
 
 ### Medical Journals
 - [ ] Structured abstract (if required)
@@ -317,5 +317,3 @@ When targeting Nature/Science/Cell from a specialized venue:
 - `ml_conference_style.md` - NeurIPS, ICML, ICLR, CVPR conventions
 - `cs_conference_style.md` - ACL, CHI, SIGKDD guide
 - `reviewer_expectations.md` - What reviewers look for by venue
-
-

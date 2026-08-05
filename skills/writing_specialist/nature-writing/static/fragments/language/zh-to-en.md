@@ -11,7 +11,7 @@ Chinese academic notes often pack background, motivation, method, and implicatio
 - condition
 - comparison
 - implication
-- limitation
+- claim condition, only when it materially affects interpretation
 
 Then write English in the order required by the section, not in the order of the Chinese sentence.
 

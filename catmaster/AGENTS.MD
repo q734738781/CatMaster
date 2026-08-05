@@ -51,6 +51,9 @@ They are built in [runtime.py](specialists/runtime.py).
 - `WritingSpecialist`
   - Writing coordinator, not a free-form research agent.
   - Should delegate substantive drafting to `writing_worker_agent`.
+  - Uses `nature-writing` as the single general scientific-manuscript skill; keep generic IMRAD and study-design reporting guidance inside that routed skill rather than adding a second overlapping writing entry.
+  - Delegates quantitative and data-native figure production to `plot_worker`, which owns direct plotting, Origin-like styling, and rendered overlap/legibility inspection.
+  - The coordinator, writing worker, and polisher share the always-on academic-launch writing policy: organize the paper around its strongest evidence-supported publishable value, not project chronology, defensive audit prose, or irrelevant comparison dimensions.
   - Uses direct public-source checking only for tightly bounded background supplementation needed by the current manuscript or note.
 - `litreview_agent`
   - Literature-review coordinator for both direct entry and Research delegation.
@@ -455,6 +458,7 @@ same functional change as its query and subagent bindings:
 - `skills/research_reasoning/*` for graph query and evidence reconciliation.
 - `skills/litreview_agent/*`
 - `skills/writing_specialist/*`
+- `skills/plot_worker/*` for direct publication-data plotting and visual QA.
 - `skills/execution/*` for shared managed-execution support.
 
 At runtime they are staged into:
@@ -467,6 +471,7 @@ At runtime they are staged into:
 - `files/.deepagents/skills/research_reasoning`
 - `files/.deepagents/skills/litreview_agent`
 - `files/.deepagents/skills/writing_specialist`
+- `files/.deepagents/skills/plot_worker`
 - `files/.deepagents/skills/execution`
 
 Worker agents and entrypoint specialists bind skills via DeepAgent `skills=[...]`, not through the old custom skill runtime.
@@ -570,6 +575,9 @@ Current expectations:
 - write from existing workspace evidence only
 - do not reopen broad research loops from writing
 - delegate substantive drafting and revision to `writing_worker_agent`
+- delegate quantitative and data-native figure jobs to `plot_worker`; keep conceptual, mechanistic, and workflow image generation separate
+- apply the shared academic-launch policy in the coordinator and text workers, with detailed restructuring guidance in the writing skill
+- keep defensive self-assessment and irrelevant hardware, platform, launcher, build, and performance detail out of journal-facing narrative
 - if producing a TeX bundle, the worker should run compile directly and use diagnostics to repair bundle issues
 
 Do not assume there is still a separate active `compile_agent` in the writing lane. Match the current implementation in `catmaster/specialists/runtime.py`.

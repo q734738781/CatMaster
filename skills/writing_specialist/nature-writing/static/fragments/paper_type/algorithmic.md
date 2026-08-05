@@ -4,14 +4,14 @@ A procedure, tool, or system is proposed; the paper must show it performs reliab
 
 ## Argument chain
 
-`task definition + scope -> what the system is -> why it works (design rationale) -> how well it works (evaluation) -> ablations isolating the contribution -> failure modes + cost characteristics -> applicability boundary`
+`task definition + target value -> what the system is -> why it works -> evaluation of the target advantage -> ablations isolating the contribution -> meaningful cost or applicability tradeoff -> implication`
 
 ## Drafting rules
 
 - Separate "what the system is" from "why it works" from "how well it works." Do not braid them. A common failure is mixing design rationale with evaluation results in the same paragraph.
 - Every performance claim must specify dataset, metric, baseline, and conditions. Bare numbers do not survive review.
 - Avoid marketing verbs (`leverages`, `enables`, `empowers`) unless they carry concrete information.
-- The Discussion must name the failure modes the experiments revealed, not only the wins. Reviewers trust papers that report their own limits.
+- Do not create a generic failure-mode or limitations section. Discuss a constraint only when it materially conditions the stated target advantage; otherwise keep the Discussion centered on why the method works and where that capability matters.
 
 ## Module / pipeline writing
 

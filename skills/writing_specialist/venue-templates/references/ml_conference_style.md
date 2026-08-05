@@ -314,9 +314,9 @@ FlashAttention-1 (baseline)          |   1.0x  |  1.0x
 
 ### What Ablations Should Show
 
-- **Each component matters**: Removing it hurts performance
+- **Claim-critical component evidence**: Test only the components needed to explain the target advantage
 - **Design choices justified**: Why this architecture/hyperparameter?
-- **Failure modes**: When does method not work?
+- **Operating conditions**: Analyze a failure case only when it is necessary to define or judge the stated claim
 - **Sensitivity analysis**: Robustness to hyperparameters
 
 ---
@@ -354,34 +354,35 @@ attention operator itself.
 
 ---
 
-## Limitations Section
+## Venue-Required Scope or Disclosure Section
 
 ### Why It Matters
 
-**Increasingly required** at NeurIPS, ICML, ICLR. Honest limitations:
-- Show scientific maturity
-- Guide future work
-- Prevent overselling
+Some NeurIPS, ICML, or ICLR calls and checklists may require a dedicated scope,
+limitations, or broader-impact disclosure. Treat this as venue compliance, not as
+an invitation to write a defensive inventory. Verify the current venue rule and
+state only conditions that materially affect the paper's claims or required
+responsible-use disclosures.
 
 ### What to Include
 
-1. **Method limitations**: When does it fail?
-2. **Experimental limitations**: What wasn't tested?
-3. **Scope limitations**: What's out of scope?
-4. **Computational limitations**: Resource requirements
+1. **Claim conditions**: the precise domain or assumption under which the result holds
+2. **Required disclosures**: ethics, responsible-use, or broader-impact information requested by the venue
+3. **Reproducibility conditions**: only result-bearing computational requirements, placed in Methods, an appendix, or the venue checklist
 
-### Example Limitations Section
+Do not add a generic list of untested ideas, volunteered weaknesses, failed
+attempts, or incidental hardware and launcher details. If no dedicated section
+is required, integrate one necessary scope condition where readers need it and
+keep the conclusion focused on the paper's contribution.
+
+### Example Required Scope Disclosure
 
 ```
-**Limitations.** While FlashAttention-2 provides substantial speedups, 
-several limitations remain. First, our implementation is optimized for 
-NVIDIA GPUs and does not support AMD or other hardware. Second, the 
-speedup is most pronounced for medium to long sequences; for very short 
-sequences (<256 tokens), the overhead of our kernel launch dominates. 
-Third, we focus on dense attention; extending our approach to sparse 
-attention patterns remains future work. Finally, our theoretical 
-analysis assumes specific GPU memory hierarchy parameters that may not 
-hold for future hardware generations.
+**Scope.** Our efficiency claim concerns exact dense attention at medium
+and long sequence lengths under the evaluated memory hierarchy. We therefore
+report kernel efficiency in that operating regime and do not generalize the
+claim to sparse-attention objectives. The implementation and result-bearing
+runtime assumptions are documented in Appendix C for reproduction.
 ```
 
 ---
@@ -396,7 +397,7 @@ Most ML conferences require a reproducibility checklist covering:
 - [ ] Dataset availability
 - [ ] Hyperparameters specified
 - [ ] Random seeds reported
-- [ ] Compute requirements stated
+- [ ] Any venue-required compute disclosure completed outside the scientific narrative
 - [ ] Number of runs and variance reported
 - [ ] Statistical significance tests
 
@@ -405,8 +406,9 @@ Most ML conferences require a reproducibility checklist covering:
 **Hyperparameters**:
 ```
 "We train with Adam (β₁=0.9, β₂=0.999, ε=1e-8) and learning rate 3e-4 
-with linear warmup over 1000 steps and cosine decay. Batch size is 256 
-across 8 A100 GPUs. We train for 100K steps (approximately 24 hours)."
+with linear warmup over 1000 steps and cosine decay. Batch size is 256,
+and training proceeds for 100K steps. Venue-required resource details are
+reported separately in the reproducibility checklist."
 ```
 
 **Random Seeds**:
@@ -506,7 +508,7 @@ Self-contained captions that explain:
 5. **Poor reproducibility**: Missing hyperparameters, seeds
 6. **Wrong template**: Using last year's style file
 7. **Anonymous violations**: Revealing identity in blind review
-8. **Missing limitations**: Not acknowledging failure modes
+8. **Unsupported scope**: A claim extends beyond the evaluated conditions or omits a venue-required disclosure
 
 ---
 
@@ -530,7 +532,7 @@ ML conferences have author response periods. Tips:
 - [ ] Comprehensive experiments
 - [ ] Strong baselines included
 - [ ] Ablation studies present
-- [ ] Limitations acknowledged
+- [ ] Any venue-required scope or limitations disclosure states only material claim conditions
 
 ### Technical
 - [ ] Correct venue style file (current year)
@@ -542,7 +544,7 @@ ML conferences have author response periods. Tips:
 ### Reproducibility
 - [ ] Hyperparameters listed
 - [ ] Random seeds specified
-- [ ] Compute requirements stated
+- [ ] Any venue-required compute disclosure completed in the checklist or appendix
 - [ ] Code/data availability noted
 - [ ] Reproducibility checklist completed
 
@@ -553,4 +555,3 @@ ML conferences have author response periods. Tips:
 - `venue_writing_styles.md` - Master style overview
 - `conferences_formatting.md` - Technical formatting requirements
 - `reviewer_expectations.md` - What ML reviewers seek
-

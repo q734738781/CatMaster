@@ -20,10 +20,12 @@ The Results section must show the advantages of the method over existing methods
 The Methods section in a methods paper may need additional detail such as:
 
 - axioms, conditions, and assumptions
-- hardware and software environment
 - mathematical derivations
 - evaluation protocol
 - datasets, baselines, metrics, splits, and hyperparameters
+- scientifically material implementation conditions required to reproduce the result
+
+Keep incidental compute hardware, accelerator, launcher, scheduler, platform, and software-build identity out of the scientific narrative. Retain a version or implementation detail in Methods or Supporting Information only when it is genuinely result-bearing or required for reproducibility.
 
 ## Productive writing order
 

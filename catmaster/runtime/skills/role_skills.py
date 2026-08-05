@@ -101,6 +101,7 @@ ROLE_SKILL_NAMES: dict[str, list[str]] = {
     ],
     "write_director": [],
     "section_writer": [],
+    "plot_worker": [],
     "write_reviewer": [],
 }
 

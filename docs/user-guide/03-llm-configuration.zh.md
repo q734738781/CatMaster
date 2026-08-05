@@ -44,7 +44,7 @@ Research 把科学计划形成交给 `hypothesis_proposer`，把候选评价交�
 
 Research 可以列出、创建、查询和编辑 graph，加入 Hypothesis、Experiment、Result、证据判断与来源，也可以记录真实 blocker。`query_research_graph_sql` 只接受只读 SQL；host 根据受信任 thread 绑定 workspace、graph、revision 和引用实际可达的 owner rows。普通 mutation 需要 graph ID 和当前 revision，并返回准确的 changed entity 与最新 revision。内部 planning actions 从 planning thread 取得绑定；`stage_research_plan` 只写 disposable preview，评价、实体化和 launch 是后续独立转换。持久数据位于 workspace 的 `metadata/workspace.sqlite`，详细执行记录和资源用量仍在原有 thread、receipt 与 artifact store 中。
 
-它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader`、`nature-ref-verifier` 和 `nature-writing`。真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
+它可按需读取的研究 skills 包括 `research-graph-control`、`nature-citation`、`nature-data`、`nature-experiment-log`、`nature-figure`、`nature-literature-pipeline`、`nature-paper-to-patent`、`researchwrite`、`nature-reader` 和 `nature-ref-verifier`。论文和其他作者侧发表写作进入 Writing，由统一的 `nature-writing` 处理；真正执行计算时会进入 Experiment 及其 worker 的 skill 范围。
 
 </details>
 
@@ -126,7 +126,9 @@ Literature Review 可以完成主题综述、方法比较、关键论文精读�
 
 ## Writing Agent：把已有证据变成文稿和图件
 
-Writing 面向已经有材料的写作任务。你可以给它研究笔记、结果表、图、引用库、已有章节或期刊模板，让它起草、重构、润色、排版和编译。Writing coordinator 会把实质性起草交给 writing worker，把保守语言修改交给 polisher。这样可以避免一次润色顺手改变技术立场或结构。
+Writing 面向已经有材料的写作任务。你可以给它研究笔记、结果表、图、引用库、已有章节或期刊模板，让它起草、重构、润色、排版和编译。Writing coordinator 会把实质性起草交给 writing worker，把定量和数据原生图件交给 plot worker，把保守语言修改交给 polisher。
+
+总领与文字 worker 默认执行“学术发布会”原则：先识别现有证据能够牢固支撑的最强发表价值，再围绕它重构从标题到结论的完整论证；比较范围只服务于成立的主张，实验和图表承担明确的论证职责，而不是堆成结果仓库。期刊正文不写项目过程、主动防御式自评，也不写与科学结论无关的硬件、launcher、软件 build、平台和性能细节。只有确实改变核心结论的必要条件，才以准确、收缩的科学表述保留。
 
 Writing 的能力远不止"改英文"。当前 skills 覆盖论文各章节、项目书、数据可用性声明、文献引用、参考文献核验、科研图件、PPT、投稿回复、投稿前审稿、中文专利草稿、ACS LaTeX 模板、Markdown PDF 和通用 venue 模板。它还可以读取 PDF 或 Office 文档的有界文本，处理已有 LaTeX，生成可编辑图和编译后的 PDF。
 
@@ -135,9 +137,9 @@ Writing 不会替用户发明实验结果，也不应为了让段落更完整而
 <details>
 <summary>Writing 当前角色、tools 与 skills</summary>
 
-入口 Agent 可以调用 `generate_nanobanana_figure` 和 `review_pdf_manuscript`，并委派 `writing_worker_agent` 与 `writing_polisher_agent`。Writing worker 还可以使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`，同时保留通用文件与轻量脚本能力。
+入口 Agent 可以调用 `generate_nanobanana_figure` 和 `review_pdf_manuscript`，并委派 `writing_worker_agent`、`plot_worker` 与 `writing_polisher_agent`。Writing worker 还可以使用 `polish_academic_prose`、`compile_text` 和 `render_markdown_pdf`。Plot worker 直接读取给定定量数据，编写可复现绘图代码，以简洁的 Origin 风格完成图件，并检查最终渲染图的色系、裁切、文字碰撞以及文字与科学信号重叠。
 
-可加载 skills 包括 `nature-writing`、`nature-polishing`、`nature-citation`、`citation-management`、`nature-data`、`nature-figure`、`nature-reader`、`nature-response`、`nature-reviewer`、`nature-paper2ppt`、`nature-paper-to-patent`、`nature-ref-verifier`、`nature-academic-search`、`researchwrite`、`scientific-writing`、`scientific-visualization`、`achemso-latex-manuscript`、`venue-templates`、`markdown-pdf-export` 和质量检查 skill `humanizer`。
+可加载 skills 包括 `publication-launch-writing`、统一的 `nature-writing`、`nature-polishing`、`nature-citation`、`citation-management`、`nature-data`、`nature-figure`、`nature-reader`、`nature-response`、`nature-reviewer`、`nature-paper2ppt`、`nature-paper-to-patent`、`nature-ref-verifier`、`nature-academic-search`、`researchwrite`、`scientific-visualization`、`achemso-latex-manuscript`、`venue-templates`、`markdown-pdf-export` 和质量检查 skill `humanizer`。`nature-writing` 同时覆盖 Nature 系列与通用期刊结构、IMRAD 和研究设计报告规范；Plot worker 单独加载更窄的 `publication-data-plotting` skill。
 
 </details>
 

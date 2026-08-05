@@ -10,7 +10,7 @@ patterns, not wording templates.
 A strong paper can usually be reduced to:
 
 `field-scale need -> unresolved bottleneck -> proposed move -> decisive evidence
--> broader implication -> boundary`
+-> broader implication`
 
 Before drafting, force the user's material into this chain. If one link is
 missing, mark it as missing rather than writing around it.
@@ -74,8 +74,7 @@ Discussion should widen from finding to meaning:
 2. why the evidence supports it
 3. how it changes a workflow, design rule or conceptual boundary
 4. how it relates to previous studies
-5. what limits or dependencies remain
-6. what future work is now plausible
+5. the precise condition that materially controls interpretation, only when needed
 
 Do not restate every figure. Select the evidence that changes interpretation.
 
@@ -86,9 +85,31 @@ Use a compact four-part close:
 1. This work demonstrates or establishes the main contribution.
 2. The decisive evidence is named.
 3. The broader implication is stated.
-4. The boundary condition is clear.
+4. The final memory point states why the result matters.
 
 Conclusions should not introduce new data, new citations or new mechanisms.
+Do not append a generic limitations or future-work tail.
+
+## Generic IMRAD and study-design variants
+
+Use IMRAD as a section contract, not as the paper's story:
+
+- **Introduction** establishes the important problem, decisive gap, and the
+  paper's distinctive response.
+- **Methods** gives the scientifically material information needed to reproduce
+  the study and analysis.
+- **Results** presents observations in the evidence order that proves the core
+  claims.
+- **Discussion** explains why the strongest result matters, how it relates to
+  the right prior work, and any condition indispensable to interpretation.
+
+Adapt the shell when the design demands it: combine Results and Discussion when
+the venue or discipline expects immediate interpretation; use structured
+abstract labels only when required; use design-specific flows for trials,
+systematic reviews, case reports, protocols, or qualitative studies. Load
+`reporting-standards.md` when a formal reporting guideline applies. The
+guideline controls completeness, while the academic-launch thesis controls
+emphasis and narrative order.
 
 ## Title
 

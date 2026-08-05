@@ -2,45 +2,31 @@
 
 ## Goal
 
-Convince reviewers with complete evidence on effectiveness, causality, and practical value.
+Use the smallest convincing evidence package to establish the core method, the source of its advantage, and its value in the target setting.
 
 ## Three Core Questions
 
-1. Is the method better than strong baselines?
-   - Run comparison experiments against strong and recent baselines.
-   - Report standard metrics on the main benchmark(s).
-   - Include SOTA or strongest public methods, not only weak baselines.
-   - Keep protocol fair (same data split, preprocessing, and evaluation settings).
-2. Which modules/design choices make the gain?
-   - Run ablation studies for each key module/design choice.
-   - Use remove/replace/disable variants and report delta to full model.
-   - Include component interaction ablations when modules are coupled.
-3. How far can the method generalize under harder settings?
-   - Run demos/evaluations on harder or out-of-distribution settings.
-   - Add stress-test scenarios (more complex scenes, rarer cases, noisier inputs, or stricter constraints).
-   - Report both gains and failure modes to show realistic boundaries.
+1. Does the core method solve the chosen problem under the condition the paper claims?
+   - Use the baseline and metric that make that scientific question meaningful.
+   - Keep the protocol fair and the comparison scope no broader than the claim.
+2. What mechanism or design choice produces the advantage?
+   - Use an ablation, perturbation, control, or mechanistic analysis only for components that carry a core contribution.
+   - Show coupled-component interactions when they are necessary to explain the result.
+3. Why does the advantage matter in the target setting?
+   - Use the application, constraint, cost, efficiency, generalization, or scalability test that represents the intended value.
+   - Add a stress test or alternative-explanation control only when it bears on the core claim.
 
 ## Experiment Planning
 
 ```mermaid
 flowchart TB
-    A["Key Paper Claims"] --> B["What Contributions Are Claimed?"]
-    B --> C1["Contribution 1"]
-    B --> C2["Contribution 2"]
-    B --> C3["Contribution 3"]
-    C1 --> D1["Validation Experiment 1"]
-    C2 --> D2["Validation Experiment 2"]
-    C3 --> D3["Validation Experiment 3"]
+    A["Launch thesis"] --> B["Core evidence-supported claims"]
+    B --> C["Smallest decisive experiment for each claim"]
+    C --> D["Main-text evidence hierarchy"]
+    D --> E["Supporting evidence only when useful"]
 
-    E["Method Pipeline Figure"] --> F["What Modules and Parameters Matter?"]
-    F --> G1["Technical Module 1"]
-    F --> G2["Technical Module 2"]
-    F --> G3["Key Parameter 1"]
-    F --> G4["Key Parameter 2"]
-    G1 --> H1["Ablation Study 1"]
-    G2 --> H2["Ablation Study 2"]
-    G3 --> H3["Ablation Study 3"]
-    G4 --> H4["Ablation Study 4"]
+    F["Claim-carrying mechanism or module"] --> G["Plausible alternative explanation"]
+    G --> H["One discriminating ablation or control"]
 ```
 
 ## Experiment Section Decomposition
@@ -87,16 +73,14 @@ flowchart TB
 3. Put `\caption{...}` before `\label{...}` and keep caption above.
 4. Use restrained highlighting; never color too many cells.
 
-## Recommended Ablation Package
+## Ablation selection
 
-1. One core ablation table for all major contributions.
-2. Several focused mini-ablations for module-level design choices.
-3. Matching qualitative visual results for each important ablation.
+Use one integrated ablation display when it cleanly isolates the claim-carrying choices. Add a focused ablation or qualitative panel only when it explains a core mechanism or excludes a plausible alternative. Do not create an ablation inventory for every implementation detail.
 
 ## Experimental Rigor Checklist
 
-1. Are baselines recent and relevant?
-2. Are metrics sufficient and standard for this task?
-3. Is ablation tied to every key design claim?
-4. Are claims in Abstract/Introduction supported by reported numbers?
-5. Are limitations of evaluation scope explicitly stated?
+1. Are the selected baselines relevant to the contest the paper actually enters?
+2. Do the metrics represent the claimed value and remain scientifically fair?
+3. Is each ablation or control tied to a core design or mechanism claim?
+4. Are claims in the Abstract and Introduction supported by the displayed evidence?
+5. Has irrelevant comparison breadth, defensive discussion, and operational detail been removed?

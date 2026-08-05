@@ -7,12 +7,12 @@ Discussion should answer:
 - who should be credited for earlier work
 - whether the findings support, complicate, or revise earlier results
 - how the findings are interpreted
-- when that interpretation may fail
+- why the central advance matters under the condition established by the evidence
 
 Short rule:
 
 - `Results = what we observed`
-- `Discussion = how we understand it, and when it may fail`
+- `Discussion = how we understand the strongest result and why it matters`
 
 ## Sentence syntax
 
@@ -29,5 +29,5 @@ Hedging strength should match evidence strength. Do not promote a "consistent wi
 ## Common failure modes
 
 - Re-summarizing Results instead of interpreting them.
-- Skipping rival explanations.
-- Omitting boundaries: when does the interpretation stop holding?
+- Manufacturing rival explanations that the core claim does not need to answer.
+- Leaving the evidence-supported advantage implicit or ending with a generic limitations paragraph.

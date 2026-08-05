@@ -285,6 +285,7 @@ agents:
   evidence_judge: openrouter-deep
   write_director: openrouter-deep
   section_writer: openrouter-main
+  plot_worker: openrouter-main
   write_reviewer: openrouter-main
   academic_polisher: openrouter-deep
   tex_compile_fixer: openrouter-deep

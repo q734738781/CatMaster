@@ -324,6 +324,7 @@ _WRITING_WORKER_TOOL_ALLOWLIST = {
     "compile_text",
     "render_markdown_pdf",
 }
+_PLOT_WORKER_TOOL_ALLOWLIST: set[str] = set()
 _DEEPAGENT_SUMMARIZATION_TRIGGER_FRACTION = 0.85
 _DEEPAGENT_MEMORY_POLICY = (
     "Persistent project memory:\n"
@@ -352,6 +353,7 @@ _SKILL_GROUPS = (
     "execution",
     "writing_specialist",
     "writing_quality",
+    "plot_worker",
 )
 _SKILLS_ROOT = "/.deepagents/skills"
 _SELF_DEVELOP_SKILLS_ROOT = "/.deepagents/self_develop_skills"
@@ -421,6 +423,49 @@ class _ResearchReasoningToolBoundaryMiddleware(AgentMiddleware):
             str(request.tool_call.get("name") or "")
             in _RESEARCH_REASONING_FORBIDDEN_TOOL_NAMES
         ):
+            return self._blocked_tool_message(request)
+        return await handler(request)
+
+
+class _NoDelegationToolBoundaryMiddleware(AgentMiddleware):
+    """Keep a direct leaf worker from spawning another context branch."""
+
+    @staticmethod
+    def _bounded_request(request: Any) -> Any:
+        tools = [tool for tool in request.tools if _agent_tool_name(tool) != "task"]
+        return request.override(tools=tools)
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return handler(self._bounded_request(request))
+
+    async def awrap_model_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Any],
+    ) -> Any:
+        return await handler(self._bounded_request(request))
+
+    @staticmethod
+    def _blocked_tool_message(request: Any) -> ToolMessage:
+        tool_call = request.tool_call
+        return ToolMessage(
+            content="This worker completes its bounded task directly and cannot delegate it.",
+            tool_call_id=str(tool_call.get("id") or ""),
+            name=str(tool_call.get("name") or ""),
+            status="error",
+        )
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        if str(request.tool_call.get("name") or "") == "task":
+            return self._blocked_tool_message(request)
+        return handler(request)
+
+    async def awrap_tool_call(
+        self,
+        request: Any,
+        handler: Callable[[Any], Any],
+    ) -> Any:
+        if str(request.tool_call.get("name") or "") == "task":
             return self._blocked_tool_message(request)
         return await handler(request)
 
@@ -1528,6 +1573,19 @@ class SpecialistRunner:
                 runtime=runtime,
             ),
             self._compiled_worker_subagent(
+                name="plot_worker",
+                description=(
+                    "Turn supplied quantitative data into a finished publication figure, "
+                    "including visual inspection and overlap repair."
+                ),
+                model_role="plot_worker",
+                system_prompt=self._plot_worker_prompt(),
+                tools=self._named_tools(_PLOT_WORKER_TOOL_ALLOWLIST),
+                skills=self._skill_roots_for_group("plot_worker"),
+                middleware=[_NoDelegationToolBoundaryMiddleware()],
+                runtime=runtime,
+            ),
+            self._compiled_worker_subagent(
                 name="writing_polisher_agent",
                 description="Apply conservative section-level prose polish without changing the manuscript's scientific stance or structure.",
                 model_role="academic_polisher",
@@ -2579,6 +2637,7 @@ class SpecialistRunner:
                 "Keep such public-source checking tightly bounded to the current writing need; do not let it expand into a new autonomous research campaign.\n"
                 "Your default role is coordination, not long-form drafting in the main thread.\n"
                 "For any substantive note writing, section writing, manuscript drafting, or major revision, immediately delegate to `writing_worker_agent` with a bounded brief.\n"
+                "For quantitative or data-native figures, delegate the bounded figure job to `plot_worker` with the scientific conclusion, exact data paths, comparison and uncertainty semantics, target output path, and any journal size or format constraint. Use `generate_nanobanana_figure` only for conceptual, mechanistic, or workflow visuals; do not use it to redraw quantitative evidence.\n"
                 "Before a substantial paper/manuscript rewrite, first condense the task into one compact inline author packet, then dispatch the section or integration brief from that packet instead of forwarding raw run logs.\n"
                 "Each writing-worker handoff should cover only one section or one bounded organization/integration task. "
                 "Give it one primary goal and one completion criterion. "
@@ -2600,6 +2659,7 @@ class SpecialistRunner:
                 "If you create or substantially revise a TeX manuscript bundle, require `writing_worker_agent` to run the compile tool itself and repair issues from the returned diagnostics before concluding.\n"
                 "Do not leave final cited TeX deliverables with an inline `thebibliography` block. Prefer a separate bibliography file and a `\\bibliography{references}` entry so the bundle includes `.tex`, `.bib`, and `.pdf` outputs when compilation succeeds.\n"
                 f"{cls._peer_review_ready_paper_policy()}\n"
+                f"{cls._publication_launch_policy()}\n"
                 f"{cls._journal_manuscript_policy()}\n"
                 f"{cls._author_packet_policy()}\n"
                 f"{cls._prose_quality_policy()}\n"
@@ -2763,6 +2823,21 @@ class SpecialistRunner:
             "State the strongest evidence-supported scientific claim in a direct scientific voice. "
             "Do not reflexively underclaim, and do not weaken the main result with self-cancelling hedge sentences. "
             "Do not ask for new experiments inside the manuscript body; mention limitations only when they materially affect interpretation, scope, or reviewer confidence, and keep those notes brief."
+        )
+
+    @staticmethod
+    def _publication_launch_policy() -> str:
+        return (
+            "Academic-launch writing policy: throughout paper planning, drafting, revision, compression, and experiment organization, treat the manuscript as an academic launch built around its strongest publishable value, not as a project summary, experiment log, or self-audit. "
+            "Identify the capability, question, mechanism, perspective, applicability, cost, efficiency, scalability, or meaningful tradeoff that is genuinely strongest, then make that advantage the paper's organizing thesis. Do not distribute attention evenly across everything that was done. "
+            "Retain only the final scientific logic: why the problem matters, why existing approaches are insufficient for the chosen problem, what distinctive solution this work provides, and how the evidence supports it. Do not narrate attempt order, failed branches, or the history of how the project arrived at the result. "
+            "Do not volunteer negative verdicts, defensive prose, or self-weakening language. Never summarize for the reviewer where the work loses, enlarge a local observation into a general defect, or introduce a comparison dimension that the core contribution does not need to win. If a result is not an advantage, first decide whether it is needed at all; otherwise narrow the claim, choose a value-relevant task, metric, constraint, scenario, or comparison, explain a real objective tradeoff, move the material to supporting content, or rebuild the story around the strongest evidence. "
+            "State supported advantages explicitly: name the condition in which the work is strongest, explain why the advantage occurs, identify the practical or scientific problem it resolves, and say why that capability matters relative to the appropriate prior art. Limit comparisons to those needed for the supported claims rather than seeking universal dominance. "
+            "Treat every experiment, figure, table, and paragraph as an argument component. Keep it in the main line only when it proves the core method, isolates the mechanism behind the advantage, demonstrates value in the target setting, or excludes a plausible alternative explanation. Delete, weaken, relocate, or redesign material that dilutes the thesis or creates an irrelevant contest. When the original story is not supported, change the title, contribution order, experiment emphasis, abstract, introduction, and section structure instead of defending the original plan. "
+            "Open the abstract and introduction like a launch: establish the important unresolved problem, the decisive gap, the distinctive solution, and the highest-weight result and meaning quickly. Use the conclusion to reinforce what was solved, introduced, demonstrated, and why it matters; do not add a new self-critique at the end. "
+            "When handling unfavorable material, apply this order: remove what is irrelevant to the core claim; narrow the claim; use the evaluation dimension that reflects the intended value; explain a genuine objective difference or tradeoff; recenter the experiments and visuals; redefine the story; and add a necessary qualification only when it cannot be avoided and materially conditions the core conclusion. "
+            "This policy does not permit fabrication, selective alteration of data, concealment of a result needed to judge the stated claim, or omission of a disclosure required by the target venue. Calibrate the claim to the evidence. If a necessary condition materially limits the core conclusion, state it once in precise neutral scientific language and place it where readers need it, without turning it into a broad negative judgment. "
+            "Exclude irrelevant hardware, accelerator, launcher, scheduler, software-build, platform, and implementation trivia from titles, abstracts, introductions, results, discussions, conclusions, and narrative captions. Put genuinely required reproducibility detail in Methods or Supporting Information, and mention an operational detail in the scientific narrative only when a known result-changing compatibility issue makes it scientifically causal."
         )
 
     @staticmethod
@@ -3211,7 +3286,7 @@ class SpecialistRunner:
             "For paper/manuscript/journal-style writing, complete the evidence presentation: add or update figures, tables, structure renders, and concise schematics when they materially improve the manuscript and the workspace contains enough evidence to support them.\n"
             "For paper/manuscript/journal-style writing, explicitly organize what belongs in the main text versus Supporting Information / Supporting Data. Keep claim-critical evidence in the main manuscript; move extended methods, exhaustive tables, auxiliary figures, coordinate inventories, and machine-readable exports into supporting content when that makes the package cleaner and more submission-ready.\n"
             "For the current implementation, keep Supporting Information in the same manuscript file rather than a separate SI manuscript: place it after the references as a clear supporting-information section or appendix. Supporting data files may still live in separate workspace folders.\n"
-            "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures. Prefer it over hand-built matplotlib diagrams for those figure types, and reserve plotting libraries for quantitative or data-native visualizations.\n"
+            "Use `generate_nanobanana_figure` for conceptual, mechanistic, or workflow figures. If this writing task reveals a missing quantitative or data-native figure, return a compact figure brief to WritingSpecialist so it can dispatch `plot_worker`; do not turn the writing pass into an improvised plotting branch.\n"
             "For short notes or compact summaries, do not manufacture extra visuals unless they are explicitly requested or clearly necessary for comprehension.\n"
             "Treat a Markdown-to-PDF request as direct format conversion: preserve the Markdown source and use the registered Markdown PDF capability. Do not rewrite the document as LaTeX unless the parent explicitly requests TeX or a journal template requires it.\n"
             "When writing a paper/manuscript title, produce a compact journal-style title that foregrounds the material system and the main scientific result. Avoid titles that read like project summaries, workflow descriptions, or sentence-length claims.\n"
@@ -3221,11 +3296,32 @@ class SpecialistRunner:
             "Do not treat a successful TeX compile as sufficient if the PDF still has obviously misplaced figures or a weak title.\n"
             "If you draft TeX with citations, structure it to use a separate bibliography file rather than leaving inline `thebibliography` in the final bundle.\n"
             f"{cls._peer_review_ready_paper_policy()}\n"
+            f"{cls._publication_launch_policy()}\n"
             f"{cls._journal_manuscript_policy()}\n"
             f"{cls._author_packet_policy()}\n"
             f"{cls._prose_quality_policy()}\n"
             f"{cls._tool_policy()}\n"
             f"{cls._general_purpose_worker_policy()}\n"
+            f"{cls._multimodal_policy()}\n"
+            f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
+            f"{cls._workspace_path_discipline()}\n"
+            f"{cls._writing_reporting_contract()}"
+        )
+
+    @classmethod
+    def _plot_worker_prompt(cls) -> str:
+        return (
+            "You are plot_worker for WritingSpecialist.\n"
+            "Complete one bounded quantitative or data-native publication-figure job directly from the supplied data and brief. Do not delegate, draft manuscript sections, perform new scientific experiments, reopen literature research, or create conceptual/mechanistic artwork.\n"
+            "Start from the scientific conclusion the figure must make visible. Inspect the exact supplied data paths, preserve values, units, grouping, uncertainty definitions, sample counts, and comparison semantics, then choose the simplest chart family and panel structure that proves that conclusion. Do not manufacture missing data or silently change analysis.\n"
+            "Write or revise a reproducible plotting script in the workspace and produce the requested editable/vector output plus a raster preview. Use mature local plotting libraries; default to a clean Origin-like scientific style with a white canvas, disciplined axes and ticks, readable final-size typography, restrained high-contrast colors, explicit units, compact legends, and no decorative effects.\n"
+            "Choose the palette by data meaning rather than decoration. Prefer colorblind-safe colors and add marker, line-style, or shape redundancy when color alone would be ambiguous. Keep one visual hierarchy: the evidence supporting the main claim should be easiest to see.\n"
+            "Before returning, open the rendered raster preview with `read_file` and inspect it at the intended final size. Repair clipped labels, text or legend collisions, annotations covering data, error bars hidden by markers, overcrowded ticks, weak contrast, inconsistent panel alignment, excessive whitespace, and any overlap between text and the visual signal. Re-render and re-inspect after material layout changes.\n"
+            "Do not hide scientifically necessary points, crop inconvenient data, apply smoothing or interpolation without scientific authorization, use unlabeled broken axes, or select limits that create a misleading comparison. Move interpretation into the caption or handoff rather than placing paragraph text on the canvas.\n"
+            "Return the figure's one-sentence scientific takeaway, the plotting-script path, final figure paths, the source data paths used, and only the visual or scientific condition that materially affects interpretation. Do not report irrelevant hardware, platform, build, launcher, or performance details.\n"
+            "Read and apply the `publication-data-plotting` skill before plotting.\n"
+            f"{cls._publication_launch_policy()}\n"
+            f"{cls._tool_policy()}\n"
             f"{cls._multimodal_policy()}\n"
             f"{cls._deepagent_memory_policy(allow_memory_write=False)}\n"
             f"{cls._workspace_path_discipline()}\n"
@@ -3242,6 +3338,7 @@ class SpecialistRunner:
             "Do not introduce new experiments, new references, or new limitations.\n"
             "When polishing TeX, preserve commands, labels, citation keys, math, and float structure unless the parent explicitly asks for a local TeX fix.\n"
             f"{cls._peer_review_ready_paper_policy()}\n"
+            f"{cls._publication_launch_policy()}\n"
             f"{cls._journal_manuscript_policy()}\n"
             f"{cls._prose_quality_policy()}\n"
             f"{cls._tool_policy()}\n"

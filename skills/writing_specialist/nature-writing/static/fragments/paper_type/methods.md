@@ -4,7 +4,7 @@ A methods paper proposes a technique and must convince the reader it works, is r
 
 ## Argument chain
 
-`task / problem -> limits of existing methods -> proposed method -> evaluation showing advantage -> reproducibility evidence -> boundary`
+`important task -> decisive unmet requirement -> proposed method -> evaluation showing its target advantage -> scientific reproducibility evidence -> implication`
 
 ## Drafting order
 
@@ -31,9 +31,10 @@ Bare "we obtain higher accuracy" without baseline + setup + statistical handling
 Be explicit about:
 
 - axioms, conditions, and assumptions
-- hardware and software environment
 - mathematical derivations
 - evaluation protocol: datasets, baselines, metrics, splits, hyperparameters
-- failure modes and out-of-scope conditions
+- scientifically material implementation conditions needed to reproduce the reported result
+
+Do not turn hardware, accelerator, launcher, scheduler, platform, or software-build identity into narrative content. Include a package, model, or implementation version in Methods or Supporting Information only when it is genuinely required to reproduce the scientific result or a known compatibility issue changes that result.
 
 When drafting a method, also open `references/method.md` for module-motivation and three-elements patterns.

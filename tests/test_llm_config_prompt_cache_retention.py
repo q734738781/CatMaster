@@ -25,7 +25,7 @@ def test_codex_oauth_template_routes_coordinators_and_workers_by_role() -> None:
     ):
         assert profile.config_for_role(role).model == "gpt-5.6-sol"
         assert effort(role) == "xhigh"
-    for role in ("literature_worker", "section_writer"):
+    for role in ("literature_worker", "section_writer", "plot_worker"):
         assert profile.config_for_role(role).model == "gpt-5.6-luna"
         assert effort(role) == "xhigh"
     for role in (

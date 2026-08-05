@@ -75,7 +75,7 @@ references:
       path: references/nat-comms-2025-diction.md
     - condition: needs section-specific move orders or phrase patterns
       path: references/section-moves.md
-    - condition: needs hedging, transition, evidence, limitation, future-work phrases
+    - condition: needs hedging, transition, evidence, implication, or a necessary claim-condition phrase
       path: references/phrasebank-playbook.md
     - condition: needs academic style, register, article use, or mechanics checks
       path: references/style-guardrails.md

@@ -2,7 +2,7 @@
 
 ## Default evidence ladder
 
-`system / workflow validation -> main result -> baseline comparison -> ablation / mechanism analysis -> application or generalization -> stress tests / failure modes`
+`core method validation -> strongest result -> claim-relevant comparison -> ablation or mechanism evidence -> target application or generalization`
 
 Each subsection has a claim-first opening, then data support.
 
@@ -12,7 +12,7 @@ Each subsection has a claim-first opening, then data support.
 - Report what was observed, under what conditions, with what quantitative support.
 - Use statistics correctly and sparingly. Every test needs a stated hypothesis.
 - Use supplementary data sparingly. If a result belongs in the main text, do not hide it in supplements.
-- **Each major claim needs comparison, ablation, or stress-test evidence.** If a claim has none, mark it for follow-up rather than drafting around it.
+- **Each major claim needs the evidence appropriate to that claim.** Select comparisons, ablations, mechanism tests, or target-setting demonstrations because they prove the launch thesis, not because a generic checklist asks for every experiment type.
 
 ## Results syntax (vs Discussion)
 

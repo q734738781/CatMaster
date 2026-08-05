@@ -68,6 +68,7 @@ agents:
 | `evidence_judge` | Independent evidence interpretation | `research_state_updater` |
 | `write_director` | Writing coordinator | `research_lead` |
 | `section_writer` | Writing worker | `task_runner` |
+| `plot_worker` | Quantitative publication plotting and rendered visual QA | `section_writer` |
 | `write_reviewer` | Writing checks and review | `summary` |
 | `academic_polisher` | Conservative prose polishing | `summary` |
 | `tex_compile_fixer` | TeX compilation repair | `academic_polisher` |

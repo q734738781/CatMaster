@@ -4,7 +4,7 @@ The abstract is a mini-paper. Draft it last, when Results and Discussion are sta
 
 ## Default Nature pattern
 
-`context / problem -> gap -> approach -> key result -> implication -> boundary`
+`important problem -> decisive gap -> distinctive approach -> strongest result -> implication`
 
 ## Paragraph movement (recommended)
 
@@ -13,7 +13,7 @@ The abstract is a mini-paper. Draft it last, when Results and Discussion are sta
 3. What this paper introduces or demonstrates.
 4. The strongest result, with quantitative or comparative support.
 5. The mechanism, workflow, or practical consequence.
-6. Bounded implication.
+6. Why the result changes the scientific or practical opportunity.
 
 ## Pattern variants for technical / method-heavy papers
 
@@ -36,3 +36,4 @@ Open `references/abstract.md` for templates and examples.
 - Keep it compact. Cut sentences that re-summarize background the title already implies.
 - Include quantitative or comparative detail when the user provided it. Do not invent numbers.
 - End with what the work enables, not generic importance.
+- Do not add a limitation, defensive disclaimer, or implementation detail to the abstract unless one precise condition is indispensable for interpreting the headline result.

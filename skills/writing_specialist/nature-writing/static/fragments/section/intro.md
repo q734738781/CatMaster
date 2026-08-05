@@ -13,7 +13,7 @@ For a broad-audience `Nature` summary paragraph, strengthen this into (See `refe
 1. Establish the field stake. Make it land for a non-specialist if the target is broad (Nature, Science).
 2. Identify the bottleneck in existing practice.
 3. Summarize what prior work has and has not solved. Synthesize, do not list.
-4. State what this paper does and how it addresses the gap. Preview the contribution, not the results in detail.
+4. State what this paper does, preview the strongest result or capability that establishes the advance, and explain why it matters. Use a decisive quantitative result when it carries the contribution; do not hide the value behind method-only wording.
 
 ## Pipeline variants — pick one based on the material
 
@@ -31,6 +31,6 @@ Tell the user which variant you picked and why.
 
 ## Drafting rules
 
-- Do not summarize results in detail. The final paragraph states the contribution and approach, not the numbers.
+- Do not inventory all results. The final paragraph states the distinctive contribution and previews the highest-weight result and meaning; include a number when it is the clearest evidence for the launch claim.
 - Cite prior work to position, not to demonstrate breadth. Each citation should earn its place.
 - The transition from "what is known" to "what this paper does" must be explicit, not implied.

@@ -2,34 +2,22 @@
 
 ## Goal
 
-Close the paper with clear takeaways and credible limitations.
+Close the paper by fixing one scientific memory point: what problem was solved, what distinctive contribution solved it, what evidence established the value, and why that value matters.
 
 ## Structure
 
-1. Restate solved problem and core technical idea.
-2. Summarize strongest evidence from experiments.
-3. State practical impact or new insight.
-4. Add limitation paragraph.
-5. End with concrete future direction.
+1. Restate the solved problem and the paper's distinctive scientific move.
+2. Name the decisive evidence rather than summarizing every Results subsection.
+3. Explain the scientific or practical consequence of the demonstrated advantage.
+4. End on that consequence in a direct authorial voice.
 
-## Limitation Guidance
+## Scope discipline
 
-Prefer limitations tied to task goal/setting boundaries, for example:
-
-1. Data regime limitation (e.g., only short sequences).
-2. Assumption limitation (e.g., controlled viewpoints only).
-3. Deployment scope limitation (e.g., specific sensor setup).
-
-Avoid framing conclusion around fixable implementation flaws unless they critically define your method's scope.
-
-## Distinguish Limitation Types
-
-1. Technical defect: underperforms strong baselines on key metrics or causes unacceptable tradeoff.
-2. Scope limitation: bounded by current task setting and still competitive vs. current SOTA.
+Do not turn the conclusion into a new trial of the paper. Omit generic limitations, failure inventories, future-work lists, implementation caveats, and operational details. If one condition is indispensable for interpreting the core conclusion, incorporate it into the claim itself in one precise clause rather than appending a broad self-critical paragraph.
 
 ## Template
 
-1. This paper addresses [problem] by proposing [method].
-2. The key idea is [core insight], which enables [main benefit].
-3. Experiments show [main gains] across [datasets/settings].
-4. A current limitation is [scope boundary], and extending to [future setting] is an important next step.
+1. This paper addresses [important problem] through [distinctive method or insight].
+2. [Decisive evidence] establishes [strongest supported advantage] under [meaningful condition, if needed].
+3. This capability [scientific or practical consequence].
+4. Together, these results position [contribution] as [final evidence-supported value].

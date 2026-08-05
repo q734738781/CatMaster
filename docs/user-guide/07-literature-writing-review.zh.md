@@ -76,7 +76,7 @@ Writing Agent 的输入可以很杂：中文笔记、结果表、图、代码输
 
 ### 起草论文、报告和项目书
 
-`nature-writing` 与 `scientific-writing` 适合从已有 claims、结果和图件构建论文结构。`researchwrite` 面向项目书或 proposal，强调先明确论证与证据合同，再写章节。Agent 可以起草摘要、引言、方法、结果、讨论和结论，也可以重组已有章节。
+统一后的 `nature-writing` 负责从已有 claims、结果和图件构建论文结构，同时覆盖 Nature 系列、通用 IMRAD 和按研究设计选择的报告规范。`researchwrite` 面向项目书或 proposal，强调先明确论证与证据合同，再写章节。Agent 可以起草摘要、引言、方法、结果、讨论和结论，也可以重组已有章节。
 
 好的 Writing prompt 不需要规定每段第一句话，但应说明读者、文稿类型、当前章节、可用证据、必须保留的数字和禁止补写的内容。正文默认使用连贯段落，不应把研究结果写成密集短语和清单。
 

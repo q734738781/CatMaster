@@ -40,6 +40,26 @@ references describe the current system.
 
 ### Agent Prompting
 
+- Writing now exposes `nature-writing` as its single general scientific-
+  manuscript skill. The former `scientific-writing` entry was removed after
+  its useful generic IMRAD, study-design reporting, and professional-report
+  support were folded into the routed `nature-writing` resources; duplicate
+  citation, plotting, and sentence-style guidance now stays with the existing
+  specialist skills that own those capabilities. The stale Research-lane copy
+  of `nature-writing` was also removed because Research already delegates
+  author-facing publication work to Writing.
+- Writing now applies one shared academic-launch system contract in the Writing
+  coordinator, drafting worker, and polisher. Paper planning, revision,
+  compression, experiment organization, and display selection center the
+  strongest evidence-supported publishable advantage; project chronology,
+  unsolicited defensive self-assessment, irrelevant comparison dimensions,
+  and non-scientific hardware/platform detail are excluded from journal-facing
+  narrative while necessary claim-changing qualifications remain precise.
+- Writing now includes a dedicated `plot_worker`. The Codex OAuth profile routes
+  it to GPT-5.6 Luna with xhigh reasoning. It turns supplied quantitative data
+  directly into reproducible Origin-like publication plots, selects palettes by
+  scientific semantics, and inspects rendered previews for clipping, collisions,
+  legibility, and overlap between text and visual signals before handoff.
 - Literature Review now has a named, non-delegating
   `litreview_worker_agent` for bounded discovery, source reading, extraction,
   and evidence-audit branches; `litreview_agent` retains coverage decisions,

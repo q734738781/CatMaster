@@ -4,9 +4,9 @@ A research paper answers: why this phenomenon matters, what was done, what was f
 
 ## Full-paper argument chain
 
-`field-scale need -> unresolved bottleneck -> proposed move -> decisive evidence -> broader implication -> boundary`
+`field-scale need -> unresolved bottleneck -> distinctive move -> decisive advantage -> broader implication`
 
-Before drafting, force the user's material into this chain. If one link is missing, mark it as missing rather than writing around it.
+Before drafting, force the user's material into this chain and choose the result that most strongly supports it. If the decisive evidence is missing, narrow the claim rather than filling the gap with process narration or a limitation section.
 
 ## Drafting order
 

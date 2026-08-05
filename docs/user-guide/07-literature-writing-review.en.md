@@ -79,7 +79,7 @@ When the current Writing thread explicitly attaches a Research Graph, the agent 
 
 ### Manuscripts, reports, and proposals
 
-`nature-writing` and `scientific-writing` build manuscript arguments from existing claims, results, and figures. `researchwrite` is proposal-oriented and establishes the evidence and argument contract before drafting. Writing can handle abstracts, introductions, methods, results, discussions, conclusions, and larger restructuring.
+The unified `nature-writing` skill builds manuscript arguments from existing claims, results, and figures across Nature-family, generic IMRAD, and study-design reporting-standard contexts. `researchwrite` is proposal-oriented and establishes the evidence and argument contract before drafting. Writing can handle abstracts, introductions, methods, results, discussions, conclusions, and larger restructuring.
 
 A useful request identifies reader, document type, current section, available evidence, values that must remain exact, and content that must not be invented. Final prose should be connected paragraphs rather than a pile of outline fragments.
 

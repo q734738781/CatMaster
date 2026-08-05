@@ -37,7 +37,7 @@ Research delegates scientific plan formation to `hypothesis_proposer`, candidate
 
 Research can list, create, query, and edit graphs; add Hypotheses, Experiments, Results, judgments, and sources; and mark a real blocker. `query_research_graph_sql` accepts only a read-only SQL statement; the host binds the workspace, graph, revision, and referenced owner rows from the trusted thread. Ordinary mutations require the graph ID and current revision and return the exact changed entity and latest revision. The internal planning actions derive their binding from the planning thread. `stage_research_plan` writes only a disposable preview, while evaluation, materialization, and launch are separate transitions. Persistent state lives in the workspace `metadata/workspace.sqlite`. Detailed execution records and resource use remain in the existing thread, receipt, and artifact stores.
 
-Its research skills include `research-graph-control`, `nature-citation`, `nature-data`, `nature-experiment-log`, `nature-figure`, `nature-literature-pipeline`, `nature-paper-to-patent`, `researchwrite`, `nature-reader`, `nature-ref-verifier`, and `nature-writing`. Calculation execution moves into Experiment and its worker skills.
+Its research skills include `research-graph-control`, `nature-citation`, `nature-data`, `nature-experiment-log`, `nature-figure`, `nature-literature-pipeline`, `nature-paper-to-patent`, `researchwrite`, `nature-reader`, and `nature-ref-verifier`. Manuscripts and other author-facing publication writing move into Writing and its unified `nature-writing` skill. Calculation execution moves into Experiment and its worker skills.
 
 </details>
 
@@ -123,7 +123,9 @@ evidence table, and final reference library. Do not invent parameters that canno
 
 ## Writing agent: turning evidence into manuscripts and figures
 
-Writing is for work that already has source material. You can give it notes, result tables, figures, references, existing sections, or a venue template. It can draft, restructure, polish, lay out, and compile. The coordinator delegates substantive composition to a writing worker and conservative language revision to a polisher so that a prose pass does not casually change scientific structure or stance.
+Writing is for work that already has source material. You can give it notes, result tables, figures, references, existing sections, or a venue template. It can draft, restructure, polish, lay out, and compile. The coordinator delegates substantive composition to a writing worker, quantitative and data-native figures to a plot worker, and conservative language revision to a polisher.
+
+The coordinator and text workers apply an academic-launch policy by default. They identify the strongest evidence-supported publishable value, reconstruct the title-to-conclusion argument around it, keep comparisons bounded to claims the evidence can support, and use experiments and displays as argument components rather than a result inventory. Journal-facing prose excludes project chronology, unsolicited defensive self-assessment, and irrelevant hardware, launcher, software-build, platform, or performance detail. Necessary qualifications remain precise and limited to conditions that materially change the core claim.
 
 Its scope is much wider than English editing. Current skills cover manuscript sections, proposals, data-availability statements, citations and reference verification, publication figures, presentations, reviewer responses, pre-submission review, Chinese patent drafts, ACS LaTeX, Markdown PDF, and venue templates. It can read bounded PDF and Office content, work with existing LaTeX, produce editable figures, and compile deliverables.
 
@@ -132,9 +134,9 @@ Writing must not invent results or add plausible references to fill a gap. Missi
 <details>
 <summary>Current Writing roles, tools, and skills</summary>
 
-The entry agent can use `generate_nanobanana_figure` and `review_pdf_manuscript`, and it delegates to `writing_worker_agent` and `writing_polisher_agent`. The writing worker can also use `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`, along with common file and lightweight scripting capabilities.
+The entry agent can use `generate_nanobanana_figure` and `review_pdf_manuscript`, and it delegates to `writing_worker_agent`, `plot_worker`, and `writing_polisher_agent`. The writing worker can also use `polish_academic_prose`, `compile_text`, and `render_markdown_pdf`. The plot worker uses supplied quantitative data directly, writes reproducible plotting code, targets a clean Origin-like publication style, and inspects the rendered preview for palette quality, clipping, collisions, and overlap between text and scientific signals.
 
-Available skills include `nature-writing`, `nature-polishing`, `nature-citation`, `citation-management`, `nature-data`, `nature-figure`, `nature-reader`, `nature-response`, `nature-reviewer`, `nature-paper2ppt`, `nature-paper-to-patent`, `nature-ref-verifier`, `nature-academic-search`, `researchwrite`, `scientific-writing`, `scientific-visualization`, `achemso-latex-manuscript`, `venue-templates`, `markdown-pdf-export`, and the `humanizer` quality skill.
+Available skills include `publication-launch-writing`, the unified `nature-writing`, `nature-polishing`, `nature-citation`, `citation-management`, `nature-data`, `nature-figure`, `nature-reader`, `nature-response`, `nature-reviewer`, `nature-paper2ppt`, `nature-paper-to-patent`, `nature-ref-verifier`, `nature-academic-search`, `researchwrite`, `scientific-visualization`, `achemso-latex-manuscript`, `venue-templates`, `markdown-pdf-export`, and the `humanizer` quality skill. `nature-writing` covers Nature-family and general-journal structure, IMRAD, and study-design reporting standards. The plot worker has the narrower `publication-data-plotting` skill.
 
 </details>
 

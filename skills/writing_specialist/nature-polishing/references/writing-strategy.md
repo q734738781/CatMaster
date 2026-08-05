@@ -11,7 +11,7 @@ Academic polishing is not only about style. It is also about making the reasonin
 Most strong research writing follows a `broad -> narrow -> broad` pattern:
 
 - `Introduction`: open the territory, narrow to the gap, then state the study
-- `Discussion/Conclusion`: start from the specific findings, then widen to implications and limits
+- `Discussion/Conclusion`: start from the specific findings, then widen to the strongest supported implication
 
 Use this pattern when deciding paragraph order and section scope. If a draft jumps between background, results, and implications without control, rebuild the progression first.
 
@@ -28,19 +28,19 @@ The author may draft in one order and the reader may consume in another. A usefu
 
 The practical rule for this skill is simple: organize around evidence and argumentative function, not around the chronology of the raw draft.
 
-## Claim, evidence, boundary
+## Claim, evidence, and material condition
 
-Every important scientific statement should have three parts:
+Every important scientific statement needs a claim and evidence. Add a condition only when it materially changes interpretation:
 
 1. `claim`: what is being said
 2. `evidence`: what supports it
-3. `boundary`: where the claim stops, or what uncertainty remains
+3. `material condition`: the tested regime or assumption that is indispensable to the claim, when applicable
 
 Typical failures:
 
 - claim without evidence
 - data without an explicit point
-- implication without a scope condition
+- implication broader than the evidence
 - correlation rewritten as mechanism
 
 When polishing, repair these failures before polishing rhythm.
@@ -56,7 +56,7 @@ The Introduction should answer four questions:
 3. What exact question does this study ask?
 4. How does the study address it?
 
-Do not summarize results or conclusions here.
+Preview the strongest result or capability that establishes the advance, especially when a concise quantitative result is the clearest launch signal. Do not inventory all results.
 
 ### Results
 
@@ -77,7 +77,7 @@ Discussion explains what the findings mean. It should address:
 - what has been added to understanding
 - which earlier work is being supported, revised, or complicated
 - which explanations are plausible
-- which limitations constrain the interpretation
+- why the strongest supported advance matters and, only when necessary, which precise condition changes that interpretation
 
 Discussion is the natural home for hedging.
 
@@ -97,7 +97,7 @@ Conclusion is not a mini-discussion. A strong closing usually does three things:
 
 1. restates the central contribution
 2. identifies the decisive evidence
-3. states the implication with a boundary
+3. states the evidence-supported implication as the final memory point
 
 Do not introduce new data here.
 

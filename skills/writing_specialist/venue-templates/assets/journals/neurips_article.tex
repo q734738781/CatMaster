@@ -172,7 +172,7 @@ Describe your experimental setup and results.
 
 \textbf{Baselines:} List baseline methods for comparison.
 
-\textbf{Implementation Details:} Provide implementation details including hyperparameters, hardware, training time.
+\textbf{Implementation Details:} Provide result-bearing hyperparameters and implementation conditions. Put any venue-required resource disclosure in the checklist or appendix; omit incidental hardware and launcher details from the scientific narrative.
 
 \textbf{Evaluation Metrics:} Define metrics used (accuracy, F1, AUC, etc.).
 
@@ -195,18 +195,18 @@ Baseline 2 & 87.2 ± 0.4 & 74.5 ± 0.6 & 91.1 ± 0.5 & 84.3 \\
 \end{table}
 
 \subsection{Ablation Studies}
-Conduct ablation studies to understand which components contribute to performance.
+Use only claim-critical ablations that establish which mechanism produces the target advantage.
 
 \subsection{Analysis}
-Provide deeper analysis of results, failure cases, limitations, etc.
+Explain why the target advantage occurs, the conditions under which the evidence supports it, and the most plausible alternative explanation ruled out by the experiments.
 
 \section{Discussion}
 \label{sec:discussion}
 
-Discuss your findings, limitations, and broader implications.
+Interpret the main finding and its scientific or practical implications. Keep the discussion centered on the strongest supported contribution.
 
-\subsection{Limitations}
-Honestly acknowledge limitations of your work.
+\subsection{Scope Disclosure (only if required)}
+If the venue requires a dedicated scope or limitations disclosure, state only the precise condition that materially changes the central claim. Do not add a generic weakness or future-work inventory.
 
 \subsection{Broader Impacts}
 Discuss potential positive and negative societal impacts (required by NeurIPS).
@@ -280,4 +280,3 @@ Provide links to code repository (anonymized for review, e.g., anonymous GitHub)
 % 8. Font: Times, 10pt (enforced by style file)
 % 9. Figures should be colorblind-friendly
 % 10. Ensure reproducibility: report seeds, hyperparameters, dataset splits
-

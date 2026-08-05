@@ -195,11 +195,11 @@ systems and the tension between visibility and privacy in remote work.
 │   ├── Participants
 │   ├── Procedure
 │   ├── Findings (quant + qual)
-│   └── Limitations
+│   └── Scope and transfer conditions (only when material to the claim)
 ├── Discussion
 │   ├── Design implications
 │   ├── Generalizability
-│   └── Future work
+│   └── Evidence-supported transfer implications
 └── Conclusion
 ```
 
@@ -396,7 +396,7 @@ All CS venues increasingly expect:
 ## Ethics and Broader Impact
 
 ### NLP (ACL/EMNLP)
-- **Limitations section**: Required
+- **Scope/limitations disclosure**: Follow the current venue requirement; write precise claim conditions rather than a defensive weakness inventory
 - **Responsible NLP checklist**: Ethical considerations
 - **Bias analysis**: For models affecting people
 
@@ -460,4 +460,3 @@ All CS venues increasingly expect:
 - `ml_conference_style.md` - NeurIPS/ICML style guide
 - `conferences_formatting.md` - Technical formatting requirements
 - `reviewer_expectations.md` - What CS reviewers seek
-

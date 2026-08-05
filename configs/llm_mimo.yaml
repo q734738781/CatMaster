@@ -130,6 +130,7 @@ agents:
   evidence_judge: "openai/gpt-5.5:high"
   write_director: "openai/gpt-5.5:high"
   section_writer: "xiaomi/mimo-v2-pro:high"
+  plot_worker: "xiaomi/mimo-v2-pro:high"
   write_reviewer: "openai/gpt-5.5:medium"
   academic_polisher: "google/gemini-3.1-pro-preview"
   tex_compile_fixer: "openai/gpt-5.5:medium"

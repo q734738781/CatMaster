@@ -1,6 +1,6 @@
 ---
 name: venue-templates
-description: Access comprehensive LaTeX templates, formatting requirements, and submission guidelines for major scientific publication venues (Nature, Science, PLOS, IEEE, ACM), academic conferences (NeurIPS, ICML, CVPR, CHI), research posters, and grant proposals (NSF, NIH, DOE, DARPA). This skill should be used when preparing manuscripts for journal submission, conference papers, research posters, or grant proposals and need venue-specific formatting requirements and templates.
+description: Access LaTeX templates, formatting requirements, and submission guidelines for major scientific journals, academic conferences, research posters, grant proposals, and explicitly requested professional scientific reports or white papers. Use when preparing a document that needs a venue-specific submission template or the bundled non-journal scientific-report style rather than manuscript-content planning.
 metadata:
     skill-author: K-Dense Inc.
 ---
@@ -9,9 +9,9 @@ metadata:
 
 ## Overview
 
-Access comprehensive LaTeX templates, formatting requirements, and submission guidelines for major scientific publication venues, academic conferences, research posters, and grant proposals. This skill provides ready-to-use templates and detailed specifications for successful academic submissions across disciplines.
+Access comprehensive LaTeX templates, formatting requirements, and submission guidelines for major scientific publication venues, academic conferences, research posters, grant proposals, and explicitly requested professional reports. This skill provides ready-to-use templates and detailed specifications across disciplines.
 
-Use this skill when preparing manuscripts for journal submission, conference papers, research posters, or grant proposals and need venue-specific formatting requirements and templates.
+Use this skill when preparing manuscripts for journal submission, conference papers, research posters, grant proposals, or non-journal scientific reports that need a concrete formatting system.
 
 ## When to Use This Skill
 
@@ -320,9 +320,14 @@ Review checklist:
 This skill works seamlessly with other scientific skills:
 
 ### Scientific Writing
-- Use **scientific-writing** skill for content guidance (IMRaD structure, clarity, precision)
+- Use **nature-writing** as the single manuscript-content skill for argument architecture, IMRAD, reporting standards, clarity, and precision
 - Apply venue-specific templates from this skill for formatting
 - Combine for complete manuscript preparation
+
+### Professional Scientific Reports
+- For an explicitly requested non-journal report, white paper, technical report, or policy brief, read `references/professional_report_formatting.md`.
+- Reuse `assets/reports/scientific_report.sty` and `assets/reports/scientific_report_template.tex`; the quick guide is `assets/reports/REPORT_FORMATTING_GUIDE.md`.
+- Do not apply the report template to a journal or conference manuscript, and do not add a generic limitations section merely because the legacy style exposes a compatible box environment.
 
 ### Literature Review
 - Use **literature-review** skill for systematic literature search and synthesis
@@ -354,6 +359,7 @@ This skill works seamlessly with other scientific skills:
 | **Conference Papers** | 20+ | NeurIPS, ICML, CVPR, CHI, ISMB |
 | **Research Posters** | 10+ | A0, A1, 36×48, various packages |
 | **Grant Proposals** | 15+ | NSF, NIH, DOE, DARPA, foundations |
+| **Professional Reports** | 1 reusable style system | Technical reports, white papers, policy briefs |
 
 ### By Discipline
 

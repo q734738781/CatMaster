@@ -106,6 +106,7 @@ agents:
   evidence_judge: codex-oauth-worker
   write_director: codex-oauth-main
   section_writer: codex-oauth-luna-worker
+  plot_worker: codex-oauth-luna-worker
   write_reviewer: codex-oauth-main
   academic_polisher: codex-oauth-worker
   tex_compile_fixer: codex-oauth-worker

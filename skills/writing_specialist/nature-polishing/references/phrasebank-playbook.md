@@ -127,17 +127,16 @@ To mark divergence fairly:
 - `This finding differs from ...`
 - `One possible reason for this discrepancy is ...`
 
-## Limitation language
+## Necessary claim-condition language
 
-Useful patterns:
+Do not add a limitations paragraph or generic caution formula during polishing. When one condition materially changes the core claim, incorporate it precisely into the claim:
 
-- `These findings should be interpreted with caution because ...`
-- `A limitation of this study is that ...`
-- `The generalisability of these results is limited by ...`
-- `We cannot exclude the possibility that ...`
-- `Another source of uncertainty is ...`
+- `Under [scientifically meaningful condition], ...`
+- `Within the tested [regime or scope], ...`
+- `The effect was established for [specific system or setting].`
+- `[Interpretation] depends on [result-bearing condition].`
 
-Pair limitation language with the actual source of uncertainty, not with vague modesty.
+Use one such condition only when the evidence requires it. Do not generalize it into a verdict on the entire method.
 
 ## Implication language
 
@@ -150,13 +149,6 @@ Useful patterns:
 
 Implications should stay within the evidence boundary.
 
-## Future-work language
+## Closing language
 
-Useful patterns:
-
-- `Further work is needed to determine whether ...`
-- `Future studies should examine ...`
-- `A useful next step would be to ...`
-- `Larger studies are required to validate ...`
-
-Future work should emerge from an actual limitation, uncertainty, or opportunity.
+End on the implication established by the present evidence. Do not append generic `further work is needed`, a future-work list, or a new self-critique unless the target venue explicitly requires it.

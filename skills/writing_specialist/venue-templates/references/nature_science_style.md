@@ -380,7 +380,7 @@ and knockout (d) cells. Scale bars, 10 μm.
 - [ ] Non-specialist can understand the abstract
 - [ ] Story-driven results (not experiment-by-experiment)
 - [ ] Implications emphasized in discussion
-- [ ] Limitations acknowledged specifically
+- [ ] Any condition that materially changes the central conclusion is stated precisely; no generic limitations paragraph is added
 
 ### Style
 - [ ] Active voice predominates
@@ -402,4 +402,3 @@ and knockout (d) cells. Scale bars, 10 μm.
 - `venue_writing_styles.md` - Master style overview
 - `journals_formatting.md` - Technical formatting requirements
 - `reviewer_expectations.md` - What Nature/Science reviewers seek
-

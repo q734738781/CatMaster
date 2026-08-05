@@ -1,86 +1,51 @@
-# Paper Review
+# Paper launch review
 
 ## Goal
 
-Use an adversarial, reviewer-style checklist to detect reject risks early and revise the paper before submission.
+Check whether the manuscript makes its strongest evidence-supported value unmistakable and whether every major element helps prove that value.
 
-## Core Principle
+## Core principle
 
-Pursue perfectionism in paper quality: assume reviewers will probe every weak point and proactively fix them.
+Review the paper as an editor strengthening a launch, not as an adversary compiling ways to reject it. Do not add a weakness inventory, defensive disclaimers, or new comparison obligations merely because a reviewer could hypothetically ask for them.
 
-## Critical Rule (Do Not Violate)
+## Non-negotiable integrity rule
 
-Every major claim, especially in Abstract and Introduction, must be:
+Every major claim, especially in the title, abstract, and introduction, must be technically correct and traceable to appropriate evidence. If a broad claim is unsupported, narrow or reposition it. Never alter or conceal data needed to evaluate the claim.
 
-1. technically correct, and
-2. explicitly supported by experimental evidence.
+## Launch-thesis check
 
-If a claim is not supported, either add evidence or weaken/remove the claim.
+1. Can a reader state the paper's distinctive value after the title and abstract?
+2. Does the introduction establish the important problem, decisive gap, solution, strongest result, and meaning quickly?
+3. Is the chosen contest one the work is designed to win under a scientifically meaningful condition?
+4. Are the strongest results explained explicitly rather than left for the reader to discover in a table?
 
-## What Usually Gets a Paper Accepted
+## Claim-evidence check
 
-1. Sufficient contribution (for example: novel task, novel pipeline, novel module, novel design choices, new experimental findings, or new insight).
-2. Better empirical performance than prior methods under fair comparisons.
-3. Sufficient comparison experiments and ablation studies.
+1. Does each core claim point to decisive evidence under the stated conditions?
+2. Do mechanism claims have mechanism evidence rather than correlation alone?
+3. Are comparisons limited to baselines, metrics, and settings needed for the stated contribution?
+4. Is a non-advantageous result carrying an unnecessary narrative burden that should be removed, moved, or reframed?
 
-## Common Rejection Dimensions
+## Structure and display check
 
-| Rejection Dimension          | Typical Failure Signals                                                                                                                                                                                                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1. Insufficient contribution | 1.1 Targeted failure cases are too common.<br /> 1.2 Proposed technique is already well explored; expected gains are predictable/well-known.                                                                                                                                               |
-| 2. Unclear writing           | 2.1 Missing technical details; work is not reproducible.<br />2.2 A method module lacks clear motivation.                                                                                                                                                                                  |
-| 3. Weak empirical effect     | 3.1 Improvement over prior methods is only marginal.<br /> 3.2 Even if better than previous methods, absolute performance is still not strong enough.                                                                                                                                      |
-| 4. Incomplete evaluation     | 4.1 Missing ablation studies.<br />4.2 Missing important baselines or important evaluation metrics.<br /> 4.3 Datasets are too simple to prove the method truly works.                                                                                                                    |
-| 5. Problematic method design | 5.1 Experimental setting is unrealistic.<br />5.2 Method has technical flaws and appears unreasonable.<br />5.3 Method is not robust and needs per-scenario hyperparameter tuning. <br /> 5.4 New design introduces stronger limitations than its benefits, leading to negative net value. |
+1. Does each section, paragraph, experiment, figure, and table have one clear argumentative job?
+2. Is claim-critical evidence in the main text and visually dominant?
+3. Are extended methods, exhaustive tables, robustness material, and secondary comparisons placed in Supporting Information when appropriate?
+4. Do the abstract, introduction, result order, figures, and conclusion reinforce the same memory point?
 
-## End-of-Paper Self-Review Question List
+## Defensive-writing check
 
-Add this checklist near the end of the draft while revising.
-Use each question to trigger concrete edits before submission.
+Remove project chronology, failed-attempt narration, generic limitations paragraphs, volunteered negative verdicts, reviewer-facing apologies, and implementation trivia from journal-facing prose. Retain one precise scope condition only when it materially changes the core conclusion or a venue requires it.
 
-### 1. Contribution
+## Revision workflow
 
-1. What new knowledge does this paper give to readers?
-2. Are we solving a truly meaningful failure case, not a trivial/common one?
-3. Is the technical idea genuinely non-obvious beyond well-explored practice?
-4. Is our gain surprising or insightful rather than a predictable improvement?
-5. Is there at least one clear novelty type (task/pipeline/module/design finding/insight)?
+1. Write the one-sentence launch thesis.
+2. Map each core claim to its decisive evidence.
+3. Delete or relocate material with no role in that argument.
+4. Narrow claims or change the comparison frame where the evidence does not support the original contest.
+5. Reorder sections and displays so the strongest advantage is encountered first and remembered last.
+6. Run the integrity check once more after the structural revision.
 
-### 2. Writing Clarity
-
-1. Can a knowledgeable reader reproduce the method from the paper?
-2. Did we provide enough technical detail for each key module?
-3. Is the motivation of every module explicit and logically connected to a challenge?
-4. Are terms and notation consistent across sections?
-5. Does each paragraph carry one clear message with smooth transitions?
-
-### 3. Experimental Strength
-
-1. Are improvements over strong baselines meaningful, not just statistically tiny?
-2. Is absolute performance competitive enough for the target venue?
-3. Are gains consistent across multiple datasets/settings/metrics?
-4. Do we report both strengths and failure cases honestly?
-
-### 4. Evaluation Completeness
-
-1. Do we include ablations for all key design choices?
-2. Are all strong/recent baselines included under fair settings?
-3. Are evaluation metrics standard and sufficient for this task?
-4. Are datasets/scenarios challenging enough to validate real effectiveness?
-5. Are comparison and ablation protocols clearly documented?
-
-### 5. Method Design Soundness
-
-1. Is the experimental setting realistic for practical use?
-2. Does the method have hidden technical defects or unreasonable assumptions?
-3. Is the method robust without heavy per-case hyperparameter retuning?
-4. Do benefits outweigh added complexity and new limitations?
-5. Could reviewers reasonably argue that the net benefit is negative?
-
-## Adversarial Writing Workflow
-
-1. Read the paper as a skeptical reviewer.
-2. Answer every question above with explicit evidence from the paper.
-3. Mark each item as `pass`, `needs revision`, or `needs new experiment`.
-4. Revise claims, writing, experiments, or method scope accordingly.
-5. Repeat until no major rejection risk remains.
+Review and revise while material defects remain, but do not target a preset
+number of review or polishing rounds. A clean compiled artifact and a stable
+claim-evidence argument are stopping conditions, not one more ritual pass.
