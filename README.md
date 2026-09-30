@@ -1,10 +1,34 @@
-# CatMaster
+<p align="center">
+  <img src="docs/assets/branding/catmaster-logo.png" width="180" alt="CatMaster logo: a cartoon crystal unit cell bonded to a molecular cluster">
+</p>
 
-[中文](#从研究目标出发) | [English](#start-from-a-research-objective)
+<h1 align="center">CatMaster</h1>
 
-CatMaster 是一个面向计算催化、材料建模、文献研究和科研写作的自主 Agent 工作台。它把对话、项目文件、领域 skills、可执行 tools、人工审批和受管远程计算放在同一个 workspace 中。用户可以从研究目标出发，不必先把工作拆成一串工具调用。
+<p align="center">
+  <strong>把研究问题，变成可检验的结果。</strong><br>
+  From research questions to results you can verify.
+</p>
 
-CatMaster is an autonomous agent workbench for computational catalysis, materials modeling, literature research, and scientific writing. It brings conversations, project files, domain skills, executable tools, approvals, and managed remote computation into one workspace. Users can begin with a research objective instead of scripting a sequence of tool calls.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-2D5943?style=flat-square" alt="License: Apache 2.0"></a>
+  <a href="requirements/pc-conda.yml"><img src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white" alt="Python 3.13"></a>
+  <a href="https://arxiv.org/abs/2601.13508"><img src="https://img.shields.io/badge/arXiv-2601.13508-B31B1B?style=flat-square&amp;logo=arxiv&amp;logoColor=white" alt="Paper: arXiv 2601.13508"></a>
+  <a href="docs/README.md"><img src="https://img.shields.io/badge/Docs-中文%20%7C%20English-2D5943?style=flat-square" alt="Documentation in Chinese and English"></a>
+</p>
+
+<p align="center">
+  <a href="#从研究目标出发">中文</a> ·
+  <a href="#start-from-a-research-objective">English</a> ·
+  <a href="#快速启动">快速开始</a> ·
+  <a href="docs/README.md">文档 / Docs</a> ·
+  <a href="https://arxiv.org/abs/2601.13508">论文 / Paper</a> ·
+  <a href="benchmark/README.md">Benchmarks</a> ·
+  <a href="https://github.com/q734738781/CatMaster/issues">Issues</a>
+</p>
+
+**CatMaster 是面向材料与分子科学的开源自主科研工作台。** 名字中的 Cat 取自 *Catalyst*：项目从计算催化出发，如今已拓展到材料建模、分子模拟、文献研究和科研写作。你可以带着一个研究问题、一份结构文件或已有结果开始，让 Agent 组织文献调研、执行计算、分析结果并起草科研文稿。过程中的文件、计算记录和文献依据留在工作区，方便你检查产出、调整方向，并在已有工作上继续探索。
+
+**CatMaster is an open-source autonomous research workbench for materials and molecular science.** The “Cat” comes from *Catalyst*: the project began with computational catalysis and now spans materials modeling, molecular simulation, literature research, and scientific writing. Start with a research question, a structure, or existing results. CatMaster can organize a literature review, run calculations, analyze results, and draft scientific documents, while keeping the files, calculation records, and sources available for you to inspect and build on.
 
 ## 界面预览 / UI preview
 
@@ -192,3 +216,7 @@ Core dependencies include DeepAgents, LangGraph, LangChain, FastAPI, Pydantic, R
 VASP, ORCA, CP2K, LAMMPS, xTB, CREST, VESTA, VASPKIT, and other scientific programs are configured separately. They are not licensed by CatMaster, and each deployment remains responsible for the applicable upstream license, citation, and site policy.
 
 VASP、ORCA、CP2K、LAMMPS、xTB、CREST、VESTA、VASPKIT 等科学软件需要单独配置，不随 CatMaster 获得许可。部署者需要遵守各软件的许可证、引用要求和所在机构的使用规则。
+
+> 本仓库因“不可抗拒因素”于 2026 年 9 月 30 日重构，欢迎继续支持 CatMaster！
+>
+> This repository was rebuilt on September 30, 2026, due to “circumstances beyond our control.” Thank you for your continued support of CatMaster!

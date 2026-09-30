@@ -1,0 +1,11 @@
+Generator: built-in image_gen tool (model version not exposed by the tool).
+Output: catmaster-logo.png; transparent PNG, kept as generated.
+Input: the earlier cartoon crystal-and-molecule logo, used as an edit target.
+
+Edit the provided green crystal-and-molecule icon with a SMALL STYLE ADJUSTMENT ONLY.
+
+LOCK THE EXISTING DESIGN: preserve the exact composition, perspective, scale, positions, number of atoms, every bond, the green crystal cube on the left, and the distinct three-pronged molecular branch on the right. Preserve the sage-green crystal and atoms, two golden-orange terminal atoms, one teal terminal atom, and dark green structural accents. Preserve the transparent background. Do not redesign or rearrange anything. Do not remove the molecular branch.
+
+The user likes this composition and wants just a little more rounded volume while keeping its friendly CARTOON character. Gently turn the atoms and bonds into soft matte clay-like rounded forms. Add subtle diffuse shading around their lower edges and delicate contact shadows at bond connections. Give the crystal's existing faces a soft sense of depth. Make the heavy dark outlines a little softer and less dominant, while keeping the silhouette clean and recognizable. Replace the sharp white highlight spots with broad, very soft illumination.
+
+Target style: restrained 2.5D cartoon app icon, between a flat sticker and a soft clay illustration. Only slightly more three-dimensional than the reference. Very soft studio light, matte surface, cheerful gentle color. NO shiny plastic, NO chrome or metallic bonds, NO glossy reflections, NO hard specular highlights, NO dramatic shadows, NO realistic product rendering, NO major style transformation. No new objects, no cat, no lettering, no background or floor. The result must feel like the SAME logo with a tasteful subtle refinement.
