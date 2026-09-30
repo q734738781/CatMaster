@@ -1,0 +1,1140 @@
+"""
+Slab generation and editing helpers.
+"""
+from __future__ import annotations
+
+from .batch_paths import batch_names
+
+import json
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+from pydantic import BaseModel, Field
+from pymatgen.core import Structure
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from catmaster.runtime.tool_output_adapter import CatMasterToolExecutionError
+from catmaster.structures.serialization import snapshot_to_structure
+from catmaster.structures.surfaces import generate_slab_candidates
+from catmaster.tools.base import compact_list_for_artifact, resolve_workspace_path, workspace_relpath
+from catmaster.tools.geometry_inputs.adsorbate_tool import propagate_adsorbate_metadata
+
+
+class SlabBuildInput(BaseModel):
+    """[surface/modeling] Build slabs for all terminations of a Miller index from bulk structure(s).
+
+    Provide exactly one of bulk_structure or bulk_dir. When bulk_dir is used, output_root is required.
+    Batch outputs are written under output_root/<slab_id>/..., where slab_id encodes the relative input path
+    (without suffix) using '__'.
+    """
+
+    bulk_structure: Optional[str] = Field(
+        None,
+        description="Bulk structure file (POSCAR/CIF/etc.), workspace-relative.",
+    )
+    bulk_dir: Optional[str] = Field(
+        None,
+        description="Directory containing bulk structure files for batch slab building.",
+    )
+    miller_index: List[int] = Field(..., min_length=3, max_length=3, description="Miller index [h,k,l].")
+    output_root: Optional[str] = Field(
+        None,
+        description=(
+            "Directory to write the slab structures. Required for bulk_dir; defaults to 'slabs' for single file. "
+            "For bulk_dir, outputs are written under output_root/<slab_id>/..., where slab_id encodes the relative "
+            "input path (without suffix) using '__'."
+        ),
+    )
+    slab_thickness: float = Field(12.0, ge=0.0, description="Target slab thickness (Å).")
+    vacuum_thickness: float = Field(15.0, ge=0.0, description="Vacuum thickness (Å).")
+    supercell: List[int] = Field([1, 1, 1], min_length=3, max_length=3, description="Supercell replication [a,b,c] for slab structure after generation.")
+    get_symmetry_slab: bool = Field(False, description="If true, returned slabs will ensure top and bottom surfaces are identical. Use it for surface energy calculation.")
+    orthogonal: bool = Field(
+        False,
+        description=(
+            "If true, convert each slab to an orthogonal c-oriented cell. "
+            "Project preference: use true for adsorption-ready slabs unless the native non-orthogonal "
+            "surface cell is intentionally required; keep the choice fixed across compared terminations."
+        ),
+    )
+    lll_reduce: bool = Field(
+        False,
+        description="Apply LLL reduction during slab generation. Not recommended to use unless necessary.",
+    )
+
+
+class FixAtomsByLayersInput(BaseModel):
+    """[surface/modeling] Fix (freeze) the bottom N atomic layers of slab structure(s).
+
+    Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
+    Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
+    output_dir/batch_fix_atoms_by_layers.json.
+    """
+
+    structure_ref: Optional[str] = Field(None, description="Slab structure file to modify (POSCAR/CIF).")
+    structure_dir: Optional[str] = Field(None, description="Directory containing slab structure files to modify.")
+    output_path: Optional[str] = Field(None, description="Output structure path (workspace-relative) for single file.")
+    output_dir: Optional[str] = Field(
+        None,
+        description=(
+            "Output directory for batch mode. Outputs are written as <output_dir>/<slab_id>.vasp where slab_id "
+            "encodes the relative input path (without suffix) using '__'."
+        ),
+    )
+    freeze_layers: int = Field(
+        ...,
+        ge=0,
+        description="Number of bottom layers to freeze. Use layer_tol to group layers.",
+    )
+    centralize: bool = Field(False, description="Recentre slab along c before applying constraints.")
+    layer_tol: float = Field(
+        0.2,
+        gt=0.0,
+        description="Layer grouping tolerance in Å. 0.2 is suitable for most cases except for highly tilted slabs.",
+    )
+    reverse: bool = Field(
+        False,
+        description="If false, freeze the selected layers. If true, keep the selected layers free and freeze all other atoms.",
+    )
+
+
+class ZRange(BaseModel):
+    z_min: float = Field(..., description="Lower bound (Å) in Cartesian coordinates.")
+    z_max: float = Field(..., description="Upper bound (Å) in Cartesian coordinates.")
+
+
+class FixAtomsByHeightInput(BaseModel):
+    """[surface/modeling] Fix (freeze) atoms within specified z ranges of slab structure(s).
+
+    Provide exactly one of structure_ref or structure_dir. When structure_dir is used, output_dir is required.
+    Batch outputs are written to output_dir/<slab_id>.vasp and a summary JSON is written to
+    output_dir/batch_fix_atoms_by_height.json.
+    """
+
+    structure_ref: Optional[str] = Field(None, description="Slab structure file to modify (POSCAR/CIF).")
+    structure_dir: Optional[str] = Field(None, description="Directory containing slab structure files to modify.")
+    output_path: Optional[str] = Field(None, description="Output structure path (workspace-relative) for single file.")
+    output_dir: Optional[str] = Field(
+        None,
+        description=(
+            "Output directory for batch mode. Outputs are written as <output_dir>/<slab_id>.vasp where slab_id "
+            "encodes the relative input path (without suffix) using '__'."
+        ),
+    )
+    z_ranges: List[ZRange] = Field(
+        ...,
+        min_length=1,
+        description="Ranges in Å in Cartesian coordinates; atoms in these z ranges are frozen.",
+    )
+    centralize: bool = Field(False, description="Recentre slab along c after applying constraints.")
+    reverse: bool = Field(
+        False,
+        description="If false, freeze atoms inside z_ranges. If true, keep atoms inside z_ranges free and freeze all other atoms.",
+    )
+
+
+class FixAtomsByIndicesInput(BaseModel):
+    """[surface/modeling] Fix (freeze) atoms by explicit 0-based indices for one structure or a directory batch."""
+
+    structure_ref: Optional[str] = Field(None, description="Structure file to modify (POSCAR/CIF).")
+    structure_dir: Optional[str] = Field(None, description="Directory containing structure files to modify.")
+    output_path: Optional[str] = Field(None, description="Output structure path (workspace-relative) for single file.")
+    output_dir: Optional[str] = Field(
+        None,
+        description=(
+            "Output directory for batch mode. Outputs are written as <output_dir>/<structure_id>.vasp where structure_id "
+            "encodes the relative input path (without suffix) using '__'."
+        ),
+    )
+    indices: List[int] = Field(
+        ...,
+        min_length=1,
+        description="Explicit 0-based atom indices selected by the fixing rule.",
+    )
+    reverse: bool = Field(
+        False,
+        description="If false, freeze the selected indices. If true, keep the selected indices free and freeze all other atoms.",
+    )
+
+
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _collect_structure_files(root: Path) -> List[Path]:
+    files: List[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name
+        if name in {"POSCAR", "CONTCAR"}:
+            files.append(path)
+            continue
+        if path.suffix.lower() in {".vasp", ".poscar", ".cif"}:
+            files.append(path)
+    return sorted(files, key=lambda p: str(p))
+
+
+def _slab_id_from(rel_path: Path) -> str:
+    return "__".join(rel_path.with_suffix("").parts)
+
+
+def _success(
+    tool_name: str,
+    *,
+    content: str,
+    data: dict[str, object],
+    warnings: list[str] | None = None,
+) -> tuple[str, dict[str, object]]:
+    artifact: dict[str, object] = {"tool_name": tool_name, "data": data}
+    if warnings:
+        artifact["warnings"] = warnings
+    return content, artifact
+
+
+def _failure(
+    tool_name: str,
+    *,
+    message: str,
+    data: dict[str, object] | None = None,
+    error_code: str = "",
+) -> None:
+    details: list[str] = [str(message).strip()]
+    if isinstance(data, dict):
+        for key in (
+            "bulk_dir_rel",
+            "bulk_structure_rel",
+            "structure_dir_rel",
+            "structure_ref_rel",
+            "output_root_rel",
+            "output_dir_rel",
+            "batch_json_rel",
+        ):
+            value = data.get(key)
+            if value in (None, "", [], {}):
+                continue
+            details.append(f"{key}={value}")
+    raise CatMasterToolExecutionError(
+        tool_name=tool_name,
+        public_message="\n".join(details),
+        artifact={"tool_name": tool_name, "data": data or {}},
+        error_code=error_code,
+    )
+
+
+def _build_slab_single(
+    bulk_path: Path,
+    output_root: Path,
+    *,
+    miller: tuple[int, int, int],
+    slab_thickness: float,
+    vacuum_thickness: float,
+    supercell: tuple[int, int, int],
+    get_symmetry: bool,
+    orthogonal: bool,
+    lll_reduce: bool,
+) -> Dict[str, object]:
+    structure = Structure.from_file(bulk_path)
+    structure = SpacegroupAnalyzer(structure, symprec=0.01, angle_tolerance=2.0).get_refined_structure()
+    candidates = generate_slab_candidates(
+        structure,
+        miller_index=list(miller),
+        min_slab_size=slab_thickness,
+        min_vacuum_size=vacuum_thickness,
+        center_slab=True,
+        symmetrize=get_symmetry,
+        orthogonal=orthogonal,
+        lll_reduce=lll_reduce,
+        surface_supercell=[
+            [int(supercell[0]), 0, 0],
+            [0, int(supercell[1]), 0],
+            [0, 0, int(supercell[2])],
+        ],
+    )
+    if not candidates:
+        raise ValueError("SlabGenerator returned no slabs")
+
+    _ensure_dir(output_root)
+    base = bulk_path.stem
+    emitted = []
+    for term_index, candidate in enumerate(candidates):
+        slab_copy = snapshot_to_structure(candidate["snapshot"])
+        fname = f"{base}_h{miller[0]}{miller[1]}{miller[2]}_t{term_index}.vasp"
+        out_path = output_root / fname
+        slab_copy.to(fmt="poscar", filename=out_path)
+
+        emitted.append(
+            {
+                "termination_index": term_index,
+                "slab_structure_rel": workspace_relpath(out_path),
+                "surface_area": float(candidate["surface_area"]),
+                "natoms": len(slab_copy),
+            }
+        )
+
+    return {
+        "total_terminations": len(emitted),
+        "terminations": emitted,
+    }
+
+
+def build_slab(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """
+    [surface/modeling] Build slabs for all terminations of a given Miller index. Each termination is written
+    as a separate POSCAR under output_root. Supercell expansion is applied to every termination.
+    """
+    params = SlabBuildInput(**payload)
+    if (params.bulk_structure is None) == (params.bulk_dir is None):
+        _failure(
+            "build_slab",
+            message="Provide exactly one of bulk_structure or bulk_dir.",
+            error_code="invalid_input_mode",
+        )
+    miller = tuple(int(x) for x in params.miller_index)
+    slab_thickness = float(params.slab_thickness)
+    vacuum_thickness = float(params.vacuum_thickness)
+    supercell = tuple(int(x) for x in params.supercell)
+    get_symmetry = bool(params.get_symmetry_slab)
+    orthogonal = bool(params.orthogonal)
+    lll_reduce = bool(params.lll_reduce)
+
+    if len(miller) != 3:
+        _failure(
+            "build_slab",
+            message="miller_index must have 3 integers",
+            error_code="invalid_miller_index",
+        )
+
+    if params.bulk_dir is not None:
+        if params.output_root is None:
+            _failure(
+                "build_slab",
+                message="output_root is required when bulk_dir is provided.",
+                error_code="missing_output_root",
+            )
+        bulk_root = resolve_workspace_path(params.bulk_dir, must_exist=True)
+        if not bulk_root.is_dir():
+            _failure(
+                "build_slab",
+                message=f"bulk_dir is not a directory: {bulk_root}",
+                data={"bulk_dir_rel": workspace_relpath(bulk_root)},
+                error_code="invalid_bulk_dir",
+            )
+        structures = _collect_structure_files(bulk_root)
+        if not structures:
+            _failure(
+                "build_slab",
+                message="No bulk structure files found in bulk_dir.",
+                data={"bulk_dir_rel": workspace_relpath(bulk_root)},
+                error_code="no_bulk_structures",
+            )
+        output_root = resolve_workspace_path(params.output_root)
+        _ensure_dir(output_root)
+
+        results = []
+        errors = []
+        names = batch_names(structures, bulk_root, _slab_id_from)
+        for bulk_path in structures:
+            rel_path = bulk_path.relative_to(bulk_root)
+            slab_id = names[bulk_path]
+            out_dir = output_root / slab_id
+            try:
+                result = _build_slab_single(
+                    bulk_path,
+                    out_dir,
+                    miller=miller,
+                    slab_thickness=slab_thickness,
+                    vacuum_thickness=vacuum_thickness,
+                    supercell=supercell,
+                    get_symmetry=get_symmetry,
+                    orthogonal=orthogonal,
+                    lll_reduce=lll_reduce,
+                )
+                results.append(
+                    {
+                        "bulk_rel": str(rel_path),
+                        "slab_id": slab_id,
+                        "output_dir_rel": workspace_relpath(out_dir),
+                        **result,
+                    }
+                )
+            except Exception as exc:
+                errors.append({"bulk_rel": str(rel_path), "error": str(exc)})
+
+        batch_json = output_root / "batch_build_slab.json"
+        batch_json.write_text(
+            json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        data = {
+            "bulk_dir_rel": workspace_relpath(bulk_root),
+            "output_root_rel": workspace_relpath(output_root),
+            "miller_index": list(miller),
+            "supercell": list(supercell),
+            "slab_thickness": slab_thickness,
+            "vacuum_thickness": vacuum_thickness,
+            "get_symmetry_slab": get_symmetry,
+            "orthogonal": orthogonal,
+            "lll_reduce": lll_reduce,
+            "structures_found": len(structures),
+            "structures_built": len(results),
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+            **compact_list_for_artifact(
+                results,
+                count_key="results_count",
+                inline_key="results",
+                preview_key="results_preview",
+                truncated_key="results_truncated",
+                full_rel_key="results_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+        }
+        first_output = results[0]["output_dir_rel"] if results else ""
+        lines = [
+            "build_slab completed.",
+            f"structures_built={len(results)} structures_found={len(structures)} errors={len(errors)}",
+            f"output_root_rel={data['output_root_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_dir={first_output}")
+        content = "\n".join(lines)
+        return _success("build_slab", content=content, data=data)
+
+    bulk_path = resolve_workspace_path(params.bulk_structure, must_exist=True)
+    output_root = resolve_workspace_path(params.output_root or "slabs")
+    try:
+        result = _build_slab_single(
+            bulk_path,
+            output_root,
+            miller=miller,
+            slab_thickness=slab_thickness,
+            vacuum_thickness=vacuum_thickness,
+            supercell=supercell,
+            get_symmetry=get_symmetry,
+            orthogonal=orthogonal,
+            lll_reduce=lll_reduce,
+        )
+    except Exception as exc:
+        _failure(
+            "build_slab",
+            message=f"build_slab failed: {exc}",
+            data={"bulk_structure_rel": workspace_relpath(bulk_path)},
+            error_code="build_slab_failed",
+        )
+
+    data = {
+        "miller_index": list(miller),
+        "total_terminations": result["total_terminations"],
+        "supercell": list(supercell),
+        "slab_thickness": slab_thickness,
+        "vacuum_thickness": vacuum_thickness,
+        "get_symmetry_slab": get_symmetry,
+        "orthogonal": orthogonal,
+        "lll_reduce": lll_reduce,
+        "terminations": result["terminations"],
+    }
+    lines = [
+        "build_slab completed.",
+        f"total_terminations={result['total_terminations']} miller_index={list(miller)}",
+        f"output_root_rel={workspace_relpath(output_root)}",
+    ]
+    if result["terminations"]:
+        lines.append(f"first_termination_rel={result['terminations'][0]['slab_structure_rel']}")
+    content = "\n".join(lines)
+    return _success("build_slab", content=content, data=data)
+
+def _bin_z_layers(z: np.ndarray, layer_tol: float) -> np.ndarray:
+    """
+    Assign an integer layer bin id to each z coordinate using tolerance-based binning.
+
+    Design goals:
+      - Translation-robust: binning is relative to zmin, not absolute 0.
+      - Deterministic: return integer bin ids (avoid float comparisons in sets).
+      - Tolerance semantics: points within ~layer_tol/2 tend to fall into same bin.
+
+    Parameters
+    ----------
+    z : (N,) array-like
+        Cartesian z coordinates (Å).
+    layer_tol : float
+        Layer tolerance in Å (must be > 0).
+
+    Returns
+    -------
+    bin_id : (N,) np.ndarray of int
+        Integer layer id for each atom. Bottom-most atoms are near bin 0.
+    """
+    z = np.asarray(z, dtype=float)
+    tol = float(layer_tol)
+    if tol <= 0.0:
+        raise ValueError("layer_tol must be > 0")
+
+    z0 = float(z.min())
+    # “round to nearest bin” but expressed in an integer-stable way
+    # Equivalent to round((z - z0)/tol) with half-up behavior.
+    bin_id = np.floor((z - z0) / tol + 0.5).astype(int)
+    return bin_id
+
+def _center_of_mass(slab: Structure) -> np.ndarray:
+    """
+    Calculate the center of mass of a (periodic) Structure in Cartesian coordinates (Å).
+
+    Notes
+    -----
+    - For disordered sites, masses are weighted by occupancy.
+    - For sites with species lacking atomic_mass (e.g., DummySpecie), falls back to geometric center.
+    - For periodic structures, COM depends on the chosen image (i.e., current coordinates); for slab
+      centralization along z this is typically acceptable.
+    """
+    coords = np.asarray(slab.cart_coords, dtype=float)
+
+    masses = []
+    for site in slab.sites:
+        m = 0.0
+        ok = False
+        # site.species is a Composition-like mapping: {Species/Element: occupancy}
+        for sp, occu in site.species.items():
+            try:
+                am = float(sp.atomic_mass)  # Element/Species usually has atomic_mass
+            except Exception:
+                am = float("nan")
+            if np.isfinite(am) and am > 0:
+                m += float(occu) * am
+                ok = True
+        masses.append(m if ok else float("nan"))
+
+    masses = np.asarray(masses, dtype=float)
+
+    # If any mass is NaN or total mass is non-positive, fall back to geometric center
+    if (not np.all(np.isfinite(masses))) or (float(np.nansum(masses)) <= 0.0):
+        return coords.mean(axis=0)
+
+    total_mass = float(masses.sum())
+    return (coords * masses[:, None]).sum(axis=0) / total_mass
+
+
+def _build_relax_mask_from_frozen_mask(freeze_mask: list[bool], *, reverse: bool) -> list[bool]:
+    if reverse:
+        return [bool(flag) for flag in freeze_mask]
+    return [not bool(flag) for flag in freeze_mask]
+
+
+def _apply_selective_dynamics(slab: Structure, relax_mask: list[bool]) -> None:
+    slab.add_site_property("selective_dynamics", [[bool(m), bool(m), bool(m)] for m in relax_mask])
+
+
+def _normalize_explicit_indices(indices: list[int], *, natoms: int) -> list[int]:
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for raw in indices:
+        idx = int(raw)
+        if idx < 0 or idx >= natoms:
+            raise ValueError(f"Index out of range for structure with {natoms} atoms: {idx}")
+        if idx in seen:
+            continue
+        seen.add(idx)
+        normalized.append(idx)
+    return normalized
+
+def _fix_atoms_by_layers_single(
+    structure_ref: Path,
+    output_path: Path,
+    *,
+    freeze_layers: int,
+    centralize: bool,
+    layer_tol: float,
+    reverse: bool,
+) -> Dict[str, object]:
+    slab = Structure.from_file(structure_ref)
+    if centralize:
+        z_target = float(slab.lattice.matrix[2][2]) / 2
+        z_current = _center_of_mass(slab)[2]
+        slab.translate_sites(range(len(slab)), [0, 0, z_target - z_current], frac_coords=False)
+
+    coords = slab.cart_coords[:, 2]
+    bin_ids = _bin_z_layers(coords, layer_tol)
+    unique_bins = sorted(set(bin_ids.tolist()))
+    if freeze_layers < 0 or freeze_layers > len(unique_bins):
+        raise ValueError("freeze_layers is more than layers counted")
+    freeze_bins = set(unique_bins[:freeze_layers])
+    freeze_mask = [b in freeze_bins for b in bin_ids]
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
+
+    _apply_selective_dynamics(slab, relax_mask)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    slab.to(fmt="poscar", filename=output_path)
+
+    return {
+        "input_rel": workspace_relpath(structure_ref),
+        "output_rel": workspace_relpath(output_path),
+        "relaxed_atoms": int(np.sum(relax_mask)),
+        "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
+        "frozen_layers": int(freeze_layers),
+        "total_layers": int(len(unique_bins)),
+        "reverse": bool(reverse),
+    }
+
+
+def fix_atoms_by_layers(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by counted bottom layers for one structure or a batch."""
+    params = FixAtomsByLayersInput(**payload)
+    if (params.structure_ref is None) == (params.structure_dir is None):
+        _failure(
+            "fix_atoms_by_layers",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
+        )
+
+    freeze_layers = int(params.freeze_layers)
+    centralize = bool(params.centralize)
+    layer_tol = float(params.layer_tol)
+    reverse = bool(params.reverse)
+
+    if params.structure_dir is not None:
+        if params.output_dir is None:
+            _failure(
+                "fix_atoms_by_layers",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
+            )
+        structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
+        if not structure_root.is_dir():
+            _failure(
+                "fix_atoms_by_layers",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
+            )
+        output_root = resolve_workspace_path(params.output_dir)
+        _ensure_dir(output_root)
+        structures = _collect_structure_files(structure_root)
+        if not structures:
+            _failure(
+                "fix_atoms_by_layers",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
+            )
+
+        results = []
+        errors = []
+        warnings: list[str] = []
+        names = batch_names(structures, structure_root, _slab_id_from)
+        for structure_path in structures:
+            rel_path = structure_path.relative_to(structure_root)
+            slab_id = names[structure_path]
+            output_path = output_root / f"{slab_id}.vasp"
+            try:
+                result = _fix_atoms_by_layers_single(
+                    structure_path,
+                    output_path,
+                    freeze_layers=freeze_layers,
+                    centralize=centralize,
+                    layer_tol=layer_tol,
+                    reverse=reverse,
+                )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_layers",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
+                results.append(
+                    {
+                        "input_rel": str(rel_path),
+                        "slab_id": slab_id,
+                        "output_rel": workspace_relpath(output_path),
+                        "relaxed_atoms": result["relaxed_atoms"],
+                        "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
+                    }
+                )
+            except Exception as exc:
+                errors.append({"input_rel": str(rel_path), "error": str(exc)})
+
+        batch_json = output_root / "batch_fix_atoms_by_layers.json"
+        batch_json.write_text(
+            json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        data = {
+            "structure_dir_rel": workspace_relpath(structure_root),
+            "output_dir_rel": workspace_relpath(output_root),
+            "freeze_layers": freeze_layers,
+            "layer_tol": layer_tol,
+            "centralize": centralize,
+            "reverse": reverse,
+            "structures_found": len(structures),
+            "structures_processed": len(results),
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+        }
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_layers completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
+
+    if params.output_path is None:
+        _failure(
+            "fix_atoms_by_layers",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
+        )
+    structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path)
+    try:
+        data = _fix_atoms_by_layers_single(
+            structure_ref,
+            output_path,
+            freeze_layers=freeze_layers,
+            centralize=centralize,
+            layer_tol=layer_tol,
+            reverse=reverse,
+        )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_layers",
+        )
+        if propagated:
+            data.update(propagated)
+    except Exception as exc:
+        _failure(
+            "fix_atoms_by_layers",
+            message=f"fix_atoms_by_layers failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_layers_failed",
+        )
+    content = (
+        "fix_atoms_by_layers completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"reverse={str(data['reverse']).lower()}"
+    )
+    return _success("fix_atoms_by_layers", content=content, data=data, warnings=warnings)
+
+
+def _fix_atoms_by_height_single(
+    structure_ref: Path,
+    output_path: Path,
+    *,
+    z_ranges: list[tuple[float, float]],
+    centralize: bool,
+    reverse: bool,
+) -> Dict[str, object]:
+    slab = Structure.from_file(structure_ref)
+    coords = slab.cart_coords[:, 2]
+    freeze_mask = [any(zmin <= z <= zmax for zmin, zmax in z_ranges) for z in coords]
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
+    _apply_selective_dynamics(slab, relax_mask)
+
+    if centralize:
+        z_target = float(slab.lattice.matrix[2][2]) / 2
+        z_current = _center_of_mass(slab)[2]
+        slab.translate_sites(range(len(slab)), [0, 0, z_target - z_current], frac_coords=False)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    slab.to(fmt="poscar", filename=output_path)
+
+    return {
+        "input_rel": workspace_relpath(structure_ref),
+        "output_rel": workspace_relpath(output_path),
+        "relaxed_atoms": int(np.sum(relax_mask)),
+        "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
+        "z_ranges": [[float(zmin), float(zmax)] for zmin, zmax in z_ranges],
+        "reverse": bool(reverse),
+    }
+
+
+def fix_atoms_by_height(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze slab atoms by Cartesian z ranges for one structure or a batch."""
+    params = FixAtomsByHeightInput(**payload)
+    if (params.structure_ref is None) == (params.structure_dir is None):
+        _failure(
+            "fix_atoms_by_height",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
+        )
+    if not params.z_ranges:
+        _failure(
+            "fix_atoms_by_height",
+            message="z_ranges must not be empty.",
+            error_code="empty_z_ranges",
+        )
+    z_ranges = [(float(item.z_min), float(item.z_max)) for item in params.z_ranges]
+    centralize = bool(params.centralize)
+    reverse = bool(params.reverse)
+
+    for zmin, zmax in z_ranges:
+        if zmin >= zmax:
+            _failure(
+                "fix_atoms_by_height",
+                message="Each z_range must satisfy z_min < z_max",
+                error_code="invalid_z_range",
+            )
+
+    if params.structure_dir is not None:
+        if params.output_dir is None:
+            _failure(
+                "fix_atoms_by_height",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
+            )
+        structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
+        if not structure_root.is_dir():
+            _failure(
+                "fix_atoms_by_height",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
+            )
+        output_root = resolve_workspace_path(params.output_dir)
+        _ensure_dir(output_root)
+        structures = _collect_structure_files(structure_root)
+        if not structures:
+            _failure(
+                "fix_atoms_by_height",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
+            )
+
+        results = []
+        errors = []
+        warnings: list[str] = []
+        names = batch_names(structures, structure_root, _slab_id_from)
+        for structure_path in structures:
+            rel_path = structure_path.relative_to(structure_root)
+            slab_id = names[structure_path]
+            output_path = output_root / f"{slab_id}.vasp"
+            try:
+                result = _fix_atoms_by_height_single(
+                    structure_path,
+                    output_path,
+                    z_ranges=z_ranges,
+                    centralize=centralize,
+                    reverse=reverse,
+                )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_height",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
+                results.append(
+                    {
+                        "input_rel": str(rel_path),
+                        "slab_id": slab_id,
+                        "output_rel": workspace_relpath(output_path),
+                        "relaxed_atoms": result["relaxed_atoms"],
+                        "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
+                    }
+                )
+            except Exception as exc:
+                errors.append({"input_rel": str(rel_path), "error": str(exc)})
+
+        batch_json = output_root / "batch_fix_atoms_by_height.json"
+        batch_json.write_text(
+            json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        data = {
+            "structure_dir_rel": workspace_relpath(structure_root),
+            "output_dir_rel": workspace_relpath(output_root),
+            "z_ranges": [[float(zmin), float(zmax)] for zmin, zmax in z_ranges],
+            "centralize": centralize,
+            "reverse": reverse,
+            "structures_found": len(structures),
+            "structures_processed": len(results),
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+        }
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_height completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
+
+    if params.output_path is None:
+        _failure(
+            "fix_atoms_by_height",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
+        )
+    structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path)
+    try:
+        data = _fix_atoms_by_height_single(
+            structure_ref,
+            output_path,
+            z_ranges=z_ranges,
+            centralize=centralize,
+            reverse=reverse,
+        )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_height",
+        )
+        if propagated:
+            data.update(propagated)
+    except Exception as exc:
+        _failure(
+            "fix_atoms_by_height",
+            message=f"fix_atoms_by_height failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_height_failed",
+        )
+    content = (
+        "fix_atoms_by_height completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"reverse={str(data['reverse']).lower()}"
+    )
+    return _success("fix_atoms_by_height", content=content, data=data, warnings=warnings)
+
+
+def _fix_atoms_by_indices_single(
+    structure_ref: Path,
+    output_path: Path,
+    *,
+    indices: list[int],
+    reverse: bool,
+) -> Dict[str, object]:
+    slab = Structure.from_file(structure_ref)
+    normalized_indices = _normalize_explicit_indices(indices, natoms=len(slab))
+    selected = set(normalized_indices)
+    freeze_mask = [idx in selected for idx in range(len(slab))]
+    relax_mask = _build_relax_mask_from_frozen_mask(freeze_mask, reverse=reverse)
+    _apply_selective_dynamics(slab, relax_mask)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    slab.to(fmt="poscar", filename=output_path)
+
+    return {
+        "input_rel": workspace_relpath(structure_ref),
+        "output_rel": workspace_relpath(output_path),
+        "indices": normalized_indices,
+        "index_base": 0,
+        "reverse": bool(reverse),
+        "selected_atoms": int(len(normalized_indices)),
+        "relaxed_atoms": int(np.sum(relax_mask)),
+        "frozen_atoms": int(len(relax_mask) - np.sum(relax_mask)),
+    }
+
+
+def fix_atoms_by_indices(payload: Dict[str, object]) -> tuple[str, dict[str, object]]:
+    """[surface/modeling] Freeze atoms by explicit 0-based indices for one structure or a batch."""
+    params = FixAtomsByIndicesInput(**payload)
+    if (params.structure_ref is None) == (params.structure_dir is None):
+        _failure(
+            "fix_atoms_by_indices",
+            message="Provide exactly one of structure_ref or structure_dir.",
+            error_code="invalid_input_mode",
+        )
+
+    indices = [int(item) for item in params.indices]
+    reverse = bool(params.reverse)
+
+    if params.structure_dir is not None:
+        if params.output_dir is None:
+            _failure(
+                "fix_atoms_by_indices",
+                message="output_dir is required when structure_dir is provided.",
+                error_code="missing_output_dir",
+            )
+        structure_root = resolve_workspace_path(params.structure_dir, must_exist=True)
+        if not structure_root.is_dir():
+            _failure(
+                "fix_atoms_by_indices",
+                message=f"structure_dir is not a directory: {structure_root}",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="invalid_structure_dir",
+            )
+        output_root = resolve_workspace_path(params.output_dir)
+        _ensure_dir(output_root)
+        structures = _collect_structure_files(structure_root)
+        if not structures:
+            _failure(
+                "fix_atoms_by_indices",
+                message="No structure files found in structure_dir.",
+                data={"structure_dir_rel": workspace_relpath(structure_root)},
+                error_code="no_structures",
+            )
+
+        results = []
+        errors = []
+        warnings: list[str] = []
+        names = batch_names(structures, structure_root, _slab_id_from)
+        for structure_path in structures:
+            rel_path = structure_path.relative_to(structure_root)
+            structure_id = names[structure_path]
+            output_path = output_root / f"{structure_id}.vasp"
+            try:
+                result = _fix_atoms_by_indices_single(
+                    structure_path,
+                    output_path,
+                    indices=indices,
+                    reverse=reverse,
+                )
+                propagated, propagate_warnings = propagate_adsorbate_metadata(
+                    input_structure_path=structure_path,
+                    output_structure_path=output_path,
+                    tool_name="fix_atoms_by_indices",
+                )
+                if propagated:
+                    result.update(propagated)
+                warnings.extend([f"{workspace_relpath(structure_path)}: {msg}" for msg in propagate_warnings])
+                results.append(
+                    {
+                        "input_rel": str(rel_path),
+                        "structure_id": structure_id,
+                        "output_rel": workspace_relpath(output_path),
+                        "relaxed_atoms": result["relaxed_atoms"],
+                        "frozen_atoms": result["frozen_atoms"],
+                        **({"metadata_rel": result["metadata_rel"]} if "metadata_rel" in result else {}),
+                    }
+                )
+            except Exception as exc:
+                errors.append({"input_rel": str(rel_path), "error": str(exc)})
+
+        batch_json = output_root / "batch_fix_atoms_by_indices.json"
+        batch_json.write_text(
+            json.dumps({"results": results, "errors": errors}, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        data = {
+            "structure_dir_rel": workspace_relpath(structure_root),
+            "output_dir_rel": workspace_relpath(output_root),
+            "indices": indices,
+            "index_base": 0,
+            "reverse": reverse,
+            "structures_found": len(structures),
+            "structures_processed": len(results),
+            "batch_json_rel": workspace_relpath(batch_json) if batch_json.exists() else None,
+            "errors_count": len(errors),
+            **compact_list_for_artifact(
+                errors,
+                count_key="errors_count",
+                inline_key="errors",
+                preview_key="errors_preview",
+                truncated_key="errors_truncated",
+                full_rel_key="errors_full_rel",
+                full_rel=workspace_relpath(batch_json) if batch_json.exists() else None,
+            ),
+        }
+        first_output = results[0]["output_rel"] if results else ""
+        lines = [
+            "fix_atoms_by_indices completed.",
+            f"structures_processed={len(results)} structures_found={len(structures)} errors_count={len(errors)}",
+            f"output_dir_rel={data['output_dir_rel']}",
+        ]
+        if data["batch_json_rel"]:
+            lines.append(f"batch_json_rel={data['batch_json_rel']}")
+        if first_output:
+            lines.append(f"first_output_rel={first_output}")
+        content = "\n".join(lines)
+        return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
+
+    if params.output_path is None:
+        _failure(
+            "fix_atoms_by_indices",
+            message="output_path is required when structure_ref is provided.",
+            error_code="missing_output_path",
+        )
+    structure_ref = resolve_workspace_path(params.structure_ref, must_exist=True)
+    output_path = resolve_workspace_path(params.output_path)
+    try:
+        data = _fix_atoms_by_indices_single(
+            structure_ref,
+            output_path,
+            indices=indices,
+            reverse=reverse,
+        )
+        propagated, warnings = propagate_adsorbate_metadata(
+            input_structure_path=structure_ref,
+            output_structure_path=output_path,
+            tool_name="fix_atoms_by_indices",
+        )
+        if propagated:
+            data.update(propagated)
+    except Exception as exc:
+        _failure(
+            "fix_atoms_by_indices",
+            message=f"fix_atoms_by_indices failed: {exc}",
+            data={"structure_ref_rel": workspace_relpath(structure_ref)},
+            error_code="fix_by_indices_failed",
+        )
+    content = (
+        "fix_atoms_by_indices completed.\n"
+        f"input_rel={data['input_rel']} output_rel={data['output_rel']} "
+        f"frozen_atoms={data['frozen_atoms']} relaxed_atoms={data['relaxed_atoms']} "
+        f"selected_atoms={data['selected_atoms']} index_base=0 reverse={str(data['reverse']).lower()}\n"
+        "Full constraints are stored in the output POSCAR selective_dynamics flags."
+    )
+    return _success("fix_atoms_by_indices", content=content, data=data, warnings=warnings)
+
+
+__all__ = [
+    "SlabBuildInput",
+    "FixAtomsByLayersInput",
+    "ZRange",
+    "FixAtomsByHeightInput",
+    "build_slab",
+    "fix_atoms_by_layers",
+    "fix_atoms_by_height",
+]

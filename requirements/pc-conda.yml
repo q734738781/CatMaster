@@ -1,0 +1,113 @@
+name: catmaster
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Keep the PC/control-plane environment complete.
+  - python=3.13
+  - pip
+
+  # Core scientific stack. Let conda solve compatible builds; keep the
+  # constraints that avoid currently known package-family conflicts.
+  - numpy=2.4.6
+  - scipy
+  - pandas<3
+  - joblib
+  - seaborn
+  - matplotlib
+  - beautifulsoup4=4.15.0
+  - pyyaml
+  - ruamel.yaml
+
+  # Atomistic modeling / materials.
+  - ase=3.29.0
+  - pymatgen=2026.5.4
+  - phonopy
+  - mp-api=0.46.4
+  - emmet-core=0.87.1
+  - rdkit=2026.3.3
+
+  # Machine learning / descriptors used by CatMaster workflows.
+  - scikit-learn
+  - xgboost
+  - umap-learn
+  - optuna
+  - matminer
+  - pysr=1.5.10
+  - faiss-cpu
+
+  # Remote/control-plane packages with native or crypto dependencies.
+  - paramiko
+
+  # WebUI frontend toolchain. Keep Node in the same environment so backend,
+  # tests, and frontend rebuilds survive machine-level Node/npm changes.
+  - nodejs>=22,<25
+  - pandoc=3.9.0.2
+  - cairo=1.18.4
+
+  # Fast-moving LLM/WebUI/runtime packages are installed by pip but kept in
+  # this single conda environment file so local setup has one source of truth.
+  - pip:
+      # LLM / agent runtime: exact pins because CatMaster adapts provider payloads.
+      - openai==2.53.0
+      - openrouter==0.11.1
+      - langchain==1.4.0
+      - langchain-core==1.6.2
+      - langchain-openai==1.6.0
+      - langchain-openrouter==0.2.7
+      - langchain-anthropic==1.7.0
+      - langchain-deepseek==1.1.0
+      - langchain-google-genai==4.3.7
+      - dbos==2.31.0
+      - langgraph==1.2.11
+      # DBOS owns the local durable queue; native LangGraph owns checkpoints.
+      # CatMaster owns the explicit Todo, filesystem, and prompt contracts.
+      - deepagents==0.7.11
+      - langchain-mcp-adapters==0.3.1
+      # The adapter has no upper MCP bound; keep the unvalidated 2.0 API out.
+      - mcp==1.29.0
+      - langgraph-checkpoint-sqlite==3.1.1
+      - aiosqlite==0.22.1
+
+      # LLM-adjacent HTTP/search packages used by runtime integrations.
+      - httpx==0.28.1
+      - pypdf==6.14.2
+      - scansci-pdf==1.14.0
+      - patchright==1.62.2
+      - cloakbrowser==0.5.10
+      - tavily-python==0.7.23
+
+      # Office authoring plus bounded fallback parsing behind DeepAgents read_file.
+      - python-docx==1.2.0
+      - openpyxl==3.1.5
+      - python-pptx==1.0.2
+      - defusedxml==0.7.1
+
+      # EasySlides runtime dependencies. Its non-PyPI scripts/templates are
+      # preinstalled with: python scripts/install_easyslides.py
+      - CairoSVG==2.9.1
+      - svglib==2.2.0
+      - reportlab==5.0.0
+      - PyMuPDF==1.28.2
+      - Pillow==12.3.0
+      - lxml==6.1.1
+      - mammoth==1.12.2
+      - markdownify==1.2.3
+      - ebooklib==0.20
+      - nbconvert==7.17.1
+      - requests==2.34.2
+      - curl_cffi==0.16.3
+      - google-genai==2.10.0
+      - Flask==3.1.3
+      - edge-tts==7.2.8
+
+      # WebUI/API server and schema layer.
+      - fastapi==0.139.0
+      - uvicorn==0.50.2
+      - pydantic==2.12.5
+
+      # Remote execution / HPC control plane.
+      - dpdispatcher==1.0.0
+
+      # Test runner used for CatMaster compatibility checks.
+      - pytest==9.1.1

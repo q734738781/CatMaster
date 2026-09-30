@@ -1,0 +1,14 @@
+ -->> (04) Calculating Thermal Corrections...
+ U(T) = ZPE + Delta_U(0->T)
+ H(T) = U(T) + PV = ZPE + Delta_U(0->T) + PV
+ G(T) = H(T) - TS = ZPE + Delta_U(0->T) + PV - TS
+
+ Temperature (T)           :       623.0 K
+ Pressure (P)              :  101325.000 Pa
+ Spin-Multiplicity (S)     :       1
+ Zero-point energy E_ZPE   :      94.671 kcal/mol    4.105209 eV
+ Thermal correction to U(T):     114.382 kcal/mol    4.959939 eV
+ Thermal correction to H(T):     115.620 kcal/mol    5.013624 eV
+ Thermal correction to G(T):      40.517 kcal/mol    1.756929 eV
+ Entropy S                 :     504.384 J/(mol*K)   0.005227 eV/K
+ Entropy contribution T*S  :  314231.280 J/(mol)     3.256695 eV

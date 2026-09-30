@@ -1,0 +1,76 @@
+---
+name: neb-calculation
+description: "Use this skill for the execution stage of NEB and dimer workflows, especially the detailed run protocol for plain-NEB to CI-NEB refinement or NEB/frequency/dimer refinement."
+---
+
+# neb-calculation
+
+## Overview
+Use this skill once the pathway inputs are already prepared and the question is how to run them robustly. It covers the two common execution branches: `plain-NEB -> CI-NEB` and `NEB or TS guess -> frequency/mode guess -> dimer`. For image generation and dimer input assembly, use `neb-prepare`. For post-run barrier interpretation and QC, use `neb-analysis`.
+
+## Quick Start
+1. Decide whether the task is a NEB refinement workflow or a dimer-refinement workflow.
+2. Confirm the prepared root, execution branch, climb policy, dtype, output root, and whether the run is coarse convergence or refinement.
+3. Dispatch the prepared calculation root through `remote_submission` or `remote_submission_batch`, normally with `task_name="vasp_execute_neb"` for VASP pathway work.
+4. For MLFF pathway optimization, use `mlff-path-optimization` and submit the complete local path with `task_name="mlff_neb"`.
+5. Keep coarse convergence and refinement as separate episodes instead of mixing them into one opaque run root.
+
+## Allowed tools
+- `get_avail_remote_task`
+- `get_remote_task_spec`
+- `remote_submission`
+- `remote_submission_batch`
+
+## Workflow
+
+### 1. Default NEB route: coarse `plain-NEB`, then `CI-NEB`
+- Do not use managed NEB execution as a diagnostic for missing preparation. If image trees, endpoint provenance, or dimer modes are uncertain, return to `neb-prepare` first.
+- A NEB tree that carries an overlap/short-distance preparation warning is very likely to contain abnormal interpolation. In CatMaster tools, `short_distance_count > 0` means at least one image has a minimum interatomic distance below the configured threshold, default `0.8 Å`; verify or remediate the image tree before deciding to submit.
+- Start from a prepared NEB root with climbing image disabled.
+- Run a coarse plain `NEB` first to localize the band and reduce gross path noise.
+- Once the band is reasonably converged, restart from those coarse-converged images with climbing image enabled for `CI-NEB` refinement.
+- Do not present a direct first-shot climbing-image run as the default; use it only when the saddle is already well localized and the task has a reason to skip the coarse stage.
+
+### 2. Keep refinement episodes explicit
+- Keep the coarse plain-`NEB` run and the `CI-NEB` refinement run in separate output roots.
+- Do not change image count, endpoint definition, and convergence strategy all at once if you expect to compare outcomes scientifically.
+- Record which stage produced which artifact; “NEB completed” is not enough.
+
+### 3. Dimer route: NEB or TS guess, then frequency-guided mode, then dimer
+- Use this route when the goal is TS refinement rather than only a band profile.
+- A common pattern is:
+  `coarse NEB or TS guess -> frequency/mode estimate -> dimer refinement`.
+- The practical role of the frequency/mode step is to produce a chemically meaningful reaction-direction guess before launching the dimer.
+- If the initial mode guess is poor, fix the mode selection rather than blindly rerunning the same dimer job.
+
+### 4. Dispatch details for VASP pathway jobs
+- Prefer `task_name="vasp_execute_neb"` for NEB or dimer-style VASP runs so they use the dedicated submission preset rather than the generic VASP one.
+- Report the prepared root, task name, and output root together.
+- Treat launch success as only one checkpoint; it does not prove the pathway is physically meaningful.
+
+### 5. Managed MLFF NEB
+- Use `task_name="mlff_neb"`; for a non-default backend, query `get_remote_task_spec(task_name="mlff_neb", template_overrides={"backend": "<enabled-backend>"}, detail="full")` before setting backend or convergence overrides.
+- Copy one locally interpolated flat image tree into `stage/input/path/`, with contiguous `00.vasp` through `NN.vasp` files. Endpoint-only input is invalid.
+- Use `remote_submission_batch` for independent paths sharing a task/config. Each selected stage is one complete path: first-level children by default, or explicit relative `stage_paths` for a subset or nested layout.
+- Keep `float64` by default for MACE pathway optimization and use fixed-image plain mode. Remote AutoNEB interpolation is unsupported.
+- Keep `climb` as an explicit refinement decision rather than an implicit default.
+
+## Method-critical defaults
+- `plain-NEB -> CI-NEB` is the default robust VASP barrier workflow.
+- Do not enable climbing image in the first rough-convergence stage unless there is a clear reason.
+- If the workflow takes the dimer branch, keep the mode-generation evidence explicit; dimer runs without a credible reaction direction are weakly interpretable.
+- Keep `default_dtype=float64` as the default for MACE geometry/path optimization; only use `float32` when the run is explicitly exploratory.
+- For pathway work, separate preparation, execution, and analysis artifacts cleanly.
+- Before dispatch, verify endpoint ordering and image-distance QC; launch success does not repair an overlapped band.
+
+## Output Contract
+Return:
+- which branch was run (`plain_neb`, `cineb_refinement`, `dimer_refinement`, `mace_neb`, or similar)
+- execution root and submission evidence
+- whether the run was coarse convergence or refinement
+- any follow-up action the next stage should take
+
+## References
+- Use `neb-prepare` before this skill if the image tree or dimer inputs are not ready yet.
+- Use `neb-analysis` after collection to interpret the barrier, profile shape, and common pitfalls.
+- Use `mlff-path-optimization` for the complete operation-specific managed MLFF protocol.

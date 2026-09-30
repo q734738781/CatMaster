@@ -1,0 +1,29 @@
+Use case: infographic-diagram
+Asset type: English architecture comparison figure for CatMaster's README and research presentation.
+Primary request: Generate one polished, publication-quality explanatory diagram comparing agent communication WITHOUT ASYNC and WITH ASYNC. The main message is that parallel workers alone are not non-blocking agent orchestration. CatMaster has one user-facing root conversation; independent background specialist runs send completion notifications that trigger serialized coordinator turns for result integration. No private scientific project content.
+
+Canvas and style: high-resolution wide landscape approximately 16:9, white background, restrained dark charcoal typography with muted green and slate accents, crisp vector-like lines, rounded rectangles, generous margins and white space. Professional scientific software diagram, not a screenshot, not 3D, no mascots, no photorealism, no excessive decorations. All text English, large and impeccably legible. No speedup numbers or fabricated benchmarks.
+
+Title at top, verbatim: "Async agent communication"
+Small subtitle, verbatim: "CatMaster | Parallel work, non-blocking coordination"
+
+Composition: two equal side-by-side panels separated by a thin vertical rule. Each panel is a clean swimlane timeline, time flows LEFT TO RIGHT within that panel. Four lanes in identical order: "Coordinator", "Literature", "Experiment A", "Experiment B". Keep these labels clearly separated from arrows and bars. The three worker tasks are independent. Use the SAME worker bar lengths and start times in both panels, visibly overlapping, to avoid falsely implying that synchronous calls cannot be parallel. Literature is the shortest, Experiment A medium, Experiment B longest. A small unnumbered arrow below each set of lanes is labeled "Time".
+
+LEFT PANEL:
+Heading verbatim: "WITHOUT ASYNC"
+Subheading verbatim: "Blocking batch"
+Coordinator lane: small "Dispatch" block at beginning, long pale-gray hatched waiting bar labeled "Waiting for all results", then small "Synthesize" block after the LAST worker finishes. Solid outbound arrows show dispatch to all three worker lanes. Show a clearly labeled "Join" barrier where all worker results are gathered before returning to the coordinator; faster workers do not free the parent. The wait region must look idle, not like active useful execution.
+Caption below this panel, verbatim: "Parallel workers, blocked coordinator"
+
+RIGHT PANEL:
+Heading verbatim: "WITH ASYNC"
+Subheading verbatim: "Independent background runs"
+Coordinator lane: small "Dispatch" block, then separated, NON-OVERLAPPING active segments such as "Continue", "Integrate", "Respond", "Integrate". Pale green spaces between these segments indicate availability; no implication of multiple simultaneous writers in one thread. Solid dispatch arrows fan out to the same three worker lanes. Each worker ends with its OWN dashed return arrow to a subsequent coordinator segment, representing a completion notification. Do NOT add a wait-for-all join barrier on the right. A small chat bubble labeled "User follow-up" points to "Respond" while the longest worker is still running. Place a compact label "Completion notifications" near the dashed return arrows. Parent integrates returned results; workers do not directly overwrite the coordinator. Preserve clear arrowheads, minimal crossings, and accurate time ordering.
+Caption below this panel, verbatim: "Responsive coordinator, incremental integration"
+
+Small shared legend: solid arrow "Task dispatch"; dashed arrow "Result notification".
+A narrow, tasteful bottom annotation for the right-side semantics: "One root conversation | Independent child threads | Serialized coordinator turns"
+Bottom takeaway in medium-weight type, verbatim: "Overlap independent work while keeping the conversation responsive."
+Small footnote, verbatim: "Conceptual timing; concurrency depends on resources and task dependencies."
+
+Accuracy constraints: left workers ARE parallel, parent IS waiting; right workers ARE independent background runs and may complete at different times, right parent acts between completions. Do not depict a faster individual computation or guaranteed acceleration. No labels claiming unrestricted inter-agent messaging. Do not draw direct worker-to-worker chatter. Single root coordinator in each panel, all task results return there. Fit all labels comfortably inside the canvas. Prioritize instantly readable temporal relationships over decoration.

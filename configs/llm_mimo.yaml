@@ -1,0 +1,164 @@
+# LLM configuration for CatMaster.
+# Secrets (API keys) should come from environment variables.
+
+models:
+  "openai/gpt-5.5:medium":
+    provider: openrouter
+    model: openai/gpt-5.5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    default_headers: {}
+
+  "openai/gpt-5.5:xhigh":
+    provider: openrouter
+    model: openai/gpt-5.5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: high
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    default_headers: {}
+
+  "openai/gpt-5.5:high":
+    provider: openrouter
+    model: openai/gpt-5.5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    default_headers: {}
+  "openai/gpt-5.3-codex:high":
+    provider: openrouter
+    model: openai/gpt-5.3-codex
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: medium
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    default_headers: {}
+  "openai/gpt-5.5:minimal":
+    provider: openrouter
+    model: openai/gpt-5.5
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+    reasoning:
+      effort: minimal
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    default_headers: {}
+
+  "openai/gpt-5.4-mini":
+    provider: openrouter
+    model: openai/gpt-5.4-mini
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+
+  "google/gemini-3-flash-preview":
+    provider: openrouter
+    model: google/gemini-3-flash-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: minimal
+
+  "google/gemini-3.1-pro-preview":
+    provider: openrouter
+    model: google/gemini-3.1-pro-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+    provider_options:
+      openrouter:
+        extra_body:
+          provider:
+            order: [google-ai-studio]
+            allow_fallbacks: false
+
+  "xiaomi/mimo-v2-pro:high":
+    provider: openrouter
+    model: xiaomi/mimo-v2-pro
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+
+  "google/nanobanana_2":
+    provider: openrouter
+    model: google/gemini-3.1-flash-image-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+
+agents:
+  proposal: "xiaomi/mimo-v2-pro:high"
+  director: "xiaomi/mimo-v2-pro:high"
+  task_runner: "xiaomi/mimo-v2-pro:high"
+  research_lead: "openai/gpt-5.5:high"
+  research_state_updater: "openai/gpt-5.5:high"
+  research_challenger: "openai/gpt-5.5:high"
+  evidence_judge: "openai/gpt-5.5:high"
+  write_director: "openai/gpt-5.5:high"
+  section_writer: "xiaomi/mimo-v2-pro:high"
+  plot_worker: "xiaomi/mimo-v2-pro:high"
+  write_reviewer: "openai/gpt-5.5:medium"
+  tex_compile_fixer: "openai/gpt-5.5:medium"
+  image_analyzer: "openai/gpt-5.5:medium"
+  literature_deep_research: "openai/gpt-5.5:high"
+  memory_patch: "openai/gpt-5.5:medium"
+  tool_selector: "openai/gpt-5.4-mini"
+  summary: "google/gemini-3-flash-preview"
+
+peer_review_models:
+  - "google/gemini-3.1-pro-preview"
+
+image_generation:
+  model_label: "google/nanobanana_2"
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: "CatMaster"
+
+agent_runtime:
+  print_state_messages: true
+  print_http_raw_post: false
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
+
+literature:
+  public_web_on_search_failure: true
+  semantic_scholar_retry_429_attempts: 5
+  semantic_scholar_retry_429_wait_seconds: 15.0

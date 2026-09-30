@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+RunContext manages per-run metadata and standardized run directory layout.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+import json
+import uuid
+
+from catmaster.tools.base import ensure_project_space_layout, project_space_root, system_root
+
+
+def _default_project_id() -> str:
+    stamp = datetime.utcnow().strftime("%Y%m%d")
+    return f"project_{stamp}_{uuid.uuid4().hex[:8]}"
+
+
+def _default_run_id() -> str:
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return f"run_{stamp}_{uuid.uuid4().hex[:6]}"
+
+
+@dataclass(frozen=True)
+class RunContext:
+    project_id: str
+    run_id: str
+    workspace: Path
+    run_dir: Path
+    model_name: str
+    provider: Optional[str]
+    base_url: Optional[str]
+    driver_kind: Optional[str]
+    start_time: str
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        workspace: Optional[Path] = None,
+        run_dir: Optional[Path] = None,
+        project_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        model_name: str = "unknown",
+        provider: Optional[str] = None,
+        base_url: Optional[str] = None,
+        driver_kind: Optional[str] = None,
+    ) -> "RunContext":
+        ws = Path(workspace).expanduser().resolve() if workspace is not None else Path.cwd().resolve()
+        ensure_project_space_layout(ws, create=True)
+        project_id = project_id or _default_project_id()
+        explicit_run_id = str(run_id or "").strip()
+        run_id = explicit_run_id or _default_run_id()
+        resolved_run_dir = (
+            Path(run_dir).expanduser().resolve()
+            if run_dir
+            else (system_root(workspace=ws) / "runs" / run_id).resolve()
+        )
+        sys_root = system_root(workspace=ws).resolve()
+        try:
+            resolved_run_dir.relative_to(sys_root)
+        except ValueError:
+            raise ValueError(f"run_dir must be under system root: {resolved_run_dir}")
+        resolved_run_dir.parent.mkdir(parents=True, exist_ok=True)
+        if run_dir is None and not explicit_run_id:
+            for _attempt in range(16):
+                try:
+                    resolved_run_dir.mkdir(exist_ok=False)
+                    break
+                except FileExistsError:
+                    run_id = _default_run_id()
+                    resolved_run_dir = (
+                        system_root(workspace=ws) / "runs" / run_id
+                    ).resolve()
+            else:
+                raise FileExistsError(
+                    "could not allocate an exclusive run directory after repeated run ID collisions"
+                )
+        else:
+            resolved_run_dir.mkdir(exist_ok=False)
+        start_time = datetime.utcnow().isoformat() + "Z"
+        ctx = cls(
+            project_id=project_id,
+            run_id=run_id,
+            workspace=ws,
+            run_dir=resolved_run_dir,
+            model_name=model_name,
+            provider=provider,
+            base_url=base_url,
+            driver_kind=driver_kind,
+            start_time=start_time,
+        )
+        ctx.write_meta()
+        return ctx
+
+    @classmethod
+    def load(cls, run_dir: Path) -> "RunContext":
+        resolved_run_dir = Path(run_dir).expanduser().resolve()
+        meta_path = resolved_run_dir / "meta.json"
+        if not meta_path.exists():
+            raise FileNotFoundError(f"run meta not found: {meta_path}")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        workspace_value = meta.get("workspace")
+        if not workspace_value:
+            raise ValueError("run meta missing workspace")
+        ws = project_space_root(workspace_value)
+        ensure_project_space_layout(ws, create=False)
+        sys_root = system_root(workspace=ws).resolve()
+        try:
+            resolved_run_dir.relative_to(sys_root)
+        except ValueError:
+            raise ValueError(f"run_dir must be under system root: {resolved_run_dir}")
+        return cls(
+            project_id=meta.get("project_id") or _default_project_id(),
+            run_id=meta.get("run_id") or _default_run_id(),
+            workspace=ws,
+            run_dir=resolved_run_dir,
+            model_name=meta.get("model_name") or "unknown",
+            provider=meta.get("provider"),
+            base_url=meta.get("base_url"),
+            driver_kind=meta.get("driver_kind"),
+            start_time=meta.get("start_time") or datetime.utcnow().isoformat() + "Z",
+        )
+
+    def meta(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "run_id": self.run_id,
+            "workspace": str(self.workspace),
+            "model_name": self.model_name,
+            "provider": self.provider,
+            "base_url": self.base_url,
+            "driver_kind": self.driver_kind,
+            "start_time": self.start_time,
+        }
+
+    def write_meta(self) -> None:
+        meta_path = self.run_dir / "meta.json"
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(json.dumps(self.meta(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+__all__ = ["RunContext"]

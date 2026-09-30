@@ -1,0 +1,215 @@
+{
+  "results": [
+    {
+      "input_rel": "mp-1184054_h100_t0.vasp",
+      "structure_id": "mp-1184054_h100_t0",
+      "output_rel": "slabs_sc/mp-1184054_h100_t0.vasp",
+      "natoms": 128
+    },
+    {
+      "input_rel": "mp-1184054_h110_t0.vasp",
+      "structure_id": "mp-1184054_h110_t0",
+      "output_rel": "slabs_sc/mp-1184054_h110_t0.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-1184054_h110_t1.vasp",
+      "structure_id": "mp-1184054_h110_t1",
+      "output_rel": "slabs_sc/mp-1184054_h110_t1.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-1184054_h111_t0.vasp",
+      "structure_id": "mp-1184054_h111_t0",
+      "output_rel": "slabs_sc/mp-1184054_h111_t0.vasp",
+      "natoms": 184
+    },
+    {
+      "input_rel": "mp-1184054_h111_t1.vasp",
+      "structure_id": "mp-1184054_h111_t1",
+      "output_rel": "slabs_sc/mp-1184054_h111_t1.vasp",
+      "natoms": 184
+    },
+    {
+      "input_rel": "mp-1186117_h100_t0.vasp",
+      "structure_id": "mp-1186117_h100_t0",
+      "output_rel": "slabs_sc/mp-1186117_h100_t0.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-1186117_h100_t1.vasp",
+      "structure_id": "mp-1186117_h100_t1",
+      "output_rel": "slabs_sc/mp-1186117_h100_t1.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-1186117_h110_t0.vasp",
+      "structure_id": "mp-1186117_h110_t0",
+      "output_rel": "slabs_sc/mp-1186117_h110_t0.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-1186117_h110_t1.vasp",
+      "structure_id": "mp-1186117_h110_t1",
+      "output_rel": "slabs_sc/mp-1186117_h110_t1.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-1186117_h111_t0.vasp",
+      "structure_id": "mp-1186117_h111_t0",
+      "output_rel": "slabs_sc/mp-1186117_h111_t0.vasp",
+      "natoms": 96
+    },
+    {
+      "input_rel": "mp-12086_h100_t0.vasp",
+      "structure_id": "mp-12086_h100_t0",
+      "output_rel": "slabs_sc/mp-12086_h100_t0.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-12086_h100_t1.vasp",
+      "structure_id": "mp-12086_h100_t1",
+      "output_rel": "slabs_sc/mp-12086_h100_t1.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-12086_h110_t0.vasp",
+      "structure_id": "mp-12086_h110_t0",
+      "output_rel": "slabs_sc/mp-12086_h110_t0.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-12086_h110_t1.vasp",
+      "structure_id": "mp-12086_h110_t1",
+      "output_rel": "slabs_sc/mp-12086_h110_t1.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-12086_h111_t0.vasp",
+      "structure_id": "mp-12086_h111_t0",
+      "output_rel": "slabs_sc/mp-12086_h111_t0.vasp",
+      "natoms": 96
+    },
+    {
+      "input_rel": "mp-1225687_h100_t0.vasp",
+      "structure_id": "mp-1225687_h100_t0",
+      "output_rel": "slabs_sc/mp-1225687_h100_t0.vasp",
+      "natoms": 144
+    },
+    {
+      "input_rel": "mp-1225687_h110_t0.vasp",
+      "structure_id": "mp-1225687_h110_t0",
+      "output_rel": "slabs_sc/mp-1225687_h110_t0.vasp",
+      "natoms": 80
+    },
+    {
+      "input_rel": "mp-1225687_h111_t0.vasp",
+      "structure_id": "mp-1225687_h111_t0",
+      "output_rel": "slabs_sc/mp-1225687_h111_t0.vasp",
+      "natoms": 236
+    },
+    {
+      "input_rel": "mp-1225687_h111_t1.vasp",
+      "structure_id": "mp-1225687_h111_t1",
+      "output_rel": "slabs_sc/mp-1225687_h111_t1.vasp",
+      "natoms": 236
+    },
+    {
+      "input_rel": "mp-12608_h110_t0.vasp",
+      "structure_id": "mp-12608_h110_t0",
+      "output_rel": "slabs_sc/mp-12608_h110_t0.vasp",
+      "natoms": 176
+    },
+    {
+      "input_rel": "mp-12608_h110_t1.vasp",
+      "structure_id": "mp-12608_h110_t1",
+      "output_rel": "slabs_sc/mp-12608_h110_t1.vasp",
+      "natoms": 176
+    },
+    {
+      "input_rel": "mp-12798_h100_t0.vasp",
+      "structure_id": "mp-12798_h100_t0",
+      "output_rel": "slabs_sc/mp-12798_h100_t0.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-12798_h100_t1.vasp",
+      "structure_id": "mp-12798_h100_t1",
+      "output_rel": "slabs_sc/mp-12798_h100_t1.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-12798_h110_t0.vasp",
+      "structure_id": "mp-12798_h110_t0",
+      "output_rel": "slabs_sc/mp-12798_h110_t0.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-12798_h110_t1.vasp",
+      "structure_id": "mp-12798_h110_t1",
+      "output_rel": "slabs_sc/mp-12798_h110_t1.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-12798_h111_t0.vasp",
+      "structure_id": "mp-12798_h111_t0",
+      "output_rel": "slabs_sc/mp-12798_h111_t0.vasp",
+      "natoms": 96
+    },
+    {
+      "input_rel": "mp-644311_h100_t0.vasp",
+      "structure_id": "mp-644311_h100_t0",
+      "output_rel": "slabs_sc/mp-644311_h100_t0.vasp",
+      "natoms": 144
+    },
+    {
+      "input_rel": "mp-644311_h110_t0.vasp",
+      "structure_id": "mp-644311_h110_t0",
+      "output_rel": "slabs_sc/mp-644311_h110_t0.vasp",
+      "natoms": 72
+    },
+    {
+      "input_rel": "mp-644311_h111_t0.vasp",
+      "structure_id": "mp-644311_h111_t0",
+      "output_rel": "slabs_sc/mp-644311_h111_t0.vasp",
+      "natoms": 212
+    },
+    {
+      "input_rel": "mp-644311_h111_t1.vasp",
+      "structure_id": "mp-644311_h111_t1",
+      "output_rel": "slabs_sc/mp-644311_h111_t1.vasp",
+      "natoms": 212
+    },
+    {
+      "input_rel": "mp-945_h100_t0.vasp",
+      "structure_id": "mp-945_h100_t0",
+      "output_rel": "slabs_sc/mp-945_h100_t0.vasp",
+      "natoms": 36
+    },
+    {
+      "input_rel": "mp-945_h100_t1.vasp",
+      "structure_id": "mp-945_h100_t1",
+      "output_rel": "slabs_sc/mp-945_h100_t1.vasp",
+      "natoms": 36
+    },
+    {
+      "input_rel": "mp-945_h110_t0.vasp",
+      "structure_id": "mp-945_h110_t0",
+      "output_rel": "slabs_sc/mp-945_h110_t0.vasp",
+      "natoms": 56
+    },
+    {
+      "input_rel": "mp-945_h111_t0.vasp",
+      "structure_id": "mp-945_h111_t0",
+      "output_rel": "slabs_sc/mp-945_h111_t0.vasp",
+      "natoms": 60
+    },
+    {
+      "input_rel": "mp-945_h111_t1.vasp",
+      "structure_id": "mp-945_h111_t1",
+      "output_rel": "slabs_sc/mp-945_h111_t1.vasp",
+      "natoms": 60
+    }
+  ],
+  "errors": []
+}

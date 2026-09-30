@@ -1,0 +1,533 @@
+{
+  "workspace": "/tmp/catmaster-primitive-audit-6ib2i8n1",
+  "observations": {
+    "R00_registry": {
+      "registered_count": 101,
+      "no_runtime_literal": [
+        "apply_aider_edits",
+        "find_in_page",
+        "mace_analyze_frequencies",
+        "open_public_page",
+        "peer_review_pdf_manuscript"
+      ],
+      "top_level_missing_descriptions": {
+        "revise_research_claim": [
+          "expected_revision",
+          "new_node_id",
+          "old_node_id",
+          "action",
+          "graph_id"
+        ],
+        "record_research_disposition": [
+          "reason",
+          "basis_node_ids",
+          "exception"
+        ],
+        "record_research_review": [
+          "decision_id"
+        ],
+        "create_research_graph": [
+          "question",
+          "title",
+          "orchestration_mode",
+          "initial_hypotheses"
+        ],
+        "create_bound_research_experiment": [
+          "title",
+          "objective",
+          "plan_summary",
+          "decision_rule",
+          "tests_hypothesis_ids",
+          "depends_on_experiment_ids",
+          "refs"
+        ],
+        "update_bound_research_result": [
+          "result_node_id",
+          "summary",
+          "refs"
+        ],
+        "resume_bound_research_experiment": [
+          "reason",
+          "refs"
+        ],
+        "retract_bound_research_result": [
+          "result_node_id",
+          "reason"
+        ],
+        "update_research_graph_scope": [
+          "title",
+          "question",
+          "completion_criterion"
+        ],
+        "add_research_hypothesis": [
+          "rationale",
+          "predictions",
+          "expected_revision",
+          "title",
+          "suggested_by_result_ids",
+          "refs"
+        ],
+        "add_research_experiment": [
+          "expected_revision",
+          "title",
+          "state",
+          "tests_hypothesis_ids",
+          "depends_on_experiment_ids",
+          "refs"
+        ],
+        "record_research_result": [
+          "expected_revision",
+          "title",
+          "judgments",
+          "refs"
+        ],
+        "set_research_result_judgment": [
+          "expected_revision",
+          "relation",
+          "scope",
+          "rationale"
+        ],
+        "record_research_experiment_comparison": [
+          "outcome"
+        ]
+      },
+      "langchain_schema_count": 101,
+      "schema_surface_equal_without_duplicate_description": true
+    },
+    "R01_ignored_name": {
+      "first": "name/mol.xyz",
+      "second": "name/mol.xyz",
+      "remaining_files": [
+        "mol.xyz"
+      ],
+      "final_formula": "CH4"
+    },
+    "R02_absolute_energy": {
+      "expected_count": 2,
+      "observed_count": 0,
+      "content": "filter_conformer_ensemble completed.\ncount=0 output_dir_rel=energy_out\nsummary_json_rel=energy_out/filtered_conformers.json summary_csv_rel=energy_out/filtered_conformers.csv"
+    },
+    "R03_extraction": {
+      "count_two_runs": 1,
+      "copied_bond": 0.7,
+      "expected_last_bond": 1.4,
+      "single_root_count": 0
+    },
+    "R04_supercell_collision": {
+      "processed": 2,
+      "output_paths": [
+        "supercells/same.vasp",
+        "supercells/same.vasp"
+      ],
+      "distinct_output_count": 1,
+      "content": "supercell completed.\nstructures_processed=2 structures_found=2 errors_count=0\noutput_dir_rel=supercells\nbatch_json_rel=supercells/batch_supercell.json\nfirst_output_rel=supercells/same.vasp"
+    },
+    "R05_orca_collision": {
+      "prepared_count": 2,
+      "stage_paths": [
+        "orca_stages/a_b",
+        "orca_stages/a_b"
+      ],
+      "distinct_stage_count": 1,
+      "content": "orca_prepare completed.\nprepared_count=2 output_root=orca_stages\nmanifest_path=orca_stages/orca_prepare_manifest.json"
+    },
+    "R06_truncated_xyz": {
+      "content": "md_trajectory_summary completed.\ntrajectory=md/broken.xyz nframes=1 summary_path=md_summary/md_trajectory_summary.json\nfinal_frame=md_summary/final_frame.xyz",
+      "data": {
+        "trajectory": "md/broken.xyz",
+        "summary_path": "md_summary/md_trajectory_summary.json",
+        "final_frame": "md_summary/final_frame.xyz",
+        "nframes": 1,
+        "natoms": 2
+      }
+    },
+    "R07_cp2k_ambiguity": {
+      "picked": "a_scheduler.out",
+      "content": "cp2k_output_summary completed.\nruns_analyzed=1 execution_completed_count=0 summary_json_rel=cp_summary/cp2k_output_summary.json",
+      "output": {
+        "cp2k_output_summary.json": {
+          "result_root_rel": "cp2k",
+          "runs_analyzed": 1,
+          "execution_completed_count": 0,
+          "records": [
+            {
+              "result_dir_rel": "cp2k",
+              "output_file_rel": "cp2k/a_scheduler.out",
+              "execution_state": "unknown",
+              "task_state": "unknown",
+              "normal_termination": false,
+              "returncode": null,
+              "run_type": "",
+              "warnings": [],
+              "errors": [],
+              "scf": {
+                "state": "unknown",
+                "converged_count": 0,
+                "not_converged_count": 0
+              },
+              "energies": {
+                "count": 0
+              },
+              "optimization": {
+                "state": "not_applicable",
+                "convergence_metrics": {}
+              },
+              "frequencies": {
+                "property_state": "not_calculated",
+                "count": null,
+                "imaginary_count": null,
+                "values_cm-1": []
+              },
+              "energy_files": [],
+              "output_files": [
+                "cp2k/a_scheduler.out",
+                "cp2k/z_science.out"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "R08_custom_result_names": {
+      "orca": "No ORCA result folders found",
+      "xtb": "No xTB/CREST result folders found",
+      "lammps": "No LAMMPS result directories found."
+    },
+    "R09_manual_phonon_mapping": {
+      "input_species": [
+        "Na",
+        "Cl"
+      ],
+      "supercell_species": [
+        "Na",
+        "Na",
+        "Cl",
+        "Cl"
+      ],
+      "metadata": {
+        "generator": "manual_fallback",
+        "representative_sites": [
+          0,
+          1
+        ],
+        "displacements_generated": 6
+      },
+      "moves": [
+        {
+          "label": "site000_x_p",
+          "moved_species": [
+            "Na"
+          ]
+        },
+        {
+          "label": "site000_y_p",
+          "moved_species": [
+            "Na"
+          ]
+        },
+        {
+          "label": "site000_z_p",
+          "moved_species": [
+            "Na"
+          ]
+        },
+        {
+          "label": "site001_x_p",
+          "moved_species": [
+            "Na"
+          ]
+        },
+        {
+          "label": "site001_y_p",
+          "moved_species": [
+            "Na"
+          ]
+        },
+        {
+          "label": "site001_z_p",
+          "moved_species": [
+            "Na"
+          ]
+        }
+      ]
+    },
+    "R10_phonon_fallback_injected": {
+      "generator": "manual_fallback",
+      "content": "generate_phonon_displacements completed.\ninput_rel=structures/same.vasp structures_generated=12 output_dir_rel=phonon\nmetadata_rel=phonon/phonon_displacements.json",
+      "summary": {
+        "input_rel": "structures/same.vasp",
+        "supercell": [
+          2,
+          1,
+          1
+        ],
+        "displacement": 0.01,
+        "plus_minus": true,
+        "results": [
+          {
+            "batch_index": 0,
+            "label": "site000_x_p",
+            "output_rel": "phonon/site000_x_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 1,
+            "label": "site000_x_m",
+            "output_rel": "phonon/site000_x_m.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 2,
+            "label": "site000_y_p",
+            "output_rel": "phonon/site000_y_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 3,
+            "label": "site000_y_m",
+            "output_rel": "phonon/site000_y_m.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 4,
+            "label": "site000_z_p",
+            "output_rel": "phonon/site000_z_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 5,
+            "label": "site000_z_m",
+            "output_rel": "phonon/site000_z_m.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 6,
+            "label": "site001_x_p",
+            "output_rel": "phonon/site001_x_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 7,
+            "label": "site001_x_m",
+            "output_rel": "phonon/site001_x_m.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 8,
+            "label": "site001_y_p",
+            "output_rel": "phonon/site001_y_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 9,
+            "label": "site001_y_m",
+            "output_rel": "phonon/site001_y_m.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 10,
+            "label": "site001_z_p",
+            "output_rel": "phonon/site001_z_p.vasp",
+            "natoms": 4
+          },
+          {
+            "batch_index": 11,
+            "label": "site001_z_m",
+            "output_rel": "phonon/site001_z_m.vasp",
+            "natoms": 4
+          }
+        ],
+        "generator": "manual_fallback",
+        "representative_sites": [
+          0,
+          1
+        ],
+        "displacements_generated": 12
+      }
+    },
+    "R11_mp_conventional_stub": {
+      "provider_atom_count": 1,
+      "saved_atom_count": 2,
+      "reported_atom_count": 1,
+      "content": "mp_download_structure completed.\nrequested=1 downloaded=1 errors=0\noutput_dir_rel=mp\ndownloaded_examples=['mp-fixture']\ndownloaded_path_examples=['mp/mp-fixture.vasp']\nfailed_examples=[]\nsummary_json_rel=mp/mp_download_structure_summary.json"
+    },
+    "R12_graph_handle_surface": {
+      "content": "Added experiment proposal Example.\nLatest graph revision: 2.",
+      "node_id_in_content": false,
+      "node_id_in_artifact": true
+    },
+    "R13_mmff_failure_injected": {
+      "content": "enumerate_molecular_conformers completed.\ncount=1 output_dir_rel=no_mmff\nsummary_json_rel=no_mmff/conformers.json summary_csv_rel=no_mmff/conformers.csv",
+      "summary": {
+        "smiles": "CC",
+        "records": [
+          {
+            "conformer_id": 0,
+            "rank": 0,
+            "structure_rel": "no_mmff/conf_000.xyz",
+            "energy_kcal_mol": null,
+            "relative_energy_kcal_mol": null
+          }
+        ]
+      }
+    },
+    "R14_unicode_find_offsets": {
+      "expected_start": 7,
+      "result": {
+        "requested_url": "https://fixture.invalid",
+        "final_url": "https://fixture.invalid",
+        "source_path": "snapshot.json",
+        "pattern": "target",
+        "total_matches": 1,
+        "match_offset": 0,
+        "matches": [
+          {
+            "pattern": "target",
+            "start_char": 8,
+            "end_char": 14,
+            "snippet": "Straße target"
+          }
+        ],
+        "next_match_offset": 0,
+        "content_complete": true,
+        "source_completeness": "complete"
+      }
+    },
+    "R15_acquisition_cache_stub": {
+      "validation_calls": [
+        "title A"
+      ],
+      "second_title_revalidated": false
+    },
+    "R16_slab_batch_collisions": {
+      "build_slab": {
+        "content": "build_slab completed.\nstructures_built=2 structures_found=2 errors=0\noutput_root_rel=slabs\nbatch_json_rel=slabs/batch_build_slab.json\nfirst_output_dir=slabs/same",
+        "vasp_outputs": [
+          "same/same_h100_t0.vasp"
+        ],
+        "data": {
+          "bulk_dir_rel": "structures",
+          "output_root_rel": "slabs",
+          "miller_index": [
+            1,
+            0,
+            0
+          ],
+          "supercell": [
+            1,
+            1,
+            1
+          ],
+          "slab_thickness": 4.0,
+          "vacuum_thickness": 15.0,
+          "get_symmetry_slab": false,
+          "orthogonal": false,
+          "lll_reduce": false,
+          "structures_found": 2,
+          "structures_built": 2,
+          "batch_json_rel": "slabs/batch_build_slab.json",
+          "errors_count": 0,
+          "results_count": 2,
+          "results_full_rel": "slabs/batch_build_slab.json",
+          "results": [
+            {
+              "bulk_rel": "same.cif",
+              "slab_id": "same",
+              "output_dir_rel": "slabs/same",
+              "total_terminations": 1,
+              "terminations": [
+                {
+                  "termination_index": 0,
+                  "slab_structure_rel": "slabs/same/same_h100_t0.vasp",
+                  "surface_area": 25.0,
+                  "natoms": 2
+                }
+              ]
+            },
+            {
+              "bulk_rel": "same.vasp",
+              "slab_id": "same",
+              "output_dir_rel": "slabs/same",
+              "total_terminations": 1,
+              "terminations": [
+                {
+                  "termination_index": 0,
+                  "slab_structure_rel": "slabs/same/same_h100_t0.vasp",
+                  "surface_area": 16.0,
+                  "natoms": 2
+                }
+              ]
+            }
+          ],
+          "errors_full_rel": "slabs/batch_build_slab.json",
+          "errors": []
+        }
+      },
+      "fix_atoms_by_layers": {
+        "content": "fix_atoms_by_layers completed.\nstructures_processed=2 structures_found=2 errors_count=0\noutput_dir_rel=fixed_layers\nbatch_json_rel=fixed_layers/batch_fix_atoms_by_layers.json\nfirst_output_rel=fixed_layers/same.vasp",
+        "vasp_outputs": [
+          "same.vasp"
+        ],
+        "data": {
+          "structure_dir_rel": "structures",
+          "output_dir_rel": "fixed_layers",
+          "freeze_layers": 1,
+          "layer_tol": 0.2,
+          "centralize": false,
+          "reverse": false,
+          "structures_found": 2,
+          "structures_processed": 2,
+          "batch_json_rel": "fixed_layers/batch_fix_atoms_by_layers.json",
+          "errors_count": 0,
+          "errors_full_rel": "fixed_layers/batch_fix_atoms_by_layers.json",
+          "errors": []
+        }
+      },
+      "fix_atoms_by_height": {
+        "content": "fix_atoms_by_height completed.\nstructures_processed=2 structures_found=2 errors_count=0\noutput_dir_rel=fixed_height\nbatch_json_rel=fixed_height/batch_fix_atoms_by_height.json\nfirst_output_rel=fixed_height/same.vasp",
+        "vasp_outputs": [
+          "same.vasp"
+        ],
+        "data": {
+          "structure_dir_rel": "structures",
+          "output_dir_rel": "fixed_height",
+          "z_ranges": [
+            [
+              0.0,
+              1.0
+            ]
+          ],
+          "centralize": false,
+          "reverse": false,
+          "structures_found": 2,
+          "structures_processed": 2,
+          "batch_json_rel": "fixed_height/batch_fix_atoms_by_height.json",
+          "errors_count": 0,
+          "errors_full_rel": "fixed_height/batch_fix_atoms_by_height.json",
+          "errors": []
+        }
+      },
+      "fix_atoms_by_indices": {
+        "content": "fix_atoms_by_indices completed.\nstructures_processed=2 structures_found=2 errors_count=0\noutput_dir_rel=fixed_indices\nbatch_json_rel=fixed_indices/batch_fix_atoms_by_indices.json\nfirst_output_rel=fixed_indices/same.vasp",
+        "vasp_outputs": [
+          "same.vasp"
+        ],
+        "data": {
+          "structure_dir_rel": "structures",
+          "output_dir_rel": "fixed_indices",
+          "indices": [
+            0
+          ],
+          "index_base": 0,
+          "reverse": false,
+          "structures_found": 2,
+          "structures_processed": 2,
+          "batch_json_rel": "fixed_indices/batch_fix_atoms_by_indices.json",
+          "errors_count": 0,
+          "errors_full_rel": "fixed_indices/batch_fix_atoms_by_indices.json",
+          "errors": []
+        }
+      }
+    }
+  }
+}

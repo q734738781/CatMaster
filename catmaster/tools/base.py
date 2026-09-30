@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Base project-space and path utilities shared by CatMaster tools."""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import contextvars
+from typing import Any, Optional, Sequence
+from pathlib import Path
+
+PROJECT_FILES_DIR_NAME = "files"
+PROJECT_METADATA_DIR_NAME = "metadata"
+LEGACY_SYSTEM_DIR_NAME = ".catmaster"
+_HOST_ABSOLUTE_TOPLEVEL_HINTS = {
+    "bin",
+    "boot",
+    "dev",
+    "etc",
+    "home",
+    "lib",
+    "lib64",
+    "media",
+    "mnt",
+    "opt",
+    "proc",
+    "root",
+    "run",
+    "sbin",
+    "srv",
+    "sys",
+    "tmp",
+    "usr",
+    "var",
+}
+_PROJECT_SPACE_OVERRIDE: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar(
+    "catmaster_project_space_override",
+    default=None,
+)
+
+
+def project_space_root(project_space: Path | str | None = None) -> Path:
+    """Resolve project-space root from explicit param, instance scope, or cwd."""
+    if project_space is not None:
+        return Path(project_space).expanduser().resolve()
+    override = _PROJECT_SPACE_OVERRIDE.get()
+    if override is not None:
+        return override
+    return Path.cwd().resolve()
+
+
+def ensure_project_space_layout(
+    project_space: Path | str | None = None,
+    *,
+    create: bool = True,
+) -> dict[str, Path]:
+    """
+    Ensure project_space uses the new two-root layout:
+    - project_space/files      (LLM-visible project files)
+    - project_space/metadata   (internal run metadata)
+    """
+    root = project_space_root(project_space)
+    files = root / PROJECT_FILES_DIR_NAME
+    metadata = root / PROJECT_METADATA_DIR_NAME
+    legacy = root / LEGACY_SYSTEM_DIR_NAME
+
+    # Explicitly refuse legacy-only layout (no automatic migration).
+    if not metadata.exists() and legacy.exists():
+        raise ValueError(
+            "Legacy layout detected (.catmaster). "
+            "Use project_space/{files,metadata}; automatic migration is disabled."
+        )
+
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+        files.mkdir(parents=True, exist_ok=True)
+        metadata.mkdir(parents=True, exist_ok=True)
+    else:
+        if not files.is_dir() or not metadata.is_dir():
+            raise ValueError(
+                "Invalid project space layout. Expected directories: "
+                f"{files} and {metadata}"
+            )
+
+    return {
+        "project_space_root": root,
+        "files_root": files,
+        "metadata_root": metadata,
+    }
+
+
+def workspace_root(workspace: Path | str | None = None) -> Path:
+    """
+    Backward-compatible alias for project files root.
+    NOTE: This now resolves to <project_space>/files.
+    """
+    root = project_space_root(workspace)
+    return root / PROJECT_FILES_DIR_NAME
+
+
+def normalize_workspace_virtual_path(path: str) -> str:
+    """Map the user-visible ``files/`` prefix onto the agent filesystem root.
+
+    DeepAgents already roots its virtual filesystem at ``<workspace>/files``.
+    Users nevertheless see and commonly name that directory as ``files/`` in
+    prompts and links.  Treat both spellings as the same path so an explicit
+    ``files/reports/x.md`` request cannot become ``files/files/reports/x.md``.
+    """
+
+    raw = str(path or "").strip()
+    stripped = raw.lstrip("/")
+    prefix = f"{PROJECT_FILES_DIR_NAME}/"
+    if stripped.startswith(prefix):
+        remainder = stripped[len(prefix):]
+        if remainder and all(
+            part not in {"", ".", ".."} for part in remainder.split("/")
+        ):
+            return f"/{remainder}"
+    return raw
+
+
+@contextmanager
+def workspace_scope(path: Path | str):
+    """Temporarily bind a project-space root to the current execution context."""
+    resolved = Path(path).expanduser().resolve()
+    ensure_project_space_layout(resolved, create=True)
+    token = _PROJECT_SPACE_OVERRIDE.set(resolved)
+    try:
+        yield resolved
+    finally:
+        _PROJECT_SPACE_OVERRIDE.reset(token)
+
+
+def system_root(workspace: Path | str | None = None) -> Path:
+    """
+    Backward-compatible alias for metadata root.
+    NOTE: This now resolves to <project_space>/metadata.
+    """
+    root = project_space_root(workspace)
+    return root / PROJECT_METADATA_DIR_NAME
+
+
+def ensure_system_root(workspace: Path | str | None = None) -> Path:
+    """Backward-compatible alias that ensures project-space layout exists."""
+    return ensure_project_space_layout(workspace, create=True)["metadata_root"]
+
+
+def workspace_relpath(path: Path, workspace: Path | str | None = None) -> str:
+    """Return files-root-relative path string if inside files root, else absolute."""
+    root = workspace_root(workspace)
+    try:
+        return str(path.resolve().relative_to(root))
+    except Exception:
+        return str(path.resolve())
+
+
+def _compact_artifact_item(item: Any) -> Any:
+    return dict(item) if isinstance(item, dict) else item
+
+
+def compact_list_for_artifact(
+    items: Sequence[Any],
+    *,
+    count_key: str,
+    inline_key: str,
+    preview_key: str,
+    truncated_key: str,
+    full_rel_key: str | None = None,
+    full_rel: str | None = None,
+    max_inline: int = 3,
+) -> dict[str, Any]:
+    """Return a compact list payload for LLM-facing tool artifacts."""
+
+    values = [_compact_artifact_item(item) for item in items]
+    if len(values) > max_inline and not (full_rel_key and str(full_rel or "").strip()):
+        raise ValueError(
+            "Compact semantic lists require an exact manifest/log/batch-state reference."
+        )
+    payload: dict[str, Any] = {count_key: len(values)}
+    if full_rel_key and full_rel:
+        payload[full_rel_key] = full_rel
+    if len(values) <= max_inline:
+        payload[inline_key] = values
+    else:
+        payload[preview_key] = values[:max_inline]
+        payload[truncated_key] = len(values) - max_inline
+    return payload
+
+
+def compact_records_for_artifact(
+    records: Sequence[dict[str, Any]],
+    *,
+    full_records_rel: str | None = None,
+    max_inline: int = 3,
+) -> dict[str, Any]:
+    """Return a compact records payload for tool artifacts.
+
+    Full records should live in a manifest/summary file when a tool can produce
+    many entries. Small single-task results remain inline for ergonomic follow-up.
+    """
+
+    return compact_list_for_artifact(
+        records,
+        count_key="record_count",
+        inline_key="records",
+        preview_key="records_preview",
+        truncated_key="records_truncated",
+        full_rel_key="records_full_rel",
+        full_rel=full_records_rel,
+        max_inline=max_inline,
+    )
+
+
+def _is_virtual_workspace_absolute(raw_path: str) -> bool:
+    """Allow DeepAgent-style virtual absolute paths like `/foo/bar`, reject host paths like `/home/...`."""
+    pure = Path(str(raw_path or "").strip())
+    if not pure.is_absolute():
+        return False
+    parts = [part for part in pure.parts if part not in {"/", "\\"}]
+    if not parts:
+        return True
+    return parts[0] not in _HOST_ABSOLUTE_TOPLEVEL_HINTS
+
+
+def resolve_scoped_path(
+    path: str,
+    scope: str,
+    *,
+    workspace: Path | str | None = None,
+    must_exist: bool = False,
+) -> Path:
+    """
+    Resolve a path under the requested root.
+    scope='files' -> project files root
+    scope='metadata' -> metadata root
+    """
+    if scope not in {"files", "metadata"}:
+        raise ValueError(f"Invalid scope: {scope}")
+    root = (workspace_root(workspace) if scope == "files" else system_root(workspace)).resolve()
+    raw_path = str(path or "").strip() or "."
+    p = Path(raw_path).expanduser()
+    if p.is_absolute():
+        resolved_absolute = p.resolve()
+        if scope == "files":
+            try:
+                resolved_absolute.relative_to(root)
+            except ValueError:
+                if _is_virtual_workspace_absolute(raw_path):
+                    # DeepAgent exposes the project filesystem with a virtual `/` root.
+                    # Treat virtual file-scope paths like `/foo/bar` as paths
+                    # relative to <project_space>/files.
+                    p = (root / raw_path.lstrip("/")).resolve()
+                else:
+                    raise ValueError(
+                        "Absolute host path outside project files root is not allowed in files scope: "
+                        f"{resolved_absolute}. Use a path relative to the project files root."
+                    )
+            else:
+                p = resolved_absolute
+        else:
+            p = resolved_absolute
+    else:
+        p = (root / p).resolve()
+    try:
+        p.relative_to(root)
+    except ValueError:
+        raise ValueError(f"Path escapes {scope} root: {p}")
+    if scope == "files":
+        sys_root = system_root(workspace).resolve()
+        try:
+            p.relative_to(sys_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f"Path under metadata root is not allowed in files scope: {p}")
+    if must_exist and not p.exists():
+        raise FileNotFoundError(f"Path does not exist: {p}")
+    return p
+
+
+def resolve_view_path(
+    path: str,
+    view: str,
+    *,
+    workspace: Path | str | None = None,
+    must_exist: bool = False,
+) -> Path:
+    """
+    Backward-compatibility alias:
+    view='user' -> scope='files'
+    view='system' -> scope='metadata'
+    """
+    mapping = {"user": "files", "system": "metadata"}
+    scope = mapping.get(view)
+    if scope is None:
+        raise ValueError(f"Invalid legacy view: {view}")
+    return resolve_scoped_path(path, scope, workspace=workspace, must_exist=must_exist)
+
+
+def scoped_relpath(path: Path, scope: str, workspace: Path | str | None = None) -> str:
+    """Return path string relative to the chosen scope root, else absolute."""
+    if scope not in {"files", "metadata"}:
+        raise ValueError(f"Invalid scope: {scope}")
+    root = workspace_root(workspace) if scope == "files" else system_root(workspace)
+    try:
+        return str(path.resolve().relative_to(root))
+    except Exception:
+        return str(path.resolve())
+
+
+def view_relpath(path: Path, view: str, workspace: Path | str | None = None) -> str:
+    """Backward-compatibility alias for scoped_relpath()."""
+    mapping = {"user": "files", "system": "metadata"}
+    scope = mapping.get(view)
+    if scope is None:
+        raise ValueError(f"Invalid legacy view: {view}")
+    return scoped_relpath(path, scope, workspace=workspace)
+
+
+def resolve_workspace_path(
+    path: str,
+    *,
+    workspace: Path | str | None = None,
+    must_exist: bool = False,
+) -> Path:
+    """
+    Resolve a path under project files root (metadata excluded).
+    """
+    return resolve_scoped_path(path, "files", workspace=workspace, must_exist=must_exist)
+
+
+def resolve_project_file_path(
+    path: str,
+    *,
+    project_space: Path | str | None = None,
+    must_exist: bool = False,
+) -> Path:
+    """Explicit helper resolving paths under project_space/files."""
+    return resolve_workspace_path(path, workspace=project_space, must_exist=must_exist)

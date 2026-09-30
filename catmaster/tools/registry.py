@@ -1,0 +1,829 @@
+"""
+Tool registry that maps tool names to their functions and Pydantic input models.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Awaitable, Dict, Any, Callable, Optional
+from uuid import uuid4
+from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+from langchain.tools import ToolRuntime
+
+from catmaster.runtime.tool_output_adapter import adapt_tool_return
+from catmaster.runtime.tool_runtime import toolcall_context
+from catmaster.tools.base import workspace_root, workspace_scope
+
+
+class ToolRegistry:
+    """Simple tool registry mapping names to functions and their input models."""
+
+    def __init__(self, register_all_tools: bool = True):
+        self.tools = {}
+        self.aliases: dict[str, str] = {}
+        if register_all_tools:
+            self._register_all_tools()
+    
+    def _register_all_tools(self):
+        """Register all available tools"""
+        
+        # Geometry/Input tools
+        from catmaster.tools.geometry_inputs import (
+            create_molecule_from_smiles,
+            enumerate_molecular_conformers,
+            filter_conformer_ensemble,
+            extract_optimized_molecules,
+            orca_prepare,
+            orca_nebts_prepare,
+            cp2k_prepare,
+            xtb_prepare,
+            crest_prepare,
+            vasp_prepare,
+            vasp_band_prepare,
+            build_slab,
+            fix_atoms_by_layers,
+            fix_atoms_by_height,
+            fix_atoms_by_indices,
+            supercell,
+            enumerate_unique_sites,
+            create_vacancy,
+            substitute_species,
+            insert_interstitial_at_coords,
+            enumerate_adsorption_sites,
+            place_adsorbate,
+            generate_batch_adsorption_structures,
+            estimate_neb_image_count,
+            remap_neb_endpoint_atoms,
+            make_neb_geometry,
+            generate_strained_structures,
+            generate_kpath,
+            generate_phonon_displacements,
+            vasp_neb_prepare,
+            vasp_dimer_prepare,
+            make_dimer_mode_from_neb,
+            make_dimer_mode_from_mace,
+            mace_analyze_frequencies,
+        )
+        from catmaster.tools.geometry_inputs import (
+            MoleculeFromSmilesInput,
+            EnumerateMolecularConformersInput,
+            FilterConformerEnsembleInput,
+            ExtractOptimizedMoleculesInput,
+            OrcaPrepareInput,
+            OrcaNebTSPrepareInput,
+            Cp2kPrepareInput,
+            XtbPrepareInput,
+            CrestPrepareInput,
+            VaspPrepareInput,
+            VaspBandPrepareInput,
+            SlabBuildInput,
+            FixAtomsByLayersInput,
+            FixAtomsByHeightInput,
+            FixAtomsByIndicesInput,
+            SupercellInput,
+            EnumerateUniqueSitesInput,
+            CreateVacancyInput,
+            SubstituteSpeciesInput,
+            InsertInterstitialAtCoordsInput,
+            EnumerateAdsorptionSitesInput,
+            PlaceAdsorbateInput,
+            GenerateBatchAdsorptionStructuresInput,
+            EstimateNebImageCountInput,
+            RemapNebEndpointAtomsInput,
+            MakeNebGeometryInput,
+            GenerateStrainedStructuresInput,
+            GenerateKpathInput,
+            GeneratePhononDisplacementsInput,
+            VaspNebPrepareInput,
+            VaspDimerPrepareInput,
+            DimerModeFromNebInput,
+            DimerModeFromMaceInput,
+            MaceAnalyzeFrequenciesInput,
+        )
+        
+        # Execution tools  
+        from catmaster.tools.execution import (
+            get_avail_remote_task,
+            get_remote_task_spec,
+            get_avail_resources,
+            remote_submission,
+            remote_submission_batch,
+        )
+        from catmaster.tools.execution import (
+            GetAvailRemoteTaskInput,
+            GetRemoteTaskSpecInput,
+            GetAvailResourcesInput,
+            RemoteSubmissionBatchInput,
+            RemoteSubmissionInput,
+        )
+        from catmaster.tools.dynamics import (
+            Cp2kOutputSummaryInput,
+            LammpsLogSummaryInput,
+            LammpsPrepareInput,
+            MdTrajectorySummaryInput,
+            cp2k_output_summary,
+            lammps_log_summary,
+            lammps_prepare,
+            md_trajectory_summary,
+        )
+        from catmaster.tools.analysis import (
+            compile_text,
+            analyze_vasp_neb_results,
+            analyze_orca_results,
+            analyze_trajectory,
+            analyze_xtb_results,
+            generate_figure,
+            identify_structure_fragments,
+            peer_review_pdf_manuscript,
+            peer_review_request,
+            review_pdf_manuscript,
+            render_vesta_views,
+            render_markdown_pdf,
+            vaspkit_adsorbate_thermo_correction,
+            vaspkit_gas_thermo_correction,
+            CompileTextInput,
+            AnalyzeVaspNebResultsInput,
+            AnalyzeOrcaResultsInput,
+            AnalyzeTrajectoryInput,
+            AnalyzeXtbResultsInput,
+            GenerateFigureInput,
+            IdentifyStructureFragmentsInput,
+            PeerReviewPdfManuscriptInput,
+            PeerReviewRequestInput,
+            ReviewPdfManuscriptInput,
+            RenderVestaViewsInput,
+            RenderMarkdownPdfInput,
+            VaspkitAdsorbateThermoCorrectionInput,
+            VaspkitGasThermoCorrectionInput,
+        )
+        from catmaster.tools.machine_learning import (
+            BuildDatasetFromRunsInput,
+            CalculateALCandidatesInput,
+            build_dataset_from_runs,
+            calculate_al_candidates,
+        )
+        from catmaster.runtime.literature import (
+            AcquireLiteratureSourceInput,
+            BatchAcquireLiteratureSourcesInput,
+            FinalizeCitationsInput,
+            FindInPageInput,
+            GetOpenAlexRecordInput,
+            GetSemanticScholarRecordInput,
+            IngestLiteratureFilesInput,
+            OpenPublicPageInput,
+            QueryLiteratureCorpusInput,
+            RecommendSemanticScholarInput,
+            WebSearchInput,
+            acquire_literature_source,
+            batch_acquire_literature_sources,
+            finalize_citations,
+            ingest_literature_files,
+            query_literature_corpus,
+            web_search,
+            search_openalex,
+            search_semantic_scholar,
+            get_openalex_record,
+            get_semantic_scholar_record,
+            recommend_semantic_scholar,
+            open_public_page,
+            find_in_page,
+            SearchOpenAlexInput,
+            SearchSemanticScholarInput,
+        )
+
+        # Retrieval tools
+        from catmaster.tools.retrieval.matdb import (
+            mp_search_materials,
+            mp_download_structure,
+            MPSearchMaterialsInput,
+            MPDownloadStructureInput,
+        )
+
+        # Memory patch
+        from catmaster.tools.misc.memory_patch_apply import (
+            apply_aider_edits,
+            ApplyAiderEditsInput,
+        )
+        from catmaster.tools.misc.export_builtin_tool_source import (
+            export_builtin_tool_source,
+            ExportBuiltinToolSourceInput,
+        )
+        from catmaster.tools.misc.effective_skills import (
+            ManageEffectiveSkillsInput,
+            manage_effective_skills,
+        )
+        from catmaster.tools.misc.progress import (
+            NotifyProgressInput,
+            notify_progress,
+        )
+        from catmaster.tools.misc.research_graph import (
+            ReviseResearchClaimInput,
+            RecordResearchDispositionInput,
+            RecordResearchReviewInput,
+            revise_research_claim,
+            record_research_disposition,
+            record_research_review,
+            AddResearchExperimentInput,
+            AddResearchHypothesisInput,
+            CreateBoundResearchExperimentInput,
+            CreateResearchGraphInput,
+            RecordResearchExperimentComparisonInput,
+            ListResearchGraphsInput,
+            MarkBoundResearchExperimentFailedInput,
+            MarkResearchPlanningNoChangeInput,
+            MarkResearchExperimentFailedInput,
+            QueryResearchGraphSQLInput,
+            ResumeBoundResearchExperimentInput,
+            RetractBoundResearchResultInput,
+            RecordBoundResearchResultInput,
+            RecordResearchResultInput,
+            SetResearchGraphCompletionInput,
+            SetResearchGraphFocusInput,
+            SetResearchResultJudgmentInput,
+            StageResearchPlanInput,
+            UpdateBoundResearchResultInput,
+            UpdateResearchGraphScopeInput,
+            add_research_experiment,
+            add_research_hypothesis,
+            create_bound_research_experiment,
+            create_research_graph,
+            record_research_experiment_comparison,
+            list_research_graphs,
+            mark_bound_research_experiment_failed,
+            mark_research_planning_no_change,
+            mark_research_experiment_failed,
+            query_research_graph_sql,
+            resume_bound_research_experiment,
+            retract_bound_research_result,
+            record_bound_research_result,
+            record_research_result,
+            set_research_graph_completion,
+            set_research_graph_focus,
+            set_research_result_judgment,
+            stage_research_plan,
+            update_bound_research_result,
+            update_research_graph_scope,
+        )
+        # Register each tool with its Pydantic schema
+        self.register_tool("create_molecule_from_smiles", create_molecule_from_smiles, MoleculeFromSmilesInput)
+        self.register_tool("enumerate_molecular_conformers", enumerate_molecular_conformers, EnumerateMolecularConformersInput)
+        self.register_tool("filter_conformer_ensemble", filter_conformer_ensemble, FilterConformerEnsembleInput)
+        self.register_tool("extract_optimized_molecules", extract_optimized_molecules, ExtractOptimizedMoleculesInput)
+        self.register_tool("orca_prepare", orca_prepare, OrcaPrepareInput)
+        self.register_tool("orca_nebts_prepare", orca_nebts_prepare, OrcaNebTSPrepareInput)
+        self.register_tool("cp2k_prepare", cp2k_prepare, Cp2kPrepareInput)
+        self.register_tool("xtb_prepare", xtb_prepare, XtbPrepareInput)
+        self.register_tool("crest_prepare", crest_prepare, CrestPrepareInput)
+        self.register_tool("cp2k_output_summary", cp2k_output_summary, Cp2kOutputSummaryInput)
+        self.register_tool("lammps_prepare", lammps_prepare, LammpsPrepareInput)
+        self.register_tool("lammps_log_summary", lammps_log_summary, LammpsLogSummaryInput)
+        self.register_tool("md_trajectory_summary", md_trajectory_summary, MdTrajectorySummaryInput)
+        self.register_tool("remote_submission", remote_submission, RemoteSubmissionInput)
+        self.register_tool("remote_submission_batch", remote_submission_batch, RemoteSubmissionBatchInput)
+        self.register_tool("get_avail_remote_task", get_avail_remote_task, GetAvailRemoteTaskInput)
+        self.register_tool("get_remote_task_spec", get_remote_task_spec, GetRemoteTaskSpecInput)
+        self.register_tool("get_avail_resources", get_avail_resources, GetAvailResourcesInput)
+        self.register_tool("vasp_prepare", vasp_prepare, VaspPrepareInput)
+        self.register_tool("vasp_band_prepare", vasp_band_prepare, VaspBandPrepareInput)
+        self.register_tool("build_slab", build_slab, SlabBuildInput)
+        self.register_tool("fix_atoms_by_layers", fix_atoms_by_layers, FixAtomsByLayersInput)
+        self.register_tool("fix_atoms_by_height", fix_atoms_by_height, FixAtomsByHeightInput)
+        self.register_tool("fix_atoms_by_indices", fix_atoms_by_indices, FixAtomsByIndicesInput)
+        self.register_tool("supercell", supercell, SupercellInput)
+        self.register_tool("enumerate_unique_sites", enumerate_unique_sites, EnumerateUniqueSitesInput)
+        self.register_tool("create_vacancy", create_vacancy, CreateVacancyInput)
+        self.register_tool("substitute_species", substitute_species, SubstituteSpeciesInput)
+        self.register_tool("insert_interstitial_at_coords", insert_interstitial_at_coords, InsertInterstitialAtCoordsInput)
+        self.register_tool("enumerate_adsorption_sites", enumerate_adsorption_sites, EnumerateAdsorptionSitesInput)
+        self.register_tool("place_adsorbate", place_adsorbate, PlaceAdsorbateInput)
+        self.register_tool("generate_batch_adsorption_structures", generate_batch_adsorption_structures, GenerateBatchAdsorptionStructuresInput)
+        self.register_tool("estimate_neb_image_count", estimate_neb_image_count, EstimateNebImageCountInput)
+        self.register_tool("remap_neb_endpoint_atoms", remap_neb_endpoint_atoms, RemapNebEndpointAtomsInput)
+        self.register_tool("make_neb_geometry", make_neb_geometry, MakeNebGeometryInput)
+        self.register_tool("generate_strained_structures", generate_strained_structures, GenerateStrainedStructuresInput)
+        self.register_tool("generate_kpath", generate_kpath, GenerateKpathInput)
+        self.register_tool("generate_phonon_displacements", generate_phonon_displacements, GeneratePhononDisplacementsInput)
+        self.register_tool("vasp_neb_prepare", vasp_neb_prepare, VaspNebPrepareInput)
+        self.register_tool("vasp_dimer_prepare", vasp_dimer_prepare, VaspDimerPrepareInput)
+        self.register_tool("make_dimer_mode_from_neb", make_dimer_mode_from_neb, DimerModeFromNebInput)
+        self.register_tool("make_dimer_mode_from_mace", make_dimer_mode_from_mace, DimerModeFromMaceInput)
+        self.register_tool("mace_analyze_frequencies", mace_analyze_frequencies, MaceAnalyzeFrequenciesInput)
+        self.register_tool("mp_search_materials", mp_search_materials, MPSearchMaterialsInput)
+        self.register_tool("mp_download_structure", mp_download_structure, MPDownloadStructureInput)
+        self.register_tool("identify_structure_fragments", identify_structure_fragments, IdentifyStructureFragmentsInput)
+        self.register_tool("analyze_vasp_neb_results", analyze_vasp_neb_results, AnalyzeVaspNebResultsInput)
+        self.register_tool("analyze_trajectory", analyze_trajectory, AnalyzeTrajectoryInput)
+        self.register_tool("analyze_xtb_results", analyze_xtb_results, AnalyzeXtbResultsInput)
+        self.register_tool("analyze_orca_results", analyze_orca_results, AnalyzeOrcaResultsInput)
+        self.register_tool("generate_figure", generate_figure, GenerateFigureInput)
+        self.register_alias("generate_nanobanana_figure", "generate_figure")
+        self.register_tool("compile_text", compile_text, CompileTextInput)
+        self.register_tool("render_markdown_pdf", render_markdown_pdf, RenderMarkdownPdfInput)
+        self.register_alias("agentic_compile_tex", "compile_text")
+        self.register_tool("peer_review_pdf_manuscript", peer_review_pdf_manuscript, PeerReviewPdfManuscriptInput)
+        self.register_tool("peer_review_request", peer_review_request, PeerReviewRequestInput)
+        self.register_tool("review_pdf_manuscript", review_pdf_manuscript, ReviewPdfManuscriptInput)
+        self.register_tool("render_vesta_views", render_vesta_views, RenderVestaViewsInput)
+        self.register_tool(
+            "vaspkit_adsorbate_thermo_correction",
+            vaspkit_adsorbate_thermo_correction,
+            VaspkitAdsorbateThermoCorrectionInput,
+        )
+        self.register_tool(
+            "vaspkit_gas_thermo_correction",
+            vaspkit_gas_thermo_correction,
+            VaspkitGasThermoCorrectionInput,
+        )
+        self.register_tool("ingest_literature_files", ingest_literature_files, IngestLiteratureFilesInput)
+        self.register_tool("query_literature_corpus", query_literature_corpus, QueryLiteratureCorpusInput)
+        self.register_tool(
+            "acquire_literature_source",
+            acquire_literature_source,
+            AcquireLiteratureSourceInput,
+        )
+        self.register_tool(
+            "batch_acquire_literature_sources",
+            batch_acquire_literature_sources,
+            BatchAcquireLiteratureSourcesInput,
+        )
+        self.register_tool("finalize_citations", finalize_citations, FinalizeCitationsInput)
+        self.register_tool("search_openalex", search_openalex, SearchOpenAlexInput)
+        self.register_tool("search_semantic_scholar", search_semantic_scholar, SearchSemanticScholarInput)
+        self.register_tool("get_openalex_record", get_openalex_record, GetOpenAlexRecordInput)
+        self.register_tool("get_semantic_scholar_record", get_semantic_scholar_record, GetSemanticScholarRecordInput)
+        self.register_tool("recommend_semantic_scholar", recommend_semantic_scholar, RecommendSemanticScholarInput)
+        self.register_tool("web_search", web_search, WebSearchInput)
+        self.register_alias("search_public_web", "web_search")
+        self.register_tool("open_public_page", open_public_page, OpenPublicPageInput)
+        self.register_tool("find_in_page", find_in_page, FindInPageInput)
+        self.register_tool("apply_aider_edits", apply_aider_edits, ApplyAiderEditsInput)
+        self.register_tool("export_builtin_tool_source", export_builtin_tool_source, ExportBuiltinToolSourceInput)
+        self.register_tool(
+            "manage_effective_skills",
+            manage_effective_skills,
+            ManageEffectiveSkillsInput,
+        )
+        self.register_tool("notify_progress", notify_progress, NotifyProgressInput)
+        self.register_tool("list_research_graphs", list_research_graphs, ListResearchGraphsInput)
+        self.register_tool('revise_research_claim', revise_research_claim, ReviseResearchClaimInput)
+        self.register_tool('record_research_disposition', record_research_disposition, RecordResearchDispositionInput)
+        self.register_tool('record_research_review', record_research_review, RecordResearchReviewInput)
+        self.register_tool(
+            "mark_research_planning_no_change",
+            mark_research_planning_no_change,
+            MarkResearchPlanningNoChangeInput,
+        )
+        self.register_tool("create_research_graph", create_research_graph, CreateResearchGraphInput)
+        self.register_tool(
+            "query_research_graph_sql",
+            query_research_graph_sql,
+            QueryResearchGraphSQLInput,
+        )
+        self.register_tool(
+            "set_research_graph_focus",
+            set_research_graph_focus,
+            SetResearchGraphFocusInput,
+        )
+        self.register_tool(
+            "create_bound_research_experiment",
+            create_bound_research_experiment,
+            CreateBoundResearchExperimentInput,
+        )
+        self.register_tool(
+            "update_bound_research_result",
+            update_bound_research_result,
+            UpdateBoundResearchResultInput,
+        )
+        self.register_tool(
+            "resume_bound_research_experiment",
+            resume_bound_research_experiment,
+            ResumeBoundResearchExperimentInput,
+        )
+        self.register_tool(
+            "retract_bound_research_result",
+            retract_bound_research_result,
+            RetractBoundResearchResultInput,
+        )
+        self.register_tool(
+            "update_research_graph_scope",
+            update_research_graph_scope,
+            UpdateResearchGraphScopeInput,
+        )
+        self.register_tool("add_research_hypothesis", add_research_hypothesis, AddResearchHypothesisInput)
+        self.register_tool("add_research_experiment", add_research_experiment, AddResearchExperimentInput)
+        self.register_tool("record_research_result", record_research_result, RecordResearchResultInput)
+        self.register_tool(
+            "set_research_result_judgment",
+            set_research_result_judgment,
+            SetResearchResultJudgmentInput,
+        )
+        self.register_tool(
+            "stage_research_plan",
+            stage_research_plan,
+            StageResearchPlanInput,
+        )
+        self.register_tool(
+            "record_research_experiment_comparison",
+            record_research_experiment_comparison,
+            RecordResearchExperimentComparisonInput,
+        )
+        self.register_tool(
+            "set_research_graph_completion",
+            set_research_graph_completion,
+            SetResearchGraphCompletionInput,
+        )
+        self.register_tool(
+            "record_bound_research_result",
+            record_bound_research_result,
+            RecordBoundResearchResultInput,
+        )
+        self.register_tool(
+            "mark_research_experiment_failed",
+            mark_research_experiment_failed,
+            MarkResearchExperimentFailedInput,
+        )
+        self.register_tool(
+            "mark_bound_research_experiment_failed",
+            mark_bound_research_experiment_failed,
+            MarkBoundResearchExperimentFailedInput,
+        )
+        self.register_tool("build_dataset_from_runs", build_dataset_from_runs, BuildDatasetFromRunsInput)
+        self.register_tool("calculate_al_candidates", calculate_al_candidates, CalculateALCandidatesInput)
+    
+    def register_tool(
+        self, 
+        name: str, 
+        func: Callable | None,
+        input_model: type[BaseModel],
+        *,
+        coroutine: Callable[..., Awaitable[Any]] | None = None,
+    ):
+        """Register a tool with sync/async callables and its input model."""
+        if func is None and coroutine is None:
+            raise ValueError(f"Tool {name!r} must provide at least one callable.")
+        self.tools[name] = {
+            "function": func,
+            "coroutine": coroutine,
+            "input_model": input_model,
+            "parameters": input_model.model_json_schema()
+        }
+
+    def register_alias(self, alias: str, target: str) -> None:
+        alias_name = str(alias or "").strip()
+        target_name = str(target or "").strip()
+        if not alias_name or not target_name:
+            raise ValueError("Tool alias and target must be non-empty.")
+        self.aliases[alias_name] = target_name
+
+    def _canonical_tool_name(self, name: str) -> str:
+        current = str(name or "").strip()
+        if not current:
+            return current
+        seen: set[str] = set()
+        while current in self.aliases and current not in seen:
+            seen.add(current)
+            current = self.aliases[current]
+        return current
+
+    def as_openai_tools(
+        self,
+        *,
+        allowlist: list[str] | None = None,
+        strict: bool = False,
+    ) -> list[dict]:
+        tools: list[dict] = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            info = self.tools.get(name)
+            if not info:
+                continue
+            model = info["input_model"]
+            description = (model.__doc__ or f"Input for {name}").strip()
+            schema = info.get("parameters") or model.model_json_schema()
+            tools.append({
+                "type": "function",
+                "name": name,
+                "description": description,
+                "parameters": sanitize_json_schema(schema),
+                "strict": strict,
+            })
+        return tools
+    
+    def get_tool_info(self, name: str) -> Dict[str, Any]:
+        """Get tool information by name."""
+        return self.tools.get(self._canonical_tool_name(name), {})
+    
+    def get_tool_function(self, name: str) -> Callable:
+        """Get tool function by name."""
+        canonical_name = self._canonical_tool_name(name)
+        tool_info = self.tools.get(canonical_name)
+        if tool_info and tool_info.get("function") is not None:
+            return tool_info["function"]
+        if tool_info and tool_info.get("coroutine") is not None:
+            raise ValueError(f"Tool {canonical_name} is async-only and has no sync function.")
+        raise ValueError(f"Unknown tool: {name}")
+    
+    def list_tools(self) -> Dict[str, Dict[str, Any]]:
+        """List all registered tools with their schemas."""
+        return {
+            name: {
+                "parameters": sanitize_json_schema(info["parameters"])
+            }
+            for name, info in self.tools.items()
+        }
+    
+    def get_tool_descriptions_for_llm(self, allowlist: list[str] | None = None) -> str:
+        """Get tool descriptions formatted for LLM consumption."""
+        descriptions = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            info = self.tools.get(name)
+            if not info:
+                continue
+            model = info["input_model"]
+            doc = model.__doc__ or f"Input for {name}"
+            params = []
+            for field_name, field_info in model.model_fields.items():
+                desc = field_info.description or "No description"
+                params.append(f"  - {field_name}: {desc}")
+
+            descriptions.append(f"{name} : {doc}\n" + "\n".join(params))
+
+        return "\n\n".join(descriptions)
+
+    def get_short_tool_descriptions_for_llm(self, allowlist: list[str] | None = None) -> str:
+        """Get short tool descriptions (name + docstring only) for LLM planning."""
+        descriptions = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            info = self.tools.get(name)
+            if not info:
+                continue
+            model = info["input_model"]
+            doc = model.__doc__ or f"Input for {name}"
+            descriptions.append(f"{name} : {doc}")
+
+        return "\n\n".join(descriptions)
+
+    def as_langchain_tools(
+        self,
+        *,
+        allowlist: Optional[list[str]] = None,
+        run_dir: Optional[str] = None,
+        workspace: Optional[str] = None,
+        audience: Optional[str] = None,
+        runtime_context: Optional[dict[str, Any]] = None,
+    ) -> list[StructuredTool]:
+        """Convert registered tools to LangChain StructuredTool instances.
+
+        CatMaster tools accept ``payload: dict`` and must return:
+        - ``(content, artifact)`` (native), or
+        - ``ToolMessage`` (advanced)
+        The wrapper maps LangChain keyword arguments (unpacked from the
+        Pydantic args_schema) back into the ``payload`` dict the tool expects
+        and post-processes tool returns to ``(content, artifact)``.
+        """
+        tools: list[StructuredTool] = []
+        names = allowlist if allowlist is not None else list(self.tools.keys())
+        seen: set[str] = set()
+        for raw_name in names:
+            name = self._canonical_tool_name(raw_name)
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            info = self.tools.get(name)
+            if not info:
+                continue
+            tools.append(_make_langchain_tool(
+                name=name,
+                func=info["function"],
+                coroutine=info.get("coroutine"),
+                input_model=info["input_model"],
+                run_dir=run_dir,
+                workspace=workspace,
+                audience=audience,
+                runtime_context=runtime_context,
+            ))
+        return tools
+
+
+def _make_langchain_tool(
+    name: str,
+    func: Callable | None,
+    input_model: type[BaseModel],
+    coroutine: Callable[..., Awaitable[Any]] | None = None,
+    run_dir: Optional[str] = None,
+    workspace: Optional[str] = None,
+    audience: Optional[str] = None,
+    runtime_context: Optional[dict[str, Any]] = None,
+) -> StructuredTool:
+    """Wrap CatMaster ``func/coroutine(payload)`` as a LangChain StructuredTool."""
+    if func is None and coroutine is None:
+        raise ValueError(f"Tool {name!r} requires func or coroutine.")
+
+    resolved_workspace = workspace
+    resolved_run_dir = (run_dir or "").strip()
+    resolved_audience = (audience or "").strip()
+    resolved_runtime_context = dict(runtime_context or {})
+
+    def _runtime_scope(runtime: ToolRuntime | None) -> tuple[str, str, dict[str, Any]]:
+        toolcall_key = str(getattr(runtime, "tool_call_id", "") or "").strip()
+        if not toolcall_key:
+            toolcall_key = f"{name}_{uuid4().hex[:8]}"
+
+        runtime_run_dir = resolved_run_dir
+        runtime_context = getattr(runtime, "context", None)
+        if not runtime_run_dir and isinstance(runtime_context, dict):
+            runtime_run_dir = str(runtime_context.get("run_dir") or "").strip()
+        merged_context = (
+            dict(runtime_context)
+            if isinstance(runtime_context, dict)
+            else {}
+        )
+        # Host-bound values win over generic LangChain runtime context. Tool
+        # arguments never participate in this mapping.
+        merged_context.update(resolved_runtime_context)
+        return toolcall_key, runtime_run_dir, merged_context
+
+    def _workspace_files_root() -> Path:
+        if resolved_workspace:
+            return workspace_root(resolved_workspace)
+        return workspace_root()
+
+    def _wrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        if func is None:
+            raise NotImplementedError(f"Tool {name} does not support sync invocation.")
+        toolcall_key, runtime_run_dir, current_context = _runtime_scope(runtime)
+
+        with toolcall_context(
+            toolcall_key,
+            run_dir=runtime_run_dir,
+            audience=resolved_audience,
+            context=current_context,
+        ):
+            if resolved_workspace:
+                with workspace_scope(resolved_workspace):
+                    result = func(kwargs)
+            else:
+                result = func(kwargs)
+
+        return adapt_tool_return(
+            tool_name=name,
+            raw_result=result,
+            workspace_files_root=_workspace_files_root(),
+        )
+
+    async def _awrapper(runtime: ToolRuntime | None = None, **kwargs: Any) -> tuple[Any, dict[str, Any]]:
+        if coroutine is None:
+            raise NotImplementedError(f"Tool {name} does not support async invocation.")
+        toolcall_key, runtime_run_dir, current_context = _runtime_scope(runtime)
+
+        with toolcall_context(
+            toolcall_key,
+            run_dir=runtime_run_dir,
+            audience=resolved_audience,
+            context=current_context,
+        ):
+            if resolved_workspace:
+                with workspace_scope(resolved_workspace):
+                    result = await coroutine(kwargs)
+            else:
+                result = await coroutine(kwargs)
+
+        return adapt_tool_return(
+            tool_name=name,
+            raw_result=result,
+            workspace_files_root=_workspace_files_root(),
+        )
+
+    if func is not None:
+        _wrapper.__name__ = name
+    if coroutine is not None:
+        _awrapper.__name__ = f"{name}_async"
+    description = (input_model.__doc__ or f"Input for {name}").strip()
+    args_schema = sanitize_json_schema(input_model.model_json_schema())
+    # The model docstring is already sent as the function description. Keeping
+    # the same text in parameters.description duplicates tokens for every tool.
+    args_schema.pop("description", None)
+
+    return StructuredTool.from_function(
+        func=_wrapper if func is not None else None,
+        coroutine=_awrapper if coroutine is not None else None,
+        name=name,
+        description=description,
+        args_schema=args_schema,
+        infer_schema=False,
+        response_format="content_and_artifact",
+    )
+
+
+def _is_null_schema(schema: Any) -> bool:
+    return isinstance(schema, dict) and schema.get("type") == "null"
+
+
+def _merge_non_null_variant(parent: dict, variant: dict, union_key: str) -> dict:
+    merged = dict(variant)
+    for key, value in parent.items():
+        if key == union_key:
+            continue
+        if key == "default" and value is None:
+            continue
+        if key in {"description", "default"} or key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _strip_optional_nullability(schema: dict, *, required: bool) -> dict:
+    if required:
+        return schema
+
+    cleaned = dict(schema)
+    for union_key in ("anyOf", "oneOf"):
+        variants = cleaned.get(union_key)
+        if not isinstance(variants, list) or not any(_is_null_schema(item) for item in variants):
+            continue
+        non_null_variants = [item for item in variants if not _is_null_schema(item)]
+        if len(non_null_variants) == 1 and isinstance(non_null_variants[0], dict):
+            cleaned = _merge_non_null_variant(cleaned, non_null_variants[0], union_key)
+        else:
+            cleaned[union_key] = non_null_variants
+            if cleaned.get("default") is None:
+                cleaned.pop("default", None)
+        break
+
+    schema_type = cleaned.get("type")
+    if isinstance(schema_type, list) and "null" in schema_type:
+        non_null_types = [item for item in schema_type if item != "null"]
+        cleaned["type"] = non_null_types[0] if len(non_null_types) == 1 else non_null_types
+        if cleaned.get("default") is None:
+            cleaned.pop("default", None)
+    elif cleaned.get("default") is None:
+        cleaned.pop("default", None)
+
+    return cleaned
+
+
+def sanitize_json_schema(schema: dict, *, _required: bool = True) -> dict:
+    if isinstance(schema, list):
+        return [sanitize_json_schema(item, _required=_required) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    required_fields = set(schema.get("required") or []) if isinstance(schema.get("required"), list) else set()
+    cleaned: dict = {}
+    for key, value in schema.items():
+        if key in {"title", "examples"}:
+            continue
+        if key == "properties" and isinstance(value, dict):
+            cleaned[key] = {
+                prop: sanitize_json_schema(prop_schema, _required=prop in required_fields)
+                for prop, prop_schema in value.items()
+            }
+        elif isinstance(value, dict):
+            cleaned[key] = sanitize_json_schema(value)
+        elif isinstance(value, list):
+            cleaned[key] = [sanitize_json_schema(item) for item in value]
+        else:
+            cleaned[key] = value
+
+    for key in ("anyOf", "allOf", "oneOf"):
+        if key in cleaned and isinstance(cleaned[key], list):
+            cleaned[key] = [sanitize_json_schema(item) for item in cleaned[key]]
+    if "items" in cleaned:
+        cleaned["items"] = sanitize_json_schema(cleaned["items"])
+    if "prefixItems" in cleaned and isinstance(cleaned["prefixItems"], list):
+        cleaned["prefixItems"] = [sanitize_json_schema(item) for item in cleaned["prefixItems"]]
+
+    cleaned = _strip_optional_nullability(cleaned, required=_required)
+
+    schema_type = cleaned.get("type")
+    if schema_type == "object" or (isinstance(schema_type, list) and "object" in schema_type):
+        cleaned.setdefault("additionalProperties", False)
+
+    return cleaned
+
+
+# Singleton instance
+_registry = None
+
+def get_tool_registry() -> ToolRegistry:
+    """Get the singleton tool registry instance."""
+    global _registry
+    if _registry is None:
+        _registry = ToolRegistry()
+    return _registry

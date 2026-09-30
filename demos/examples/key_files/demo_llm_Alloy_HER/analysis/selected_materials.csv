@@ -1,0 +1,9 @@
+rank,material_id,formula_pretty,reduced_formula,energy_above_hull,nsites,spacegroup_symbol,source_chemsys,source_file
+1,mp-644311,CuPt,CuPt,0.0,2,R-3m,Pt-Cu,mp_search/Pt-Cu_ehull_0-0.05.csv
+2,mp-12086,Cu3Pt,Cu3Pt,0.0,4,Pm-3m,Pt-Cu,mp_search/Pt-Cu_ehull_0-0.05.csv
+3,mp-12798,Ni3Pt,Ni3Pt,0.0,4,Pm-3m,Pt-Ni,mp_search/Pt-Ni_ehull_0-0.05.csv
+4,mp-945,NiPt,NiPt,0.0,4,P4/mmm,Pt-Ni,mp_search/Pt-Ni_ehull_0-0.05.csv
+5,mp-1186117,NiPt3,NiPt3,0.0,4,Pm-3m,Pt-Ni,mp_search/Pt-Ni_ehull_0-0.05.csv
+6,mp-12608,CuPt7,CuPt7,0.0,8,Fm-3m,Pt-Cu,mp_search/Pt-Cu_ehull_0-0.05.csv
+7,mp-1225687,CuNi,CuNi,0.04142861,2,R-3m,Ni-Cu,mp_search/Ni-Cu_ehull_0-0.05.csv
+8,mp-1184054,CuNi3,CuNi3,0.0430200825,4,I4/mmm,Ni-Cu,mp_search/Ni-Cu_ehull_0-0.05.csv

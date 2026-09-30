@@ -1,0 +1,5 @@
+id: catmaster.model.mimo
+kind: prompt_bundle
+fragments:
+  - catmaster.guidance.mimo_priority
+variables: []

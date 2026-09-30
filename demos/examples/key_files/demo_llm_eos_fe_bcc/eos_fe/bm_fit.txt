@@ -1,0 +1,11 @@
+Birch-Murnaghan EOS fit (per-atom quantities)
+Input CSV: eos_fe/eos_data.csv
+Npoints: 41
+
+V0 = 11.413776 Ang^3/atom
+E0 = -8.267484265 eV/atom
+B0 = 1.098076 eV/Ang^3  (175.931 GPa)
+B1 = 5.087611 (dimensionless)
+
+Saved: eos_fe/bm_fit.json
+Saved: eos_fe/bm_fit.txt

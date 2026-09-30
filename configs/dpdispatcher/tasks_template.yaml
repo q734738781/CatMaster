@@ -1,0 +1,307 @@
+# DPDispatcher task-card template.
+# This file is ignored by CatMaster registries because its filename contains
+# "template". Copy it to configs/dpdispatcher/tasks.yaml for an active private
+# deployment config, then edit resource bindings or commands if needed.
+
+vasp_execute:
+  enabled: true
+  audiences: [materials_worker]
+  description: "Run one prepared VASP calculation stage."
+  boot_script: "catmaster/remote/cpu/vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/vasp_execute.md"
+  resources: vasp_cpu
+  requires: [vasp]
+  command: "python task_script/vasp_boot.py --auto_ncore --auto_gamma"
+  forward_files:
+    - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+vasp_execute_k8s:
+  enabled: false
+  audiences: [materials_worker]
+  description: "Equivalent to vasp_execute with the same prepared VASP stage contract, using a blocking SSH-to-Kubernetes execution backend."
+  boot_script: "catmaster/remote/cpu/k8s_vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/vasp_execute.md"
+  resources: vasp_k8s_cpu
+  requires: [vasp]
+  command: "python task_script/k8s_vasp_boot.py"
+  forward_files:
+    - "*"
+    - "task_script/k8s_vasp_boot.py"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+vasp_execute_neb:
+  audiences: [materials_worker]
+  description: "Run one prepared VASP NEB/dimer-style calculation stage with the larger VASP resource preset."
+  boot_script: "catmaster/remote/cpu/vasp_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/vasp_execute_neb.md"
+  resources: vasp_cpu_neb
+  requires: [vasp]
+  command: "python task_script/vasp_boot.py --auto_ncore --auto_gamma"
+  forward_files:
+    - "*"
+    - "task_script/vasp_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+cp2k_execute:
+  audiences: [materials_worker, dynamics_worker]
+  description: "Run one prepared CP2K stage directory."
+  prepare_tool: cp2k_prepare
+  boot_script: "catmaster/remote/cpu/cp2k_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/cp2k_execute.md"
+  resources: cp2k_cpu
+  requires: [cp2k]
+  command: "python task_script/cp2k_boot.py --cp2k_bin cp2k.psmp"
+  forward_files:
+    - "*"
+    - "task_script/cp2k_boot.py"
+    - "task_script/node_local_scratch.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+lammps_execute:
+  enabled: true
+  audiences: [dynamics_worker]
+  description: "Run one prepared LAMMPS stage on the deployment CPU resource, matching allocated task slots to probed MPI ranks. Use this for styles without complete KOKKOS support."
+  prepare_tool: lammps_prepare
+  boot_script: "catmaster/remote/cpu/lammps_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/lammps_execute.md"
+  resources: lammps_cpu
+  requires: [lammps]
+  command: "python task_script/lammps_boot.py --gpu off --mpi_launcher auto"
+  forward_files:
+    - "*"
+    - "task_script/lammps_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+lammps_execute_kokkos:
+  enabled: false
+  audiences: [dynamics_worker]
+  description: "Run one prepared LAMMPS stage on a GPU with strict KOKKOS acceleration. Use only when the input styles support KOKKOS; this task does not fall back to CPU."
+  prepare_tool: lammps_prepare
+  boot_script: "catmaster/remote/cpu/lammps_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/lammps_execute_kokkos.md"
+  resources: lammps_gpu
+  requires: [lammps, gpu, kokkos]
+  command: "python task_script/lammps_boot.py --gpu kokkos --no-allow_cpu_fallback --mpi_launcher auto"
+  forward_files:
+    - "*"
+    - "task_script/lammps_boot.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+mlff_sp:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_sp.md"
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Run MLFF single-point calculations with an enabled backend for structures directly under input/. Set task_config.document_extxyz=true when atom-resolved forces should be retained in a same-basename extxyz calculation record for geometry diagnosis."
+  operation: sp
+  boot_script: "catmaster/remote/mlff/mlff_sp.py"
+  command: "python task_script/mlff_sp.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_sp.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_relax:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_relax.md"
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Run MLFF structure relaxations with an enabled backend for structures directly under input/."
+  operation: relax
+  boot_script: "catmaster/remote/mlff/mlff_relax.py"
+  command: "python task_script/mlff_relax.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_relax.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_md:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_md.md"
+  audiences: [materials_worker, dynamics_worker]
+  description: "Run one MLFF trajectory with an enabled backend from the single structure under input/."
+  operation: md
+  boot_script: "catmaster/remote/mlff/mlff_md.py"
+  command: "python task_script/mlff_md.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_md.py"
+    - "task_script/mlff_common.py"
+    - "task_script/mlff_dynamics.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_neb:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_neb.md"
+  audiences: [materials_worker]
+  description: "Run one locally prepared fixed-image MLFF NEB path under input/path/."
+  operation: neb
+  boot_script: "catmaster/remote/mlff/mlff_neb.py"
+  command: "python task_script/mlff_neb.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_neb.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_vib:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_vib.md"
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Compute general constrained MLFF normal modes without ASE displacement-cache files."
+  operation: vib
+  boot_script: "catmaster/remote/mlff/mlff_vib.py"
+  command: "python task_script/mlff_vib.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_vib.py"
+    - "task_script/mlff_vibrations.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mlff_ts:
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mlff_ts.md"
+  audiences: [materials_worker, orca_xtb_worker]
+  description: "Refine and validate one TS-like structure with constrained MLFF RS-pRFO."
+  operation: ts
+  boot_script: "catmaster/remote/mlff/mlff_ts.py"
+  command: "python task_script/mlff_ts.py --run_config .catmaster/generated/run_config.json"
+  forward_files:
+    - "input"
+    - ".catmaster/generated"
+    - "?models"
+    - "task_script/mlff_ts.py"
+    - "task_script/mlff_vibrations.py"
+    - "task_script/mlff_common.py"
+  backward_files: ["output"]
+  task_work_path: "."
+
+mace_train:
+  audiences: [ml_worker]
+  description: "Run MACE training or fine-tuning from staged dataset/ and params/train_params.json."
+  boot_script: "catmaster/remote/gpu/mace_train.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mace_train.md"
+  resources: mace_gpu
+  requires: [mace]
+  command: "python task_script/mace_train.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"
+  defaults:
+    dataset_root: dataset
+    output_root: output
+    params: params/train_params.json
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_train.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+mace_eval:
+  audiences: [ml_worker]
+  description: "Run MACE evaluation from staged dataset/ and params/eval_params.json."
+  boot_script: "catmaster/remote/gpu/mace_evaluate.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/mace_eval.md"
+  resources: mace_gpu
+  requires: [mace]
+  command: "python task_script/mace_evaluate.py --dataset_root {dataset_root} --output_root {output_root} --params {params}"
+  defaults:
+    dataset_root: dataset
+    output_root: output
+    params: params/eval_params.json
+  forward_files:
+    - "dataset"
+    - "params"
+    - "task_script/mace_evaluate.py"
+  backward_files:
+    - "output"
+  task_work_path: "."
+
+xtb_execute:
+  audiences: [orca_xtb_worker]
+  description: "Run one prepared native xTB argv stage without changing its scientific arguments."
+  prepare_tool: xtb_prepare
+  boot_script: "catmaster/remote/cpu/xtb_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/xtb_execute.md"
+  resources: xtb_cpu
+  requires: [xtb]
+  command: ""
+  parameter_file:
+    path: manifest.json
+    program: xtb
+  forward_files:
+    - "task_script/xtb_boot.py"
+    - "task_script/native_argv_runtime.py"
+  backward_files:
+    - "catmaster_results.tar.gz"
+  task_work_path: "."
+
+crest_execute:
+  audiences: [orca_xtb_worker]
+  description: "Run one prepared native CREST argv or TOML stage without changing its scientific arguments."
+  prepare_tool: crest_prepare
+  boot_script: "catmaster/remote/cpu/crest_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/crest_execute.md"
+  resources: crest_cpu
+  requires: [crest]
+  command: ""
+  parameter_file:
+    path: manifest.json
+    program: crest
+  forward_files:
+    - "task_script/crest_boot.py"
+    - "task_script/native_argv_runtime.py"
+  backward_files:
+    - "catmaster_results.tar.gz"
+  task_work_path: "."
+
+orca_execute:
+  audiences: [orca_xtb_worker]
+  description: "Run one prepared ORCA stage containing job.inp."
+  prepare_tool: orca_prepare
+  boot_script: "catmaster/remote/cpu/orca_boot.py"
+  layout_ref: "/.deepagents/skills/execution/remote-stage-layouts/references/orca_execute.md"
+  resources: orca_cpu
+  requires: [orca]
+  command: "python task_script/orca_boot.py --input job.inp"
+  forward_files:
+    - "*"
+    - "task_script/orca_boot.py"
+    - "task_script/node_local_scratch.py"
+  backward_files:
+    - "*"
+  task_work_path: "."
+
+general_execute:
+  audiences: [materials_worker, dynamics_worker, ml_worker, orca_xtb_worker]
+  description: >-
+    Run an agent-authored Python or Bash script in an explicitly selected
+    environment. Prefer dedicated registered tasks for supported operations;
+    use this for handwritten implementations or operations they do not cover.
+  command: ""
+  task_work_path: "."
+  layout_ref: "/.deepagents/skills/execution/general-remote-scripts/SKILL.md"

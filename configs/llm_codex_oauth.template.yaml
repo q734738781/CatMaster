@@ -1,0 +1,196 @@
+# CatMaster local Codex OAuth LLM config template.
+#
+# This is an optional deployment profile for local Codex experiments. The
+# repository's general llm templates remain OpenRouter/API-key oriented.
+#
+# Coordinators, writing and technical workers use langchain-openai's Codex
+# OAuth chat model and local ChatGPT/Codex OAuth credentials. Optional image
+# generation uses OpenRouter and requires OPENROUTER_API_KEY when invoked.
+# Before using the text-agent profile:
+#
+#   conda activate catmaster
+#   python -c "from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()"
+#
+# Copy this file to configs/llm.yaml on the deployment target. The default uses
+# GPT-6 Astra high for research specialists and independent direction challenges, medium
+# for compute workers/helpers and the writing coordinator, prose, PPT,
+# plots and review. GPT-6 Luna uses xhigh for literature and low for titles.
+# Long-running agent profiles expose Responses API reasoning summaries for monitor
+# observability. The one-shot title call does not enter the run monitor.
+
+models:
+  codex-oauth-writing:
+    provider: codex_oauth
+    model: gpt-6-astra
+    temperature: null
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          temperature: null
+          reasoning:
+            effort: medium
+            summary: auto
+
+  figure-generation:
+    provider: openrouter
+    model: openai/gpt-image-2.5-sunburst
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+
+  codex-oauth-main:
+    provider: codex_oauth
+    model: gpt-6-astra
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 180
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          # Omit sampling even when the generic config supplies temperature=0.
+          # Astra does not accept temperature; this is a native model kwarg.
+          temperature: null
+          reasoning:
+            effort: high
+            summary: auto
+          verbosity: medium
+
+  codex-oauth-worker:
+    provider: codex_oauth
+    model: gpt-6-astra
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 180
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          temperature: null
+          reasoning:
+            effort: medium
+            summary: auto
+          verbosity: medium
+
+  codex-oauth-luna-worker:
+    provider: codex_oauth
+    model: gpt-6-luna
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 180
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning:
+            effort: xhigh
+            summary: auto
+          verbosity: medium
+
+  codex-oauth-luna-title:
+    provider: codex_oauth
+    model: gpt-6-luna
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    # The current Codex OAuth endpoint rejects an explicit output-token cap.
+    # The host validates and bounds the returned title instead.
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 30
+
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning:
+            effort: low
+          verbosity: low
+
+  gemini-3.7-flash-writer:
+    provider: openrouter
+    model: google/gemini-3.7-flash
+    temperature: 0.2
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+    reasoning:
+      effort: medium
+
+  google/nanobanana_2:
+    provider: openrouter
+    model: google/gemini-3.1-flash-image-preview
+    temperature: 1.0
+    api_key_env: OPENROUTER_API_KEY
+    base_url: "https://openrouter.ai/api/v1"
+
+agents:
+  proposal: codex-oauth-main
+  director: codex-oauth-main
+  task_runner: codex-oauth-worker
+  research_lead: codex-oauth-main
+  research_state_updater: codex-oauth-worker
+  research_challenger: codex-oauth-main
+  evidence_judge: codex-oauth-worker
+  write_director: codex-oauth-writing
+  section_writer: codex-oauth-writing
+  plot_worker: codex-oauth-writing
+  presentation_worker: codex-oauth-writing
+  write_reviewer: codex-oauth-writing
+  tex_compile_fixer: codex-oauth-writing
+  memory_patch: codex-oauth-worker
+  summary: codex-oauth-worker
+  tool_selector: codex-oauth-worker
+  image_analyzer: codex-oauth-worker
+  literature_deep_research: codex-oauth-main
+  literature_worker: codex-oauth-luna-worker
+  self_evolution_proposer: codex-oauth-worker
+  self_evolution_reviewer: codex-oauth-worker
+  thread_title: codex-oauth-luna-title
+
+peer_review_models:
+  - codex-oauth-main
+
+image_generation:
+  model_label: figure-generation
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: CatMaster
+
+agent_runtime:
+  # Compaction threshold, not a task budget; null uses upstream defaults.
+  deepagent_context_trigger_token_cap: 258000
+  print_state_messages: false
+  print_http_raw_post: false

@@ -1,0 +1,295 @@
+# CatMaster LLM config template (new schema)
+# - No legacy tool_calling/tool_calling_profiles fields.
+# - Use provider_options for provider-bound custom options.
+# - Reasoning fields are provider-specific:
+#   * openrouter/openai: use reasoning.effort.
+#   * oai_compatible/deepseek: use top-level reasoning_effort.
+# - For every supported field/provider example, see configs/llm.full.template.yaml.
+
+persistent_research:
+  agent_pool_size: 16
+  agent_task_concurrency:
+    low: 8
+    medium: 4
+    high: 2
+  control_concurrency: 4
+
+models:
+  codex-oauth-writing:
+    provider: codex_oauth
+    model: gpt-6-astra
+    temperature: null
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          temperature: null
+          reasoning:
+            effort: medium
+            summary: auto
+
+  figure-generation:
+    provider: openrouter
+    model: openai/gpt-image-2.5-sunburst
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+
+  # -------------------------------------------------------------------------
+  # OpenRouter example
+  # -------------------------------------------------------------------------
+  "openrouter-main":
+    provider: openrouter
+    model: openai/gpt-5.6-sol
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    # Official reasoning object style
+    reasoning:
+      effort: medium
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    # Optional standard transport headers
+    default_headers: {}
+
+    # Provider-bound options (OpenRouter)
+    provider_options:
+      openrouter:
+        extra_body:
+          # OpenRouter provider routing example
+          provider:
+            order: [openai]
+          # OpenRouter prompt cache policy example
+          prompt_cache_retention: 24h
+
+  # Optional OpenRouter example for deeper research synthesis
+  "openrouter-main-xhigh":
+    provider: openrouter
+    model: openai/gpt-5.6-sol
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    reasoning:
+      effort: high
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
+  # Optional OpenRouter Astra profile with high reasoning.
+  openrouter-astra-specialist:
+    provider: openrouter
+    model: openai/gpt-6-astra
+    temperature: null
+    top_p: null
+    reasoning:
+      effort: high
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    timeout_s: 180
+
+  # Optional OpenRouter Astra profile with medium reasoning.
+  openrouter-astra-writing:
+    provider: openrouter
+    model: openai/gpt-6-astra
+    temperature: null
+    top_p: null
+    reasoning:
+      effort: medium
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    timeout_s: 180
+
+  "openrouter-image-preview":
+    provider: openrouter
+    model: google/gemini-2.5-flash-image-preview
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: OPENROUTER_API_KEY
+    api_key: null
+    base_url: "https://openrouter.ai/api/v1"
+
+    default_headers: {}
+
+    provider_options:
+      openrouter:
+        extra_body:
+          prompt_cache_retention: 24h
+
+  # -------------------------------------------------------------------------
+  # OpenAI example
+  # -------------------------------------------------------------------------
+  "openai-main":
+    provider: openai
+    model: gpt-5
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    reasoning:
+      effort: medium
+
+    api_key_env: OPENAI_API_KEY
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+
+    # Provider-bound options (OpenAI request-level options)
+    provider_options:
+      openai:
+        request_options:
+          # Supported keys:
+          # - timeout
+          # - max_retries
+          # - default_headers
+          # - default_query
+          timeout: 120
+          max_retries: 3
+          default_headers:
+            x-trace-id: run-123
+          default_query:
+            api-version: "2025-01-01"
+
+  # -------------------------------------------------------------------------
+  # Anthropic direct API example
+  # -------------------------------------------------------------------------
+  "anthropic-main":
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+
+    temperature: 1.0
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: ANTHROPIC_API_KEY
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+
+    # Provider-bound options passed directly to langchain_anthropic.ChatAnthropic.
+    # CatMaster does not translate `reasoning` into Anthropic `thinking`;
+    # set Anthropic-native options here when you need them.
+    provider_options:
+      anthropic:
+        chat_kwargs:
+          # Provider-native per-response thinking control; this is not an AgentTask or scientific completion budget.
+          # thinking:
+          #   type: enabled
+          #   budget_tokens: 4096
+          # betas:
+          #   - token-efficient-tools-2025-02-19
+
+  # -------------------------------------------------------------------------
+  # Codex OAuth example (langchain-openai ChatGPT OAuth; no API key)
+  # -------------------------------------------------------------------------
+  "codex-oauth-main":
+    provider: codex_oauth
+    model: gpt-5.6-sol
+
+    temperature: null
+    top_p: null
+    max_tokens: null
+    max_output_tokens: null
+
+    api_key_env: null
+    api_key: null
+    base_url: null
+
+    default_headers: {}
+    timeout_s: 180
+
+    # Provider-bound options passed to langchain_openai.chat_models.codex._ChatOpenAICodex.
+    provider_options:
+      codex_oauth:
+        chat_kwargs:
+          reasoning:
+            effort: high
+            summary: auto
+          verbosity: medium
+
+agents:
+  proposal: "openrouter-main"
+  director: "openrouter-main"
+  task_runner: "openrouter-main"
+  research_lead: "openrouter-main-xhigh"
+  research_state_updater: "openrouter-main-xhigh"
+  # Optional scientific campaign roles. They are separate agents even when they
+  # use the same model profile. Defaults: proposer -> research_lead,
+  # judge -> research_state_updater.
+  research_challenger: "openrouter-main-xhigh"
+  evidence_judge: "openrouter-main-xhigh"
+  write_director: codex-oauth-writing
+  section_writer: codex-oauth-writing
+  plot_worker: codex-oauth-writing
+  presentation_worker: codex-oauth-writing
+  write_reviewer: codex-oauth-writing
+  tex_compile_fixer: codex-oauth-writing
+  # Optional: if omitted, it falls back to `task_runner`.
+  image_analyzer: "openrouter-main"
+  # Optional: if omitted, it falls back to `director`.
+  # Search follows this role's provider: OpenAI/Codex uses hosted web_search;
+  # other providers use CatMaster's Tavily tool. Selected-source acquisition is
+  # a separate high-level local tool.
+  literature_deep_research: "openrouter-main-xhigh"
+  # Optional: if omitted, it falls back to `task_runner`.
+  tool_selector: "openrouter-main"
+  memory_patch: "openrouter-main"
+  summary: "openrouter-main"
+  # Optional independent background-learning roles. If omitted, proposer falls
+  # back to memory_patch and reviewer falls back to write_reviewer.
+  self_evolution_proposer: "openrouter-main"
+  self_evolution_reviewer: "openrouter-main"
+  # Optional one-shot WebUI title model. If omitted, local provisional titles
+  # remain in use and no other role is selected as a fallback.
+  # thread_title: "openrouter-main"
+
+peer_review_models:
+  # Explicit reviewer model-label list. One entry here produces one reviewer report.
+  - "openrouter-main-xhigh"
+
+image_generation:
+  # Optional: if omitted, the image-generation tool falls back to `image_analyzer`.
+  model_label: figure-generation
+  image_config:
+    aspect_ratio: "4:3"
+
+writing:
+  author_name: "CatMaster"
+
+agent_runtime:
+  # Compaction threshold, not a task budget; null uses upstream defaults.
+  deepagent_context_trigger_token_cap: 258000
+  print_state_messages: false
+  print_http_raw_post: false
+
+agent_policies:
+  proposal:
+    browse_tools_enabled: true
+
+literature:
+  public_web_on_search_failure: true
+  semantic_scholar_retry_429_attempts: 5
+  semantic_scholar_retry_429_wait_seconds: 15.0

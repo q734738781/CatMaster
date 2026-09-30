@@ -1,0 +1,4 @@
+interface:
+  display_name: "VASP Implicit Solvation"
+  short_description: "Prepare vacuum-seeded VASPsol and LSOL workflows"
+  default_prompt: "Use $vasp-implicit-solvation to prepare a vacuum-seeded LSOL calculation with a compatible WAVECAR."

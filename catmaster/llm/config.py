@@ -1,0 +1,771 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional, Literal
+import logging
+import os
+
+try:  # optional dependency
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None
+
+Provider = Literal[
+    "openai",
+    "openrouter",
+    "deepseek",
+    "gemini",
+    "oai_compatible",
+    "langchain",
+    "anthropic",
+    "codex_oauth",
+]
+AgentRole = Literal[
+    "proposal",
+    "director",
+    "task_runner",
+    "research_lead",
+    "research_state_updater",
+    "hypothesis_proposer",
+    "research_challenger",
+    "evidence_judge",
+    "write_director",
+    "section_writer",
+    "plot_worker",
+    "presentation_worker",
+    "write_reviewer",
+    "tex_compile_fixer",
+    "memory_patch",
+    "summary",
+    "tool_selector",
+    "image_analyzer",
+    "literature_deep_research",
+    "literature_worker",
+    "self_evolution_proposer",
+    "self_evolution_reviewer",
+    "thread_title",
+]
+
+_DEFAULT_CONFIG_PATH = Path("configs/llm.yaml")
+_logger = logging.getLogger(__name__)
+REQUIRED_AGENT_ROLES: tuple[str, ...] = ("proposal", "director", "task_runner", "memory_patch", "summary")
+OPTIONAL_AGENT_ROLE_FALLBACKS: dict[str, str] = {
+    "research_lead": "director",
+    "research_state_updater": "research_lead",
+    "hypothesis_proposer": "research_lead",
+    "research_challenger": "hypothesis_proposer",
+    "evidence_judge": "research_state_updater",
+    "write_director": "research_lead",
+    "section_writer": "task_runner",
+    "plot_worker": "section_writer",
+    "presentation_worker": "section_writer",
+    "write_reviewer": "summary",
+    "tex_compile_fixer": "task_runner",
+    "tool_selector": "task_runner",
+    "image_analyzer": "task_runner",
+    "literature_deep_research": "director",
+    "literature_worker": "literature_deep_research",
+    "self_evolution_proposer": "memory_patch",
+    "self_evolution_reviewer": "write_reviewer",
+}
+OPTIONAL_AGENT_ROLES_WITHOUT_FALLBACK: tuple[str, ...] = ("thread_title",)
+AGENT_ROLES: tuple[AgentRole, ...] = (
+    "proposal",
+    "director",
+    "task_runner",
+    "research_lead",
+    "research_state_updater",
+    "hypothesis_proposer",
+    "research_challenger",
+    "evidence_judge",
+    "write_director",
+    "section_writer",
+    "plot_worker",
+    "presentation_worker",
+    "write_reviewer",
+    "tex_compile_fixer",
+    "memory_patch",
+    "summary",
+    "tool_selector",
+    "image_analyzer",
+    "literature_deep_research",
+    "literature_worker",
+    "self_evolution_proposer",
+    "self_evolution_reviewer",
+    "thread_title",
+)
+AGENT_ROLE_ALIASES: dict[str, str] = {
+    "proposal_agent": "proposal",
+    "planning_director": "director",
+    "experiment_specialist": "task_runner",
+    "research_specialist": "research_lead",
+    "research_kernel_updater": "research_state_updater",
+    "hypothesis_proposer_agent": "hypothesis_proposer",
+    "research_challenger_agent": "research_challenger",
+    "evidence_judge_agent": "evidence_judge",
+    "writing_specialist": "write_director",
+    "writing_worker_agent": "section_writer",
+    "plot_worker_agent": "plot_worker",
+    "peer_review_specialist": "write_reviewer",
+    "latex_fixer": "tex_compile_fixer",
+    "memory_patcher": "memory_patch",
+    "run_summary": "summary",
+    "tool_router": "tool_selector",
+    "litreview_agent": "literature_deep_research",
+    "litreview_worker_agent": "literature_worker",
+    "self_evolution_proposer_agent": "self_evolution_proposer",
+    "self_evolution_reviewer_agent": "self_evolution_reviewer",
+}
+def _normalize_agent_role_name(role: Any) -> str:
+    text = str(role or "").strip()
+    if not text:
+        return ""
+    return AGENT_ROLE_ALIASES.get(text, text)
+def _normalize_agents_mapping(raw_agents: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for raw_role, bound in raw_agents.items():
+        role = _normalize_agent_role_name(raw_role)
+        if not role:
+            continue
+        if role in normalized and normalized[role] != bound:
+            raise ValueError(
+                f"Conflicting model bindings provided for role {role!r} via aliases in llm config agents."
+            )
+        normalized[role] = bound
+    return normalized
+
+
+@dataclass
+class ProposalPolicyConfig:
+    browse_tools_enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ProposalPolicyConfig":
+        if not isinstance(data, dict):
+            return cls()
+        return cls(
+            browse_tools_enabled=_to_bool(
+                data.get("browse_tools_enabled"),
+                default=cls.browse_tools_enabled,
+                source="agent_policies.proposal.browse_tools_enabled",
+            )
+        )
+
+
+@dataclass
+class AgentPoliciesConfig:
+    proposal: ProposalPolicyConfig = field(default_factory=ProposalPolicyConfig)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentPoliciesConfig":
+        if not isinstance(data, dict):
+            return cls()
+        proposal_raw = data.get("proposal")
+        return cls(
+            proposal=ProposalPolicyConfig.from_dict(proposal_raw if isinstance(proposal_raw, dict) else {}),
+        )
+
+
+@dataclass
+class AgentRuntimeConfig:
+    # Context compaction is independent of scientific/task completion budgets.
+    deepagent_context_trigger_token_cap: int | None = 258_000
+    print_state_messages: bool = False
+    print_http_raw_post: bool = False
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentRuntimeConfig":
+        if not isinstance(data, dict):
+            return cls()
+        unsupported_keys = [
+            key
+            for key in (
+                "termination_mode",
+                "strict_control_contract",
+                "recursion_limit",
+                "max_tool_calls",
+            )
+            if key in data
+        ]
+        if unsupported_keys:
+            joined = ", ".join(unsupported_keys)
+            raise ValueError(
+                f"agent_runtime no longer supports: {joined}. "
+                "Remove these keys; prescribed numeric budgets are not part of CatMaster task completion."
+            )
+        raw_cap = data.get(
+            "deepagent_context_trigger_token_cap",
+            os.getenv("CATMASTER_DEEPAGENT_CONTEXT_TRIGGER_TOKEN_CAP", cls.deepagent_context_trigger_token_cap),
+        )
+        cap = _to_int(raw_cap) if raw_cap not in (None, "") else None
+        if raw_cap not in (None, "") and cap is None:
+            raise ValueError("deepagent_context_trigger_token_cap must be an integer or null")
+        return cls(
+            deepagent_context_trigger_token_cap=cap if cap is not None and cap > 0 else None,
+            print_state_messages=_to_bool(
+                data.get("print_state_messages"),
+                default=cls.print_state_messages,
+                source="agent_runtime.print_state_messages",
+            ),
+            print_http_raw_post=_to_bool(
+                data.get("print_http_raw_post"),
+                default=cls.print_http_raw_post,
+                source="agent_runtime.print_http_raw_post",
+            ),
+        )
+
+
+@dataclass
+class LiteratureRuntimeConfig:
+    public_web_on_search_failure: bool = True
+    semantic_scholar_retry_429_attempts: int = 5
+    semantic_scholar_retry_429_wait_seconds: float = 15.0
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LiteratureRuntimeConfig":
+        defaults = cls()
+        if not isinstance(data, dict):
+            return defaults
+        removed_keys = [
+            key
+            for key in (
+                "auto_default_depth",
+                "role_auto_max",
+                "summary_key_paper_count",
+                "budgets",
+            )
+            if key in data
+        ]
+        if removed_keys:
+            raise ValueError(
+                "literature no longer supports prescribed depth or numeric budget fields: "
+                + ", ".join(removed_keys)
+                + ". Remove these keys and use the branch objective, output contract, and stop condition."
+            )
+
+        return cls(
+            public_web_on_search_failure=_to_bool(
+                data.get("public_web_on_search_failure"),
+                default=defaults.public_web_on_search_failure,
+                source="literature.public_web_on_search_failure",
+            ),
+            semantic_scholar_retry_429_attempts=max(
+                0,
+                _to_int(data.get("semantic_scholar_retry_429_attempts"))
+                if _to_int(data.get("semantic_scholar_retry_429_attempts")) is not None
+                else defaults.semantic_scholar_retry_429_attempts,
+            ),
+            semantic_scholar_retry_429_wait_seconds=max(
+                0.0,
+                _to_float(data.get("semantic_scholar_retry_429_wait_seconds"))
+                if _to_float(data.get("semantic_scholar_retry_429_wait_seconds")) is not None
+                else defaults.semantic_scholar_retry_429_wait_seconds,
+            ),
+        )
+
+
+@dataclass
+class ImageGenerationConfig:
+    model_label: str | None = None
+    image_config: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ImageGenerationConfig":
+        if not isinstance(data, dict):
+            return cls()
+        model_label = _to_str_or_none(data.get("model_label"))
+        image_config = data.get("image_config")
+        return cls(
+            model_label=model_label,
+            image_config=dict(image_config) if isinstance(image_config, dict) else {},
+        )
+
+
+@dataclass
+class WritingRuntimeConfig:
+    author_name: str = "CatMaster"
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WritingRuntimeConfig":
+        if not isinstance(data, dict):
+            return cls()
+        author_name = str(data.get("author_name", cls.author_name)).strip() or cls.author_name
+        return cls(author_name=author_name)
+
+
+@dataclass
+class LLMConfig:
+    provider: Provider = "openai"
+    model: str = "gpt-5.2"
+
+    temperature: Optional[float] = 0.0
+    top_p: Optional[float] = None
+    max_tokens: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    reasoning: Dict[str, Any] = field(default_factory=dict)
+    reasoning_effort: Optional[str] = None
+
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+
+    api_key_env: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+    default_headers: Dict[str, str] = field(default_factory=dict)
+    provider_options: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    multimodal: Dict[str, Any] = field(default_factory=dict)
+    print_http_raw_post: bool = False
+
+    langchain_class: Optional[str] = None
+    langchain_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    timeout_s: Optional[float] = None
+    max_retries: Optional[int] = None
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
+        if not isinstance(data, dict):
+            return cls()
+
+        _reject_legacy_model_fields(data, model_label="<inline>")
+
+        default_headers = data.get("default_headers") or {}
+        provider_options = data.get("provider_options") or {}
+        multimodal = data.get("multimodal") or {}
+        reasoning = data.get("reasoning") or {}
+        langchain_kwargs = data.get("langchain_kwargs") or {}
+        extra = data.get("extra") or {}
+        provider = _to_str_or_none(data.get("provider"))
+        if provider:
+            provider = provider.lower()
+
+        return cls(
+            provider=provider or None,  # type: ignore[arg-type]
+            model=_to_str_or_none(data.get("model")) or "",
+            temperature=_to_float(data.get("temperature")),
+            top_p=_to_float(data.get("top_p")),
+            max_tokens=_to_int(data.get("max_tokens")),
+            max_output_tokens=_to_int(data.get("max_output_tokens")),
+            reasoning=dict(reasoning) if isinstance(reasoning, dict) else {},
+            reasoning_effort=_to_str_or_none(data.get("reasoning_effort")),
+            frequency_penalty=_to_float(data.get("frequency_penalty")),
+            presence_penalty=_to_float(data.get("presence_penalty")),
+            api_key_env=_to_str_or_none(data.get("api_key_env")),
+            api_key=_to_str_or_none(data.get("api_key")),
+            base_url=_to_str_or_none(data.get("base_url")),
+            default_headers=dict(default_headers) if isinstance(default_headers, dict) else {},
+            provider_options=_normalize_provider_options(provider_options),
+            multimodal=dict(multimodal) if isinstance(multimodal, dict) else {},
+            print_http_raw_post=_to_bool(
+                data.get("print_http_raw_post"),
+                default=cls.print_http_raw_post,
+                source="models.*.print_http_raw_post",
+            ),
+            langchain_class=_to_str_or_none(data.get("langchain_class")),
+            langchain_kwargs=dict(langchain_kwargs) if isinstance(langchain_kwargs, dict) else {},
+            timeout_s=_to_float(data.get("timeout_s")),
+            max_retries=_to_int(data.get("max_retries")),
+            extra=dict(extra) if isinstance(extra, dict) else {},
+        )
+
+    def apply_env_fallbacks(self) -> None:
+        provider = self.provider or "openai"
+        env_provider = os.getenv("CATMASTER_LLM_PROVIDER", "").strip().lower()
+        if not self.provider:
+            self.provider = env_provider or "openai"  # type: ignore[assignment]
+            provider = self.provider
+        if not self.model:
+            model = os.getenv("CATMASTER_LLM_MODEL", "").strip()
+            self.model = model or "gpt-5.2"
+        if self.api_key_env is None:
+            self.api_key_env = _default_api_key_env(provider)
+        if self.base_url is None:
+            env_base = os.getenv("CATMASTER_BASE_URL", "").strip()
+            if env_base:
+                self.base_url = env_base
+            elif provider == "openrouter":
+                base_url = os.getenv("OPENROUTER_BASE_URL", "").strip()
+                self.base_url = base_url or "https://openrouter.ai/api/v1"
+        if provider == "openrouter" and not self.default_headers:
+            referer = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+            title = os.getenv("OPENROUTER_APP_TITLE", "").strip()
+            headers: Dict[str, str] = {}
+            if referer:
+                headers["HTTP-Referer"] = referer
+            if title:
+                headers["X-Title"] = title
+            if headers:
+                self.default_headers = headers
+        if self.temperature is None:
+            temp = _to_float(os.getenv("CATMASTER_TEMPERATURE", ""))
+            self.temperature = temp if temp is not None else 0.0
+        if not isinstance(self.reasoning, dict):
+            self.reasoning = {}
+        if not self.reasoning.get("effort"):
+            effort = os.getenv("CATMASTER_REASONING_EFFORT", "").strip()
+            if effort:
+                self.reasoning["effort"] = effort
+
+
+@dataclass
+class LLMProfile:
+    """Role-routed LLM profile: named model configs + explicit role bindings."""
+
+    models: Dict[str, LLMConfig] = field(default_factory=dict)
+    agents: Dict[str, str] = field(default_factory=dict)
+    peer_review_models: list[str] = field(default_factory=list)
+    agent_policies: AgentPoliciesConfig = field(default_factory=AgentPoliciesConfig)
+    agent_runtime: AgentRuntimeConfig = field(default_factory=AgentRuntimeConfig)
+    literature: LiteratureRuntimeConfig = field(default_factory=LiteratureRuntimeConfig)
+    image_generation: ImageGenerationConfig = field(default_factory=ImageGenerationConfig)
+    writing: WritingRuntimeConfig = field(default_factory=WritingRuntimeConfig)
+    # Deployment-wide admission is read by ExecutionHost at startup, not per turn.
+    persistent_research: dict[str, Any] = field(default_factory=dict)
+
+    def label_for_role(self, role: str) -> str:
+        canonical_role = _normalize_agent_role_name(role)
+        label = self.agents.get(canonical_role)
+        fallback_role = canonical_role
+        while not label and fallback_role in OPTIONAL_AGENT_ROLE_FALLBACKS:
+            fallback_role = OPTIONAL_AGENT_ROLE_FALLBACKS[fallback_role]
+            label = self.agents.get(fallback_role)
+        if not label:
+            raise ValueError(f"Missing model label binding for role: {role}")
+        if label not in self.models:
+            raise ValueError(f"Role {canonical_role or role} references unknown model label: {label}")
+        return label
+
+    def config_for_role(self, role: str) -> LLMConfig:
+        return self.models[self.label_for_role(role)]
+
+    @property
+    def main(self) -> LLMConfig:
+        return self.config_for_role("task_runner")
+
+    @property
+    def summary(self) -> LLMConfig:
+        return self.config_for_role("summary")
+
+    @property
+    def tool_selector(self) -> LLMConfig:
+        return self.config_for_role("tool_selector")
+
+    @property
+    def image_analyzer(self) -> LLMConfig:
+        return self.config_for_role("image_analyzer")
+
+    def config_for_image_generation(self) -> LLMConfig:
+        label = str(self.image_generation.model_label or "").strip()
+        if not label:
+            return self.image_analyzer
+        if label not in self.models:
+            raise ValueError(f"image_generation.model_label references unknown model label: {label!r}")
+        return self.models[label]
+
+    @property
+    def literature_deep_research(self) -> LLMConfig:
+        return self.config_for_role("literature_deep_research")
+
+    @property
+    def literature_worker(self) -> LLMConfig:
+        return self.config_for_role("literature_worker")
+
+    @staticmethod
+    def from_env() -> "LLMProfile":
+        provider = os.getenv("CATMASTER_LLM_PROVIDER", "openai").strip().lower()
+        model = os.getenv("CATMASTER_LLM_MODEL", "gpt-5.2").strip()
+        if provider == "openrouter":
+            api_key_env = "OPENROUTER_API_KEY"
+            base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+        elif provider == "anthropic":
+            api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "ANTHROPIC_API_KEY").strip()
+            base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
+        elif provider == "codex_oauth":
+            api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "").strip()
+            base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
+        else:
+            api_key_env = os.getenv("CATMASTER_API_KEY_ENV", "OPENAI_API_KEY").strip()
+            base_url = os.getenv("CATMASTER_BASE_URL", "").strip() or None
+        temperature = _to_float(os.getenv("CATMASTER_TEMPERATURE", ""))
+        reasoning_effort = os.getenv("CATMASTER_REASONING_EFFORT", "").strip() or None
+        reasoning: Dict[str, Any] = {}
+        if reasoning_effort:
+            reasoning["effort"] = reasoning_effort
+
+        main = LLMConfig(
+            provider=provider,  # type: ignore[arg-type]
+            model=model,
+            temperature=temperature if temperature is not None else 0.0,
+            reasoning=reasoning,
+            api_key_env=api_key_env,
+            base_url=base_url,
+        )
+        main.apply_env_fallbacks()
+        label = main.model
+        raw_http_env = os.getenv("CATMASTER_PRINT_HTTP_RAW_POST")
+        if raw_http_env is None or not str(raw_http_env).strip():
+            print_http_raw_post = False
+        else:
+            print_http_raw_post = _to_bool(
+                raw_http_env,
+                default=False,
+                source="CATMASTER_PRINT_HTTP_RAW_POST",
+            )
+        main.print_http_raw_post = print_http_raw_post
+        return LLMProfile(
+            models={label: main},
+            agents={
+                role: label
+                for role in AGENT_ROLES
+                if role not in OPTIONAL_AGENT_ROLES_WITHOUT_FALLBACK
+            },
+            peer_review_models=[label],
+            agent_policies=AgentPoliciesConfig(),
+            agent_runtime=AgentRuntimeConfig.from_dict({
+                "print_state_messages": False,
+                "print_http_raw_post": print_http_raw_post,
+            }),
+            literature=LiteratureRuntimeConfig(),
+            image_generation=ImageGenerationConfig(),
+            writing=WritingRuntimeConfig(),
+        )
+
+    @staticmethod
+    def from_env_or_file(path: Optional[str] = None) -> "LLMProfile":
+        config_path = Path(path) if path else Path(os.getenv("CATMASTER_LLM_CONFIG", str(_DEFAULT_CONFIG_PATH)))
+        if config_path.exists():
+            if yaml is None:
+                _logger.warning("PyYAML not available; ignoring LLM config %s", config_path)
+            else:
+                raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+                if not isinstance(raw, dict):
+                    raise ValueError(f"LLM config must be a mapping: {config_path}")
+
+                if "tool_calling_profiles" in raw:
+                    raise ValueError(
+                        f"LLM config no longer supports top-level 'tool_calling_profiles' (file: {config_path}). "
+                        "Use models.*.provider_options instead."
+                    )
+
+                models_raw = raw.get("models")
+                agents_raw = raw.get("agents")
+                peer_review_models_raw = raw.get("peer_review_models")
+                agent_policies_raw = raw.get("agent_policies")
+                agent_runtime_raw = raw.get("agent_runtime")
+                literature_raw = raw.get("literature")
+                image_generation_raw = raw.get("image_generation")
+                writing_raw = raw.get("writing")
+                if not isinstance(models_raw, dict):
+                    raise ValueError(f"LLM config requires top-level 'models' mapping: {config_path}")
+                if not models_raw:
+                    raise ValueError(f"LLM config 'models' cannot be empty: {config_path}")
+                if not isinstance(agents_raw, dict):
+                    raise ValueError(f"LLM config requires top-level 'agents' mapping: {config_path}")
+                agents_raw = _normalize_agents_mapping(agents_raw)
+
+                unknown_roles = sorted(set(agents_raw.keys()) - set(AGENT_ROLES))
+                if unknown_roles:
+                    joined = ", ".join(unknown_roles)
+                    raise ValueError(f"Unknown role(s) in llm config agents: {joined}")
+                missing_roles = [role for role in REQUIRED_AGENT_ROLES if role not in agents_raw]
+                if missing_roles:
+                    joined = ", ".join(missing_roles)
+                    raise ValueError(f"Missing required role binding(s) in llm config agents: {joined}")
+
+                models: Dict[str, LLMConfig] = {}
+                for label_raw, item in models_raw.items():
+                    label = str(label_raw).strip()
+                    if not label:
+                        raise ValueError("LLM config model labels must be non-empty strings")
+                    if not isinstance(item, dict):
+                        raise ValueError(f"LLM config model {label!r} must be a mapping")
+                    _reject_legacy_model_fields(item, model_label=label)
+                    cfg = LLMConfig.from_dict(item)
+                    cfg.apply_env_fallbacks()
+                    # Explicit YAML null means omit sampling; only an absent
+                    # field inherits the environment/default temperature.
+                    if "temperature" in item and item["temperature"] is None:
+                        cfg.temperature = None
+                    models[label] = cfg
+
+                agents: Dict[str, str] = {}
+                for role in REQUIRED_AGENT_ROLES:
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        raise ValueError(f"Role {role!r} must bind to a non-empty model label")
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+                for role, fallback_role in OPTIONAL_AGENT_ROLE_FALLBACKS.items():
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        bound = str(agents.get(fallback_role, "")).strip()
+                    if not bound:
+                        raise ValueError(
+                            f"Role {role!r} must bind to a non-empty model label "
+                            f"(or fallback role {fallback_role!r} must be configured)"
+                        )
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+                for role in OPTIONAL_AGENT_ROLES_WITHOUT_FALLBACK:
+                    bound = str(agents_raw.get(role, "")).strip()
+                    if not bound:
+                        continue
+                    if bound not in models:
+                        raise ValueError(f"Role {role!r} references unknown model label: {bound!r}")
+                    agents[role] = bound
+
+                peer_review_models: list[str] = []
+                if isinstance(peer_review_models_raw, (list, tuple)):
+                    for item in peer_review_models_raw:
+                        token = str(item or "").strip()
+                        if token:
+                            peer_review_models.append(token)
+                elif isinstance(peer_review_models_raw, str) and peer_review_models_raw.strip():
+                    peer_review_models.append(peer_review_models_raw.strip())
+                if not peer_review_models:
+                    peer_review_models = [agents["write_reviewer"]]
+                unknown_peer_review_labels = [label for label in peer_review_models if label not in models]
+                if unknown_peer_review_labels:
+                    joined = ", ".join(unknown_peer_review_labels)
+                    raise ValueError(
+                        "peer_review_models references unknown model label(s): "
+                        f"{joined}"
+                    )
+
+                image_generation_cfg = ImageGenerationConfig.from_dict(
+                    image_generation_raw if isinstance(image_generation_raw, dict) else {}
+                )
+                image_generation_label = str(image_generation_cfg.model_label or "").strip()
+                if image_generation_label and image_generation_label not in models:
+                    raise ValueError(
+                        "image_generation.model_label references unknown model label: "
+                        f"{image_generation_label!r}"
+                    )
+
+                agent_runtime_cfg = AgentRuntimeConfig.from_dict(
+                    agent_runtime_raw if isinstance(agent_runtime_raw, dict) else {}
+                )
+                if agent_runtime_cfg.print_http_raw_post:
+                    for cfg in models.values():
+                        cfg.print_http_raw_post = True
+
+                return LLMProfile(
+                    models=models,
+                    agents=agents,
+                    peer_review_models=peer_review_models,
+                    agent_policies=AgentPoliciesConfig.from_dict(agent_policies_raw if isinstance(agent_policies_raw, dict) else {}),
+                    agent_runtime=agent_runtime_cfg,
+                    literature=LiteratureRuntimeConfig.from_dict(
+                        literature_raw if isinstance(literature_raw, dict) else {}
+                    ),
+                    image_generation=image_generation_cfg,
+                    writing=WritingRuntimeConfig.from_dict(writing_raw if isinstance(writing_raw, dict) else {}),
+                    persistent_research=dict(raw.get("persistent_research") or {}),
+                )
+        return LLMProfile.from_env()
+
+
+def _reject_legacy_model_fields(data: Dict[str, Any], *, model_label: str) -> None:
+    if "tool_calling" in data:
+        raise ValueError(
+            f"LLM config model {model_label!r} no longer supports 'tool_calling'. "
+            "Use 'provider_options' and 'reasoning' instead."
+        )
+    if "extra_body" in data:
+        raise ValueError(
+            f"LLM config model {model_label!r} no longer supports top-level 'extra_body'. "
+            "Use 'provider_options.<provider>.extra_body' instead."
+        )
+
+def _normalize_provider_options(value: Any) -> Dict[str, Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for raw_key, raw_options in value.items():
+        key = str(raw_key).strip().lower()
+        if not key:
+            continue
+        if isinstance(raw_options, dict):
+            out[key] = dict(raw_options)
+    return out
+
+
+def _default_api_key_env(provider: str) -> str:
+    if provider == "openrouter":
+        return "OPENROUTER_API_KEY"
+    if provider == "deepseek":
+        return "DEEPSEEK_API_KEY"
+    if provider == "anthropic":
+        return "ANTHROPIC_API_KEY"
+    if provider == "codex_oauth":
+        return ""
+    return "OPENAI_API_KEY"
+
+
+def _to_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _to_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _to_str_or_none(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _to_bool(value: Any, *, default: bool, source: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    _logger.warning("Ignoring invalid %s=%r (allowed: true/false)", source, value)
+    return default
+
+
+__all__ = [
+    "LLMConfig",
+    "LLMProfile",
+    "ProposalPolicyConfig",
+    "AgentPoliciesConfig",
+    "AgentRuntimeConfig",
+    "LiteratureRuntimeConfig",
+    "Provider",
+    "AgentRole",
+    "AGENT_ROLES",
+]

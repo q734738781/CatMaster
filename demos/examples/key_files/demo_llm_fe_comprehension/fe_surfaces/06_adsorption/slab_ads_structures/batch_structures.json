@@ -1,0 +1,26 @@
+[
+  {
+    "slab_file_rel": "fe_surfaces/06_adsorption/slab_clean/Fe_110_2x2_bottomfixed.vasp",
+    "slab_id": "Fe_110_2x2_bottomfixed",
+    "label": "ontop_0",
+    "output_poscar_rel": "fe_surfaces/06_adsorption/slab_ads_structures/ontop_0.vasp"
+  },
+  {
+    "slab_file_rel": "fe_surfaces/06_adsorption/slab_clean/Fe_110_2x2_bottomfixed.vasp",
+    "slab_id": "Fe_110_2x2_bottomfixed",
+    "label": "bridge_0",
+    "output_poscar_rel": "fe_surfaces/06_adsorption/slab_ads_structures/bridge_0.vasp"
+  },
+  {
+    "slab_file_rel": "fe_surfaces/06_adsorption/slab_clean/Fe_110_2x2_bottomfixed.vasp",
+    "slab_id": "Fe_110_2x2_bottomfixed",
+    "label": "bridge_1",
+    "output_poscar_rel": "fe_surfaces/06_adsorption/slab_ads_structures/bridge_1.vasp"
+  },
+  {
+    "slab_file_rel": "fe_surfaces/06_adsorption/slab_clean/Fe_110_2x2_bottomfixed.vasp",
+    "slab_id": "Fe_110_2x2_bottomfixed",
+    "label": "hollow_0",
+    "output_poscar_rel": "fe_surfaces/06_adsorption/slab_ads_structures/hollow_0.vasp"
+  }
+]

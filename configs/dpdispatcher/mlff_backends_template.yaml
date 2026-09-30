@@ -1,0 +1,99 @@
+# Copy to mlff_backends.yaml and keep only backends installed on this deployment.
+# Backend profiles choose deployment/resource/model availability; scientific
+# operation schemas and runner implementations remain code-owned.
+mlff_backends:
+  mace:
+    enabled: true
+    default: true
+    resource: mace_gpu
+    operations: [sp, relax, md, neb, vib, ts]
+    default_model: mh-1
+    models:
+      mh-1:
+        enabled: true
+        loader: mace_mp
+        provider_model: mh-1
+        heads: [matpes_r2scan, mp_pbe_refit_add, spice_wB97M, oc20_usemppbe, omol, omat_pbe]
+        default_head: omat_pbe
+        supports_charge_spin: false
+      omol-0:
+        enabled: true
+        loader: mace_omol
+        provider_model: extra_large
+        heads: [omol]
+        default_head: omol
+        tasks: [omol]
+        default_task: omol
+        supports_charge_spin: true
+
+  fairchem_uma:
+    enabled: false
+    default: false
+    resource: uma_gpu
+    operations: [sp, relax, md, neb, vib, ts]
+    default_model: uma-s-1p2
+    models:
+      uma-s-1p2:
+        enabled: true
+        provider_model: uma-s-1p2
+        tasks: [oc20, oc22, oc25, omat, omol, odac, omc]
+        default_task: omat
+        supports_charge_spin: true
+      uma-s-1p1:
+        enabled: true
+        provider_model: uma-s-1p1
+        tasks: [oc20, omat, omol, odac, omc]
+        default_task: omat
+        supports_charge_spin: true
+      uma-m-1p1:
+        enabled: true
+        provider_model: uma-m-1p1
+        tasks: [oc20, omat, omol, odac, omc]
+        default_task: omat
+        supports_charge_spin: true
+
+  mattersim:
+    enabled: false
+    default: false
+    resource: mattersim_gpu
+    operations: [sp, relax, md, neb, vib, ts]
+    default_model: MatterSim-v1.0.0-1M
+    models:
+      MatterSim-v1.0.0-1M:
+        enabled: true
+        provider_model: MatterSim-v1.0.0-1M
+        tasks: [omat]
+        default_task: omat
+      MatterSim-v1.0.0-5M:
+        enabled: true
+        provider_model: MatterSim-v1.0.0-5M
+        tasks: [omat]
+        default_task: omat
+
+  orb_v3:
+    enabled: false
+    default: false
+    resource: orb_gpu
+    operations: [sp, relax, md, neb, vib, ts]
+    default_model: orb-v3-conservative-inf-omat
+    models:
+      orb-v3-conservative-inf-omat:
+        enabled: true
+        provider_model: orb-v3-conservative-inf-omat
+        tasks: [omat]
+        default_task: omat
+      orb-v3-conservative-20-omat:
+        enabled: true
+        provider_model: orb-v3-conservative-20-omat
+        tasks: [omat]
+        default_task: omat
+      orb-v3-direct-inf-omat:
+        enabled: true
+        provider_model: orb-v3-direct-inf-omat
+        tasks: [omat]
+        default_task: omat
+      orb-v3-direct-20-omat:
+        enabled: true
+        provider_model: orb-v3-direct-20-omat
+        tasks: [omat]
+        default_task: omat

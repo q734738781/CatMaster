@@ -1,0 +1,3 @@
+# cuEquivariance CUDA 13.x kernel add-on.
+# Deprecated compatibility path. Install mace-cueq-cu13.txt after mace.txt.
+cuequivariance-ops-torch-cu13==0.10.0

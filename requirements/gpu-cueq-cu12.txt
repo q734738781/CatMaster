@@ -1,0 +1,3 @@
+# cuEquivariance CUDA 12.x kernel add-on.
+# Deprecated compatibility path. Install mace-cueq-cu12.txt after mace.txt.
+cuequivariance-ops-torch-cu12==0.10.0

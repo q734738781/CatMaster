@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+"""Utility builders that translate tool inputs into DPDispatcher payloads."""
+
+from pathlib import Path
+from typing import Iterable, List, Mapping, Sequence
+
+from catmaster.tools.execution.task_registry import (
+    TaskConfig,
+    format_list,
+    format_template,
+)
+
+
+def dedup(items: Iterable[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        out.append(item)
+        seen.add(item)
+    return out
+
+
+def expand_forward_files(patterns: Sequence[str], base_dir: Path, ctx: Mapping[str, Any]) -> List[str]:
+    expanded: List[str] = []
+    for item in patterns or []:
+        if item == "*":
+            return ["*"]
+        optional = str(item).startswith("?")
+        raw = str(item)[1:] if optional else str(item)
+        rendered = format_template(raw, ctx)
+        if optional and not (base_dir / rendered).exists():
+            continue
+        expanded.append(rendered)
+    if not expanded:
+        return ["*"]
+    return dedup(expanded)
+
+
+def render_task_fields(cfg: TaskConfig, ctx: Mapping[str, Any], base_dir: Path) -> dict:
+    """Materialize command and file lists from a TaskConfig."""
+
+    command = format_template(cfg.command, ctx)
+    forward_files = expand_forward_files(cfg.forward_files, base_dir, ctx)
+    backward_files = dedup(format_list(cfg.backward_files, ctx))
+    forward_common_files = dedup(format_list(cfg.forward_common_files, ctx))
+    backward_common_files = dedup(format_list(cfg.backward_common_files, ctx))
+    task_work_path = cfg.task_work_path or "."
+
+    return {
+        "command": command,
+        "task_work_path": task_work_path,
+        "forward_files": forward_files,
+        "backward_files": backward_files,
+        "forward_common_files": forward_common_files,
+        "backward_common_files": backward_common_files,
+    }

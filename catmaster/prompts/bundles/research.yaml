@@ -1,0 +1,8 @@
+id: catmaster.entrypoint.research
+kind: prompt_bundle
+entrypoint: research
+role: ResearchSpecialist
+fragments:
+  - catmaster.base.common
+  - catmaster.entrypoint.research.identity
+variables: []

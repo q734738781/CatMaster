@@ -1,0 +1,478 @@
+# 10. Installation, model configuration, and deployment
+
+[Previous](09-tools-skills-evolution.en.md) | [Contents](README.en.md) | [Next](11-reference-troubleshooting.en.md)
+
+This chapter is for users who install CatMaster, configure models, or operate a server. Ordinary users do not need to learn every YAML field. They only need an accurate view of the agents, remote tasks, and external programs enabled by their deployment.
+
+## Control-plane environment
+
+The WebUI, agent runtime, materials tools, and most local analysis share `requirements/pc-conda.yml`:
+
+```bash
+conda env create -f requirements/pc-conda.yml
+conda activate catmaster
+python scripts/install_easyslides.py
+```
+
+Update an existing environment with:
+
+```bash
+conda env update -n catmaster -f requirements/pc-conda.yml
+```
+
+The MACE, UMA, MatterSim, and ORB-v3 requirement files describe isolated remote environments. Installing them all into the control plane creates unnecessary torch, CUDA, and model conflicts and does not register remote tasks.
+
+The environment includes EasySlides Python dependencies; the installer supplies its scripts, templates and references. Runtime sync and deployment packages also carry these assets, so startup and deck jobs need no download. Linux preview requires LibreOffice, Poppler and suitable fonts; see [EasySlides installation](../easyslides.md).
+
+## Configure the LLM
+
+CatMaster routes models by role. One model can serve every role, or a deployment can assign different models to coordination, workers, writing, review, vision, and low-frequency candidate proposal/review. Start from the standard template:
+
+```bash
+cp -n configs/llm.template.yaml configs/llm.yaml
+export OPENROUTER_API_KEY="<YOUR_KEY>"
+```
+
+A minimal single-model profile is:
+
+```yaml
+models:
+  main:
+    provider: openrouter
+    model: <OPENROUTER_MODEL_ID>
+    temperature: 1.0
+    reasoning:
+      effort: high
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+
+agents:
+  proposal: main
+  director: main
+  task_runner: main
+  memory_patch: main
+  summary: main
+```
+
+`main` is an internal CatMaster label. The `model` value is the provider model ID. Every value under `agents` must refer to a defined label.
+
+### Mapping roles to the five agents
+
+| Role | Main use | Typical fallback |
+|---|---|---|
+| `proposal` | Task proposal and initial decomposition | Required |
+| `director` | Experiment coordination and general decisions | Required |
+| `task_runner` | Materials, Dynamics, ML, and ORCA/xTB workers | Required |
+| `memory_patch` | Project memory and skill candidates | Required |
+| `summary` | Summary and general review fallback | Required |
+| `research_lead` | Research agent | `director` |
+| `research_state_updater` | Research state updates | `research_lead` |
+| `hypothesis_proposer` | Falsifiable hypothesis and verification-plan formation | `research_lead` |
+| `write_director` | Writing coordinator | `research_lead` |
+| `section_writer` | Drafting, revision, prose polishing, and final integration | `task_runner` |
+| `plot_worker` | Quantitative publication plotting and rendered visual QA | `section_writer` |
+| `write_reviewer` | Writing checks and review | `summary` |
+| `tex_compile_fixer` | TeX compilation repair | `task_runner` |
+| `tool_selector` | General tool-selection support | `task_runner` |
+| `image_analyzer` | Image understanding | `task_runner` |
+| `literature_deep_research` | Literature Review | `director` |
+| `literature_worker` | Bounded literature discovery, selected-source acquisition and reading, extraction, and audit | `literature_deep_research` |
+| `self_evolution_proposer` | Improvement candidate generation | `memory_patch` |
+| `self_evolution_reviewer` | Independent candidate review | `write_reviewer` |
+| `thread_title` | Background semantic title for the first WebUI message | None; omission keeps the local title |
+
+A cost-conscious profile can use a faster model for `task_runner` and stronger models for Research, Writing, and review. Tool calling, image support, and long context must be verified against provider documentation and a real smoke call rather than inferred from the model name.
+
+The bundled Codex OAuth profile uses GPT-6 Astra high for research specialist coordination and hypothesis proposals, Astra medium for technical workers/helpers, GPT-6 Luna xhigh for `literature_worker`, and a separate GPT-6 Luna low profile for `thread_title`. All three current default templates bind writing coordination, prose, presentations, plotting, review and compile fixing to `codex-oauth-writing`, using Astra medium and local OAuth credentials. Image generation still requires `OPENROUTER_API_KEY`. The general templates retain optional OpenRouter profiles; switch explicitly through the relevant role bindings. Use `section_writer` for prose and `presentation_worker` for slides. To compare the entire writing workflow, change the coordinator and all participating workers together. CatMaster does not switch models based on key availability. General-purpose children inherit their owning specialist or worker model.
+
+An explicit YAML `temperature: null` omits sampling and overrides environment/default temperature; only an absent field inherits those fallbacks. The Codex OAuth Astra profiles use the Codex Responses path and retain `provider_options.codex_oauth.chat_kwargs.temperature: null`. Astra does not accept `temperature` or `top_p`; see the [official migration parameters](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra).
+
+### Automatic model guidance and prompt composition
+
+CatMaster selects guidance from the actual model chosen for each role in
+`llm.yaml`; no additional configuration field is needed. MiMo models receive
+additional stable guidance through native DeepAgents `HarnessProfile`.
+Configuration labels do not affect matching.
+
+Prompts combine role instructions, shared runtime guidance, available
+capability/skill/memory guidance, and the applicable model bundle. All models,
+including Astra, receive guidance on user corrections, unchanged constraints,
+existing authorization, relevant records and skills, and role-specific completion.
+MiMo adds an emphasis on interpreting historical completion and background notices
+against the current assignment, and checking uncertainty that can change the next
+action. Neither layer imposes reasoning quotas or concrete tool playbooks.
+Fragments live in `catmaster/prompts/base/`; `bundles/runtime.yaml` and
+`bundles/mimo.yaml` define the shared and model-specific composition.
+
+Roots and children use their own actual models; general-purpose children that
+inherit a model receive its guidance. Rebuilding neither duplicates guidance nor
+adds system instructions to conversation history. Role bindings, tool permissions
+and provider parameters retain their existing behavior. This mechanism applies to
+DeepAgents specialists/workers and self-evolution reflection, proposal, review and
+investigation, independently of startup order. Self-evolution retains its own
+permissions and completion interface: ordinary text does not submit a formal decision.
+Standalone proposal checks, titles and summaries retain their own prompts.
+Current tasks, corrections and completion
+notices remain user-turn inputs, separate from stable guidance.
+
+### Providers and credentials
+
+Supported profile providers are `openai`, `openrouter`, `deepseek`, `gemini`, `oai_compatible`, `langchain`, `anthropic`, and `codex_oauth`. Common key variables include `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, and `ANTHROPIC_API_KEY`. Compatible endpoints specify their key variable through `api_key_env` and their endpoint explicitly.
+
+Reasoning fields are provider-specific. OpenAI and OpenRouter use `reasoning.effort`; some compatible services use `reasoning_effort`; Anthropic thinking belongs in provider-specific kwargs. Copy the matching repository template instead of moving one provider's fields unchanged to another.
+
+Keep real keys in environment variables or an external secret manager. An LLM YAML may contain a private endpoint, but it should not contain plaintext secrets. `.env.local` is not loaded automatically:
+
+```bash
+set -a
+source .env.local
+set +a
+```
+
+Codex OAuth uses the current operating-system user's credentials:
+
+```bash
+python -c \
+'from langchain_openai.chatgpt_oauth import login_chatgpt_device; login_chatgpt_device()'
+
+export CATMASTER_LLM_CONFIG=configs/llm_codex_oauth.template.yaml
+```
+
+The Codex OAuth template passes `timeout_s: 180` and leaves `max_retries`
+unset, so transport errors, rate limits, and HTTP server errors use the pinned
+OpenAI SDK default. The Codex backend can also accept an HTTP 200 stream and
+then end it with the structured `server_is_overloaded` error, which the SDK
+cannot retry at the HTTP layer. CatMaster retries only that stream error up to
+six times, waiting 30, 60, 120, 240, 480, and 600 seconds across every
+DeepAgent layer, including CatMaster's explicit `general-purpose` child. Other
+model exceptions are not captured by this additional retry.
+
+Do not copy the OAuth store or use one person's profile as the shared identity of a multi-user service.
+
+### Reviewers, images, and multimodal input
+
+`peer_review_models` lists model labels. Each label creates an independent report and therefore adds calls, cost, and latency:
+
+```yaml
+peer_review_models:
+  - reviewer-a
+  - reviewer-b
+```
+
+`generate_figure` uses the OpenRouter Image API independently of the Writing language model. Select a model with `model`, attach images with `reference_images`, and override ratio or quality with `image_options`. See the [figure-generation interface](../figure_generation.md).
+
+Image generation can bind a dedicated model:
+
+```yaml
+models:
+  figure-generation:
+    provider: openrouter
+    model: openai/gpt-image-2.5-sunburst
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+
+image_generation:
+  model_label: figure-generation
+  image_config:
+    aspect_ratio: "4:3"
+```
+
+Image input depends on both profile capability and provider behavior. The runtime defaults image blocks on only for OpenAI, OpenRouter, Anthropic, Gemini, and LangChain providers. Other providers need explicit declaration and a real call. A saved attachment is not proof that it reached the model. Check `multimodal.prepared` when diagnosing.
+
+### Profile selection and offline parsing
+
+The profile path is selected in this order: an explicit code argument, `CATMASTER_LLM_CONFIG`, `configs/llm.yaml`, and finally single-model environment mode if the selected YAML does not exist.
+
+```bash
+export CATMASTER_LLM_PROVIDER=openrouter
+export CATMASTER_LLM_MODEL=<OPENROUTER_MODEL_ID>
+export OPENROUTER_API_KEY="<YOUR_KEY>"
+```
+
+Parse without calling a model:
+
+```bash
+python -c 'from catmaster.llm.config import LLMProfile; p=LLMProfile.from_env_or_file(); print("models:", sorted(p.models)); print("roles:", p.agents)'
+```
+
+Parsing proves only that the profile structure is valid. Verify key, endpoint, model ID, tool calling, and multimodal behavior in a minimal WebUI conversation.
+
+## Literature search and controlled browsing
+
+Provide only the services needed by the deployment:
+
+```bash
+export TAVILY_API_KEY="<KEY>"
+export SEMANTIC_SCHOLAR_API_KEY="<KEY>"
+export OPENALEX_API_KEY="<KEY>"
+export NCBI_API_KEY="<KEY>"
+export CROSSREF_MAILTO="you@example.org"
+```
+
+`TAVILY_API_KEY` is optional for roles using `codex_oauth` or OpenAI Responses:
+those roles receive hosted `web_search`. Keep Tavily configured when other
+providers need public discovery. The two implementations are not exposed
+together under the same tool name, and the same provider resolver is used by
+specialists, workers, and self-evolution roles. For CatMaster's function,
+`literature.public_web_on_search_failure` controls scholarly-index fallback.
+Quota, authentication, rate-limit, and network failures open a circuit for the
+current run so later searches do not keep consuming or retrying the failed
+Tavily backend. Fallback results identify their actual scholarly backend and do
+not claim to be general-web coverage.
+
+The active Literature Review tool surface is authoritative. API keys provide access but do not guarantee full text or correct metadata. `requirements/pc-conda.yml` installs `scansci-pdf==1.14.0`, its preferred `patchright==1.62.2` browser backend, and `cloakbrowser==0.5.10` as the compatible fallback. CatMaster tries direct legal OA adapters first, then the official Elsevier API for a matching DOI when `ELSEVIER_API_KEY` is configured, and keeps one ScanSci browser DOI-page pass internal as a low-priority fallback. `ELSEVIER_INSTTOKEN` is normally unnecessary and should be set only when the library provides one. `UNPAYWALL_EMAIL`, `OPENALEX_MAILTO`, `CORE_API_KEY`, and `SCANSCI_PDF_PROXY` remain optional. The same high-level tool can request SI for one DOI; no separate browser CLI, model-visible browser tools, or browser-profile configuration is required.
+
+## Local SQL execution and persistence
+
+`start_webui.sh` starts the DBOS execution host in one WebUI process. Local SQLite requires no additional database service or execution license. Run one host per deployment.
+
+The project root's `.catmaster/execution.sqlite` holds queue/workflow state. Each workspace's `metadata/deepagent_threads.sqlite` holds native checkpoints, `deepagent_memory.sqlite` holds long-term memory, and `workspace.sqlite` holds scientific Graph and UI records. Backups include the control database, workspace files/metadata, login data and private configuration.
+
+Restart recovers accepted, uncancelled work through DBOS and native checkpoints. Explicitly stopped work remains stopped. The supported deployment is one machine; sharing a control database across multiple hosts is unsupported.
+
+## Binding and access patterns
+
+Bind a local workstation explicitly to loopback:
+
+```bash
+CATMASTER_PROJECT_SPACE_ROOT="$HOME/catmaster_projects" \
+CATMASTER_HOST=127.0.0.1 \
+CATMASTER_PORT=7991 \
+./start_webui.sh
+```
+
+Use the same launcher with `--status` and `--stop` to manage this process.
+
+For a personal remote server, keep CatMaster on server-side `127.0.0.1:7991` and create an SSH tunnel from the client:
+
+```bash
+ssh -L 7991:127.0.0.1:7991 <USER>@<SERVER>
+```
+
+Then open local `http://127.0.0.1:7991`.
+
+A shared service needs a reverse proxy or VPN, TLS, external access control, least-privilege file permissions, logs, and backup. The built-in login provides account isolation and basic registration. It is not a complete internet-facing identity platform: registration is open by default, the application does not terminate TLS, and its cookie should not be the only public security boundary. After provisioning at least one user, start with `--disable-registration` or set `CATMASTER_DISABLE_REGISTRATION=1` to keep login required while rejecting new accounts. The status API then reports `registration_enabled: false`, the frontend hides account creation, and registration endpoints return HTTP 403.
+
+Use `--no-login` only on a trusted machine bound to loopback. It uses the direct local project root, where users select or create workspaces explicitly. Skill Evolution remains available under the fixed local `admin` actor.
+
+Login cookies are isolated per WebUI instance. CLI launches use the listening port as the stable default instance ID, so two ports on the same hostname do not overwrite each other's sessions. Use `--instance-id NAME` or `CATMASTER_WEBUI_INSTANCE_ID=NAME` when a reverse proxy or custom launcher needs another stable namespace. Keep the same ID across restarts; a startup timestamp would force a new login after every restart.
+
+## Remote computation configuration
+
+Chapter 8 explains remote tasks from the user's perspective. Administrators create four private active files from public templates. The `-n` commands preserve existing active files. Merge template changes during an upgrade instead of replacing site configuration:
+
+```bash
+cp -n configs/dpdispatcher/machines_template.yaml configs/dpdispatcher/machines.yaml
+cp -n configs/dpdispatcher/resources_template.yaml configs/dpdispatcher/resources.yaml
+cp -n configs/dpdispatcher/tasks_template.yaml configs/dpdispatcher/tasks.yaml
+cp -n configs/dpdispatcher/mlff_backends_template.yaml configs/dpdispatcher/mlff_backends.yaml
+```
+
+These files contain host names, usernames, SSH key paths, queues, remote roots, and environment scripts. Git and deployment packaging exclude them. Do not paste active contents into issues, prompts, or shared workspaces.
+
+### Machine, resource, task, and backend
+
+A machine card defines SSH, Slurm or Shell mode, `remote_root`, and base environment. Confirm the host key interactively once, then test BatchMode. The remote root must be writable, and a Slurm machine should expose `sbatch`, `squeue`, and `scancel`.
+
+A resource card binds machine, CPU/GPU, queue, walltime, environment `source_list`, and worker audience. Template core counts and queue names are examples. Preserve audience restrictions.
+
+A task card defines the scientific program, input layout, default resource, boot script, and returned files. The template covers VASP, CP2K, LAMMPS, generic MLFF, MACE training and evaluation, xTB, CREST, and ORCA. Enable only validated tasks.
+
+An MLFF backend card enables MACE, UMA, MatterSim, or ORB-v3 and binds resource, operations, and models. Every model profile declares the exact provider model, official task/domain capabilities, and charge/spin capability; MACE additionally declares its loader, allowed heads, and default head. UMA, MatterSim, and ORB-v3 model keys must exactly match official names rather than CatMaster abbreviations or case aliases. Every backend uses an isolated remote environment. The public template enables MACE `mh-1` and standalone `omol-0`; another backend is exposed only after its dependencies, weights, device, and minimum real case pass.
+
+### Remote environment construction
+
+The remote command environment combines machine `env_setup`, resource `source_list`, an optional submission prepend script, and the task command. Place site modules, conda activation, license variables, and library paths in controlled environment scripts rather than stages or prompts.
+
+DPDispatcher commonly starts a non-interactive shell, so do not assume that it reads the user's `.bashrc`. If GPU nodes require a proxy to reach model repositories, copy and edit `configs/dpdispatcher/env_templates/catmaster_env_proxy.sh` and place it before the provider conda environment script in each applicable GPU resource `source_list`; remove the entry on hosts that need no proxy. Bind the proxy script only to machines that use it. In particular, do not reuse a GPU node's `localhost` proxy script on a different CPU or SSH host.
+
+### MLFF CPU threads and GPU batches
+
+The isolated MLFF requirement files pin Sella 2.6.0, whose PRFO solver avoids
+repeated full eigensolves during trust-radius selection. Install the matching
+provider requirements in its remote environment; Sella is not a control-plane
+dependency. The MLFF GPU resource cards set `OPENBLAS_NUM_THREADS=1` and
+`MKL_NUM_THREADS=1` through DPDispatcher's `envs`. Provider environment scripts
+also default these variables to 1 when absent and preserve an explicit value.
+Change the resource's `envs` to tune a particular workload. `cpu_per_node` alone
+does not limit BLAS threads; CPU-only resources keep their own threading policy.
+
+The public `gpu_server` machine uses **Shell**. Its GPU resource cards use
+`group_size: 0`, `para_deg: 1`, and `strategy.if_cuda_multi_devices: true`.
+DPDispatcher puts a submission in one job, runs one task per GPU, and waits for
+each GPU wave before starting the next. Set `gpu_per_node` to the number of GPUs
+assigned to this pool; the template defaults to one. DPDispatcher 1.0.0 assigns
+physical IDs `0..gpu_per_node-1` directly, overriding inherited
+`CUDA_VISIBLE_DEVICES`; this configuration is for a contiguous pool starting at
+GPU 0 and one GPU per task.
+
+All GPU cards sharing a Shell host and account acquire
+`$HOME/.cache/catmaster/gpu-batch.lock` through `flock` before starting task
+commands. Concurrent submissions wait for the preceding batch to finish, while
+tasks inside a batch use the configured GPU parallelism. Keep the same lock path
+for provider and general GPU cards sharing that pool. The lock coordinates only
+participating CatMaster jobs; it does not allocate GPUs for unrelated processes
+or users. Shell does not interpret `#SBATCH` directives.
+
+For **Slurm**, let the scheduler allocate GPUs and retain its
+`CUDA_VISIBLE_DEVICES`. A one-GPU-per-job resource uses `group_size: 1`,
+`gpu_per_node: 1`, and `strategy.if_cuda_multi_devices: false`; omit the Shell
+batch-lock lines and supply the site's partition, walltime and GPU request.
+Retain the MLFF BLAS limits. In particular, do not enable DPDispatcher 1.0.0's
+physical-ID round robin on top of a Slurm GPU allocation.
+
+Private `resources.yaml` and remote environment scripts are not replaced when
+deployment code is synchronized. Applying these settings requires updating the
+remote provider packages, the corresponding environment scripts, and the active
+resource cards together, preserving site paths and credentials. Existing
+submitted job scripts retain the configuration with which they were created.
+
+Before releasing a task, run one inexpensive real case for every enabled engine and verify catalog visibility, environment, result transfer, `status.json`, stdout/stderr, and receipt. `python scripts/remote_execution_smoke.py --list` only lists cases. Other modes submit real work, so do not begin with the entire suite.
+
+## Structure Workbench, JSmol, VESTA, and VASPKIT
+
+The production frontend contains exact-pinned MatterViz/Svelte and lazy Ketcher chunks. They are served from `/static`; no CDN or external font request is required. The server sends a Content Security Policy that permits same-origin chunks, local fonts, data/blob images, and workers used by volume parsing.
+
+JSmol 16.3.13 is a compatibility fallback for OUTCAR vibration and unsupported formats. The launcher installs its pinned assets when the cache is missing. Prewarm a persistent cache for an offline server:
+
+```bash
+CATMASTER_JSMOL_CACHE_DIR=/persistent/cache/jsmol \
+python scripts/install_jsmol_assets.py
+```
+
+A missing JSmol cache affects only those fallback previews. MatterViz-supported structures, the Workbench, LLM calls, and remote-task execution remain available.
+
+After changing frontend dependencies, run `npm run build` under `catmaster/webui/frontend` and verify a periodic structure, a molecule 2D/3D switch, one trajectory frame request, and one volume grid in the deployed base path. Keep the exact versions in `package.json` and the lockfile; do not replace the lazy chunks with CDN scripts.
+
+Set VASPKIT explicitly if needed:
+
+```bash
+export CATMASTER_VASPKIT_BIN=/opt/vaspkit/bin/vaspkit
+```
+
+For VESTA rendering:
+
+```bash
+export CATMASTER_VESTA_BIN=/opt/VESTA/VESTA
+export CATMASTER_XVFB_RUN=/usr/bin/xvfb-run
+```
+
+Headless servers usually need Xvfb. CatMaster does not distribute VESTA or VASPKIT licenses.
+
+## Pandoc, Chrome, fonts, TeX, and Julia
+
+Markdown PDF needs Pandoc and Chrome or Chromium, plus suitable fonts for CJK content:
+
+```bash
+export CATMASTER_PANDOC_BIN=/usr/bin/pandoc
+export CATMASTER_CHROME_BIN=/usr/bin/chromium
+
+pandoc --version
+chromium --version
+fc-match "Noto Sans CJK SC"
+```
+
+LaTeX work needs at least `pdflatex`, and bibliography work commonly needs `bibtex`. Visually inspect the PDF after compilation.
+
+PySR may download Julia and precompile on first import. During an online maintenance window:
+
+```bash
+python scripts/pysr_julia_smoke.py --fit
+```
+
+Install Julia in advance on offline machines and point `PYTHON_JULIACALL_BINDIR` to its `bin` directory.
+
+## Runtime diagnostics and long output
+
+CatMaster does not expose model-call, recursion, or context-token counts as scientific completion controls. Diagnose actual provider and tool errors, task scope, and the branch's declared stop condition; use task progress, steering, or cancellation when an active branch needs correction. Context compaction is separate: `agent_runtime.deepagent_context_trigger_token_cap` defaults to 258000 and configures native DeepAgents summarization. A known smaller model window keeps the upstream 85% margin. Null or a nonpositive value uses upstream defaults. YAML takes precedence over `CATMASTER_DEEPAGENT_CONTEXT_TRIGGER_TOKEN_CAP`.
+
+The threshold applies to root agents and nested subagents and is checked before the next model call. The count includes cached context and combines local estimates with the same model's reported usage. Newly read media may be underestimated, and compaction itself consumes tokens. This trigger therefore does not guarantee that every request stays below 258000 tokens or impose a cumulative spending limit.
+
+`configs/tool_output.yaml` keeps a Chat preview of long results and stores full content under `_tool_outputs/`. `configs/tool_policy.yaml` is not the active agent permission surface. Runtime allowlists, task audiences, and Review interruption define effective access.
+
+## Packaging, upgrades, and rollback
+
+`scripts/package_remote_deploy.sh` creates a package without `.git`, private config, keys, user projects, or runtime logs. `scripts/deploy_runtime.sh` synchronizes runtime files on the target. Consult each script's `--help` for current options.
+
+Runtime sync preserves the target's existing active configs and `start_webui.sh`
+by default, while refreshing public DPDispatcher and environment templates.
+`--sync-configs` and `--sync-start-webui` explicitly replace those private files;
+review and merge site-specific settings before using either option. Full-repo
+sync also preserves local execution databases, login data, runtime directories,
+and local secret files. Deployment packages exclude these paths.
+
+Stop the instance with its existing `./start_webui.sh --stop` before syncing
+code. Deployment starts the WebUI and its in-process DBOS host by default, using
+the preserved launcher's settings. `--project-space-root` supplies an explicit
+workspace-root override. Use `--no-autorun` to inspect the deployment before
+starting it:
+
+```bash
+scripts/deploy_runtime.sh --target /path/to/CatMaster_Deploy --no-autorun
+cd /path/to/CatMaster_Deploy
+./start_webui.sh --start
+./start_webui.sh --status
+```
+
+The launcher manages one local process. Back up the project root's
+`.catmaster/execution.sqlite` along with workspace metadata and files before
+upgrading; queue recovery and native checkpoints belong to the same deployment.
+
+Before upgrading, record the Git commit, conda environment, active LLM profile, four DPDispatcher configurations, launch arguments, and external-program versions. Back up the project root and authentication database, then test conversation, files, structure preview, and one minimal case for every enabled remote engine in a disposable workspace.
+
+Migrate each workspace separately when upgrading from Research Kernel or a
+hypothesis campaign. Stop the old writer for that workspace, then run a dry
+run:
+
+```bash
+conda run -n catmaster python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace
+```
+
+The report separates deterministic v3 and v4 campaign imports, v2 or incomplete
+Kernel items that need review, and damaged files. After checking the counts,
+apply the migration:
+
+```bash
+conda run -n catmaster python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace --apply
+```
+
+The command returns a rollback manifest path. Legacy files move under
+`metadata/legacy_research_state/`, and the new runtime writes only
+`metadata/workspace.sqlite`. The batch has a stable in-progress pointer. If the
+process stops, another `--apply` resumes that batch. Do not run old and new
+writers against the same workspace during a rolling deployment.
+
+Before any new Research Graph work is written, the returned manifest can roll
+back the import:
+
+```bash
+conda run -n catmaster python \
+  scripts/migrate_research_graph.py /absolute/path/to/workspace \
+  --rollback metadata/legacy_research_state/<batch>/rollback_manifest.json
+```
+
+Rollback removes graphs imported by that batch, restores previous thread
+bindings, and moves legacy files back to their original paths. Once researchers
+have continued on the new graph, restore the backup into a separate workspace
+and merge deliberately instead of overwriting the new scientific state.
+
+Workspace SQLite chooses WAL only on a recognized local filesystem. Network or
+unknown filesystems use the rollback journal by default. Set
+`CATMASTER_WORKSPACE_SQLITE_JOURNAL_MODE=WAL` only after the deployment has
+independently verified its storage semantics.
+
+Code rollback must not overwrite user projects. Restore a compatible commit or package together with matching dependencies and config. Do not put project data, private YAML, or secrets into release archives as a rollback mechanism.
+
+## Backup and logs
+
+The default runtime directory is `.runtime/`, with `.runtime/webui.log` as the common log. Shared services need log rotation and should not leave raw-request debugging enabled because it may expose prompts or request content.
+
+A complete backup includes every workspace's `files/` and `metadata/`, `.webui_auth/auth.sqlite` for login deployments, private LLM and DPDispatcher configuration outside Git, and external secret or site-environment backups. Back up when no run is writing and rehearse restoration.
+
+`codex_oauth` uses LangChain’s native ChatGPT token store at `~/.langchain/chatgpt-auth.json`. Deployments that need a writable authentication directory can set `CATMASTER_CHATGPT_AUTH_PATH` to a private token file. Pass the same `store_path` to the LangChain login function. LangChain retains ownership of file locking and token refresh; keep authentication files out of version control.
+
+Existing local SQLite conversations read their bound native checkpoint directly. Startup and ordinary continuation do not import complete history; clearing a checkpoint does not restore it from another store. Intermediate Server data requires offline conversion, with no pickle reader in the application.
+
+A failed turn with a pending native step can continue from that message. An older failure cannot resume a later turn. Pending approvals use the native review action. Send new research instructions as ordinary messages to preserve the existing workspace binding and conversational history.

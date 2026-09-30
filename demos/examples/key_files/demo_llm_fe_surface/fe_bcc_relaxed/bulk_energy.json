@@ -1,0 +1,7 @@
+{
+  "E_bulk_atom": -8.269541525,
+  "E_bulk_cell": -16.53908305,
+  "natoms": 2,
+  "source_vasprun": "vasp_inputs/fe_bcc_lattice_relax/vasprun.xml",
+  "source_contcar": "vasp_inputs/fe_bcc_lattice_relax/CONTCAR"
+}

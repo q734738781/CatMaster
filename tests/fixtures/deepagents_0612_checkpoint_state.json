@@ -1,0 +1,85 @@
+{
+  "fixture_format": "catmaster-deepagent-checkpoint-state-v1",
+  "note": "Human-readable semantic export of a completed 0.6.12 checkpoint; binary SQLite and serializer blobs are intentionally not stored in the repository.",
+  "generated_with": {
+    "deepagents": "0.6.12",
+    "langgraph": "1.2.10"
+  },
+  "thread": {
+    "thread_id": "fixture-deepagents-0612",
+    "checkpoint_ns": ""
+  },
+  "state": {
+    "messages": [
+      {
+        "type": "human",
+        "id": "legacy-user-1",
+        "content": "Complete the delegated analysis and retain the task handoff."
+      },
+      {
+        "type": "ai",
+        "id": "legacy-assistant-task",
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "task",
+            "args": {
+              "description": "Inspect the legacy fixture",
+              "subagent_type": "general-purpose"
+            },
+            "id": "legacy-task-call",
+            "type": "tool_call"
+          }
+        ]
+      },
+      {
+        "type": "tool",
+        "id": "legacy-task-result",
+        "content": "Legacy delegated analysis completed once.",
+        "name": "task",
+        "tool_call_id": "legacy-task-call",
+        "status": "success"
+      },
+      {
+        "type": "ai",
+        "id": "legacy-assistant-todo",
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "write_todos",
+            "args": {
+              "todos": [
+                {
+                  "content": "Complete the legacy delegated analysis",
+                  "status": "completed"
+                }
+              ]
+            },
+            "id": "legacy-todo-call",
+            "type": "tool_call"
+          }
+        ]
+      },
+      {
+        "type": "tool",
+        "id": "legacy-todo-result",
+        "content": "Updated the legacy todo list.",
+        "name": "write_todos",
+        "tool_call_id": "legacy-todo-call",
+        "status": "success"
+      },
+      {
+        "type": "ai",
+        "id": "legacy-final",
+        "content": "Legacy turn completed."
+      }
+    ],
+    "todos": [
+      {
+        "content": "Complete the legacy delegated analysis",
+        "status": "completed"
+      }
+    ],
+    "files": {}
+  }
+}

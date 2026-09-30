@@ -1,0 +1,6 @@
+id: catmaster.runtime.guidance
+kind: prompt_bundle
+fragments:
+  - catmaster.guidance.user_priority
+  - catmaster.guidance.system_usage
+variables: []

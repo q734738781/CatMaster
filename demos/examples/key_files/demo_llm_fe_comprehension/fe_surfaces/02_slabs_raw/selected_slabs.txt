@@ -1,0 +1,4 @@
+# Selected representative symmetric slabs (raw, orthogonal, symmetry-enforced)
+(100) fe_surfaces/02_slabs_raw/Fe_100/t0/POSCAR
+(110) fe_surfaces/02_slabs_raw/Fe_110/t0/POSCAR
+(111) fe_surfaces/02_slabs_raw/Fe_111/t0/POSCAR
